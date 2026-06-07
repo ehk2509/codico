@@ -1,0 +1,382 @@
+[
+  {
+    "tier": "local",
+    "provider": "Ollama",
+    "models": [
+      { "id": "ollama/qwen2.5-coder:7b",   "label": "Qwen2.5 Coder 7B" },
+      { "id": "ollama/qwen2.5-coder:14b",  "label": "Qwen2.5 Coder 14B" },
+      { "id": "ollama/qwen2.5-coder:32b",  "label": "Qwen2.5 Coder 32B" },
+      { "id": "ollama/qwen3:8b",           "label": "Qwen3 8B" },
+      { "id": "ollama/qwen3:14b",          "label": "Qwen3 14B" },
+      { "id": "ollama/qwen3:30b-a3b",      "label": "Qwen3 30B A3B (MoE)" },
+      { "id": "ollama/deepseek-r1:7b",     "label": "DeepSeek R1 7B" },
+      { "id": "ollama/deepseek-r1:14b",    "label": "DeepSeek R1 14B" },
+      { "id": "ollama/deepseek-coder-v2",  "label": "DeepSeek Coder V2" },
+      { "id": "ollama/codellama:13b",      "label": "Code Llama 13B" },
+      { "id": "ollama/llama3.2:3b",        "label": "Llama 3.2 3B" },
+      { "id": "ollama/llama3.1:8b",        "label": "Llama 3.1 8B" },
+      { "id": "ollama/mistral:7b",         "label": "Mistral 7B" },
+      { "id": "ollama/gemma3:4b",          "label": "Gemma 3 4B" },
+      { "id": "ollama/gemma3:12b",         "label": "Gemma 3 12B" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "DeepSeek",
+    "models": [
+      { "id": "deepseek/deepseek-v4-flash", "label": "V4 Flash ★", "default": true }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "Qwen",
+    "models": [
+      { "id": "qwen/qwen3-coder:free",                 "label": "Qwen3 Coder 480B" },
+      { "id": "qwen/qwen3-coder-30b-a3b-instruct",     "label": "Qwen3 Coder 30B" },
+      { "id": "qwen/qwen3-next-80b-a3b-instruct:free", "label": "Qwen3 Next 80B" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "OpenAI",
+    "models": [
+      { "id": "openai/gpt-oss-120b:free", "label": "GPT-OSS 120B" },
+      { "id": "openai/gpt-oss-20b:free",  "label": "GPT-OSS 20B" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "Google",
+    "models": [
+      { "id": "google/gemma-4-31b-it:free",     "label": "Gemma 4 31B" },
+      { "id": "google/gemma-4-26b-a4b-it:free", "label": "Gemma 4 26B A4B" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "MoonshotAI",
+    "models": [
+      { "id": "moonshotai/kimi-k2.6:free", "label": "Kimi K2.6" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "Poolside",
+    "models": [
+      { "id": "poolside/laguna-m.1:free", "label": "Laguna M.1" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "NVIDIA",
+    "models": [
+      { "id": "nvidia/nemotron-3-super-120b-a12b:free",             "label": "Nemotron 3 Super 120B" },
+      { "id": "nvidia/nemotron-3-nano-30b-a3b:free",                "label": "Nemotron 3 Nano 30B" },
+      { "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "label": "Nemotron 3 Nano Omni" }
+    ]
+  },
+  {
+    "tier": "free",
+    "provider": "OpenRouter",
+    "models": [
+      { "id": "openrouter/owl-alpha", "label": "Owl Alpha (Agentic)" },
+      { "id": "openrouter/free",      "label": "Free Router" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "DeepSeek",
+    "models": [
+      { "id": "deepseek/deepseek-v4-pro",       "label": "V4 Pro" },
+      { "id": "deepseek/deepseek-v4-flash",      "label": "V4 Flash" },
+      { "id": "deepseek/deepseek-r1-0528",       "label": "R1 0528" },
+      { "id": "deepseek/deepseek-r1",            "label": "R1" },
+      { "id": "deepseek/deepseek-v3.2",          "label": "V3.2" },
+      { "id": "deepseek/deepseek-chat-v3.1",     "label": "V3.1" },
+      { "id": "deepseek/deepseek-v3.1-terminus", "label": "V3.1 Terminus" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Anthropic",
+    "models": [
+      { "id": "anthropic/claude-opus-4.8",      "label": "Claude Opus 4.8" },
+      { "id": "anthropic/claude-opus-4.8-fast", "label": "Claude Opus 4.8 Fast" },
+      { "id": "anthropic/claude-opus-4.7",      "label": "Claude Opus 4.7" },
+      { "id": "anthropic/claude-opus-4.7-fast", "label": "Claude Opus 4.7 Fast" },
+      { "id": "anthropic/claude-opus-4.6",      "label": "Claude Opus 4.6" },
+      { "id": "anthropic/claude-opus-4.5",      "label": "Claude Opus 4.5" },
+      { "id": "anthropic/claude-opus-4.1",      "label": "Claude Opus 4.1" },
+      { "id": "anthropic/claude-opus-4",        "label": "Claude Opus 4" },
+      { "id": "anthropic/claude-sonnet-4.6",    "label": "Claude Sonnet 4.6" },
+      { "id": "anthropic/claude-sonnet-4.5",    "label": "Claude Sonnet 4.5" },
+      { "id": "anthropic/claude-sonnet-4",      "label": "Claude Sonnet 4" },
+      { "id": "anthropic/claude-3.7-sonnet",    "label": "Claude 3.7 Sonnet" },
+      { "id": "anthropic/claude-3.5-sonnet",    "label": "Claude 3.5 Sonnet" },
+      { "id": "anthropic/claude-3.5-haiku",     "label": "Claude 3.5 Haiku" },
+      { "id": "anthropic/claude-haiku-4",       "label": "Claude Haiku 4" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "OpenAI",
+    "models": [
+      { "id": "openai/gpt-5.5",            "label": "GPT-5.5" },
+      { "id": "openai/gpt-5.4",            "label": "GPT-5.4" },
+      { "id": "openai/gpt-5.4-pro",        "label": "GPT-5.4 Pro" },
+      { "id": "openai/gpt-5.4-nano",       "label": "GPT-5.4 Nano" },
+      { "id": "openai/gpt-5.3-codex",      "label": "GPT-5.3 Codex" },
+      { "id": "openai/gpt-5.2-codex",      "label": "GPT-5.2 Codex" },
+      { "id": "openai/gpt-5.2-pro",        "label": "GPT-5.2 Pro" },
+      { "id": "openai/gpt-5.1-codex-max",  "label": "GPT-5.1 Codex Max" },
+      { "id": "openai/gpt-5.1-codex",      "label": "GPT-5.1 Codex" },
+      { "id": "openai/gpt-5.1-codex-mini", "label": "GPT-5.1 Codex Mini" },
+      { "id": "openai/gpt-5-codex",        "label": "GPT-5 Codex" },
+      { "id": "openai/gpt-5-pro",          "label": "GPT-5 Pro" },
+      { "id": "openai/gpt-5",              "label": "GPT-5" },
+      { "id": "openai/gpt-5-nano",         "label": "GPT-5 Nano" },
+      { "id": "openai/o4-mini-high",       "label": "o4-mini High" },
+      { "id": "openai/o4-mini",            "label": "o4-mini" },
+      { "id": "openai/o4",                 "label": "o4" },
+      { "id": "openai/o3-pro",             "label": "o3 Pro" },
+      { "id": "openai/o3",                 "label": "o3" },
+      { "id": "openai/o3-mini",            "label": "o3-mini" },
+      { "id": "openai/o1-pro",             "label": "o1 Pro" },
+      { "id": "openai/o1",                 "label": "o1" },
+      { "id": "openai/gpt-4o",             "label": "GPT-4o" },
+      { "id": "openai/gpt-4o-mini",        "label": "GPT-4o Mini" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Google",
+    "models": [
+      { "id": "google/gemini-3.5-flash",                   "label": "Gemini 3.5 Flash" },
+      { "id": "google/gemini-3-flash-preview",             "label": "Gemini 3 Flash Preview" },
+      { "id": "google/gemini-3.1-pro-preview",             "label": "Gemini 3.1 Pro Preview" },
+      { "id": "google/gemini-3.1-pro-preview-customtools", "label": "Gemini 3.1 Pro Custom Tools" },
+      { "id": "google/gemini-3.1-flash-lite-preview",      "label": "Gemini 3.1 Flash Lite" },
+      { "id": "google/gemini-2.5-pro",                     "label": "Gemini 2.5 Pro" },
+      { "id": "google/gemini-2.5-pro-preview",             "label": "Gemini 2.5 Pro Preview" },
+      { "id": "google/gemini-2.5-flash",                   "label": "Gemini 2.5 Flash" },
+      { "id": "google/gemini-2.5-flash-lite",              "label": "Gemini 2.5 Flash Lite" },
+      { "id": "google/gemini-2.0-flash-001",               "label": "Gemini 2.0 Flash" },
+      { "id": "google/gemini-2.0-flash-lite-001",          "label": "Gemini 2.0 Flash Lite" },
+      { "id": "google/gemini-2.0-flash-thinking-exp",      "label": "Gemini 2.0 Flash Thinking" },
+      { "id": "google/gemini-1.5-pro",                     "label": "Gemini 1.5 Pro" },
+      { "id": "google/gemini-1.5-flash",                   "label": "Gemini 1.5 Flash" },
+      { "id": "google/gemma-4-31b-it",                     "label": "Gemma 4 31B" },
+      { "id": "google/gemma-3-27b-it",                     "label": "Gemma 3 27B" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Qwen",
+    "models": [
+      { "id": "qwen/qwen3-coder",                "label": "Qwen3 Coder 480B" },
+      { "id": "qwen/qwen3-coder-plus",           "label": "Qwen3 Coder Plus" },
+      { "id": "qwen/qwen3-coder-flash",          "label": "Qwen3 Coder Flash" },
+      { "id": "qwen/qwen3.7-max",                "label": "Qwen3.7 Max" },
+      { "id": "qwen/qwen3.6-max-preview",        "label": "Qwen3.6 Max Preview" },
+      { "id": "qwen/qwen3.6-flash",              "label": "Qwen3.6 Flash" },
+      { "id": "qwen/qwen3-235b-a22b",            "label": "Qwen3 235B A22B" },
+      { "id": "qwen/qwen3-max",                  "label": "Qwen3 Max" },
+      { "id": "qwen/qwen3.5-397b-a17b",          "label": "Qwen3.5 397B A17B" },
+      { "id": "qwen/qwen2.5-coder-32b-instruct", "label": "Qwen2.5 Coder 32B" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "xAI",
+    "models": [
+      { "id": "x-ai/grok-build-0.1",        "label": "Grok Build 0.1" },
+      { "id": "x-ai/grok-4.3",              "label": "Grok 4.3" },
+      { "id": "x-ai/grok-4.20",             "label": "Grok 4.20" },
+      { "id": "x-ai/grok-4.20-multi-agent", "label": "Grok 4.20 Multi-Agent" },
+      { "id": "x-ai/grok-3",                "label": "Grok 3" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Mistral",
+    "models": [
+      { "id": "mistralai/devstral-2512",                   "label": "Devstral 2" },
+      { "id": "mistralai/codestral-2508",                  "label": "Codestral 2508" },
+      { "id": "mistralai/mistral-medium-3-5",              "label": "Mistral Medium 3.5" },
+      { "id": "mistralai/mistral-small-2603",              "label": "Mistral Small 4" },
+      { "id": "mistralai/mistral-small-3.2-24b-instruct",  "label": "Mistral Small 3.2 24B" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "MoonshotAI",
+    "models": [
+      { "id": "moonshotai/kimi-k2.6",        "label": "Kimi K2.6" },
+      { "id": "moonshotai/kimi-k2.5",        "label": "Kimi K2.5" },
+      { "id": "moonshotai/kimi-k2-thinking", "label": "Kimi K2 Thinking" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Poolside",
+    "models": [
+      { "id": "poolside/laguna-m.1", "label": "Laguna M.1" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "StepFun",
+    "models": [
+      { "id": "stepfun/step-3.7-flash", "label": "Step 3.7 Flash" },
+      { "id": "stepfun/step-3.5-flash", "label": "Step 3.5 Flash" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "NVIDIA",
+    "models": [
+      { "id": "nvidia/nemotron-3-super-120b-a12b", "label": "Nemotron 3 Super 120B" },
+      { "id": "nvidia/nemotron-3-nano-30b-a3b",    "label": "Nemotron 3 Nano 30B" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Tencent",
+    "models": [
+      { "id": "tencent/hy3-preview", "label": "Hy3 Preview" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Xiaomi",
+    "models": [
+      { "id": "xiaomi/mimo-v2.5-pro", "label": "MiMo V2.5 Pro" },
+      { "id": "xiaomi/mimo-v2.5",     "label": "MiMo V2.5" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "InclusionAI",
+    "models": [
+      { "id": "inclusionai/ling-2.6-1t",    "label": "Ling 2.6 1T" },
+      { "id": "inclusionai/ling-2.6-flash",  "label": "Ling 2.6 Flash" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "MiniMax",
+    "models": [
+      { "id": "minimax/minimax-m3",   "label": "MiniMax M3" },
+      { "id": "minimax/minimax-m2.5", "label": "MiniMax M2.5" },
+      { "id": "minimax/minimax-m2.1", "label": "MiniMax M2.1" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Kwaipilot",
+    "models": [
+      { "id": "kwaipilot/kat-coder-pro-v2", "label": "KAT-Coder Pro V2" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Morph",
+    "models": [
+      { "id": "morph/morph-v3-large", "label": "Morph V3 Large" },
+      { "id": "morph/morph-v3-fast",  "label": "Morph V3 Fast" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "Z.ai",
+    "models": [
+      { "id": "z-ai/glm-5v-turbo",  "label": "GLM 5V Turbo" },
+      { "id": "z-ai/glm-4.7-flash", "label": "GLM 4.7 Flash" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "ByteDance Seed",
+    "models": [
+      { "id": "bytedance-seed/seed-1.6-flash", "label": "Seed 1.6 Flash" }
+    ]
+  },
+  {
+    "tier": "premium",
+    "provider": "OpenRouter",
+    "models": [
+      { "id": "openrouter/pareto-code", "label": "Pareto Code Router" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Anthropic",
+    "models": [
+      { "id": "direct:anthropic/claude-opus-4-5", "label": "Claude Opus 4.5" },
+      { "id": "direct:anthropic/claude-sonnet-4-5-20251001", "label": "Claude Sonnet 4.5" },
+      { "id": "direct:anthropic/claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5" },
+      { "id": "direct:anthropic/claude-3-5-sonnet-20241022", "label": "Claude 3.5 Sonnet" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "OpenAI",
+    "models": [
+      { "id": "direct:openai/gpt-4o", "label": "GPT-4o" },
+      { "id": "direct:openai/gpt-4o-mini", "label": "GPT-4o Mini" },
+      { "id": "direct:openai/o3", "label": "o3" },
+      { "id": "direct:openai/o4-mini", "label": "o4-mini" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Google",
+    "models": [
+      { "id": "direct:google/gemini-2.0-flash", "label": "Gemini 2.0 Flash" },
+      { "id": "direct:google/gemini-2.5-pro-preview-05-06", "label": "Gemini 2.5 Pro" },
+      { "id": "direct:google/gemini-1.5-flash-latest", "label": "Gemini 1.5 Flash" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Groq",
+    "models": [
+      { "id": "direct:groq/llama-3.3-70b-versatile", "label": "Llama 3.3 70B" },
+      { "id": "direct:groq/llama-3.1-8b-instant", "label": "Llama 3.1 8B Instant" },
+      { "id": "direct:groq/deepseek-r1-distill-llama-70b", "label": "DeepSeek R1 70B" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "DeepSeek",
+    "models": [
+      { "id": "direct:deepseek/deepseek-chat", "label": "DeepSeek V3" },
+      { "id": "direct:deepseek/deepseek-reasoner", "label": "DeepSeek R1" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Mistral",
+    "models": [
+      { "id": "direct:mistral/mistral-large-latest", "label": "Mistral Large" },
+      { "id": "direct:mistral/codestral-latest", "label": "Codestral" },
+      { "id": "direct:mistral/mistral-small-latest", "label": "Mistral Small" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Grok (xAI)",
+    "models": [
+      { "id": "direct:grok/grok-3", "label": "Grok 3" },
+      { "id": "direct:grok/grok-3-mini", "label": "Grok 3 Mini" }
+    ]
+  },
+  {
+    "tier": "direct",
+    "provider": "Cerebras",
+    "models": [
+      { "id": "direct:cerebras/llama-4-scout-17b-16e-instruct", "label": "Llama 4 Scout 17B" },
+      { "id": "direct:cerebras/llama3.1-70b", "label": "Llama 3.1 70B" }
+    ]
+  }
+]

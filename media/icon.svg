@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <!-- Shield / agent shape -->
+  <path d="M64 8l48 20v28c0 32-20 52-48 64-28-12-48-32-48-64V28L64 8z" fill="#7c3aed" opacity="0.9"/>
+  <!-- Lightning / AI symbol -->
+  <polygon points="80,36 52,64 64,64 48,92 56,64 44,64 72,36" fill="white"/>
+</svg>

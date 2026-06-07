@@ -1,0 +1,359 @@
+{
+  "name": "codico",
+  "displayName": "Codico",
+  "description": "Autonomous Coding Agent with live thinking visualization, file-write permissions, and OpenRouter streaming.",
+  "version": "0.0.1",
+  "publisher": "codico",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "codico-container",
+          "title": "Codico",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "codico-container": [
+        {
+          "type": "webview",
+          "id": "codico.chatView",
+          "name": "Chat",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "codico.openChat",
+        "title": "Open Chat",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.setApiKey",
+        "title": "Set OpenRouter API Key",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.setOllamaUrl",
+        "title": "Set Ollama Base URL",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.setDirectApiKey",
+        "title": "Set Direct Provider API Key",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.inlineChat",
+        "title": "Inline Chat: Edit with AI",
+        "category": "Codico",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "codico.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.toggleInlineCompletions",
+        "title": "Toggle Inline Completions",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.indexWorkspace",
+        "title": "Index Workspace (Semantic Search)",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.clearWorkspaceIndex",
+        "title": "Clear Workspace Index",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.suggestRename",
+        "title": "Suggest Rename",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.setGithubToken",
+        "title": "Set GitHub Token (for PR context)",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.showPrContext",
+        "title": "Show PR Context",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.undoLastChange",
+        "title": "Undo Last AI Change",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.redoLastChange",
+        "title": "Redo Last AI Change",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.acceptInlineDiff",
+        "title": "Accept Inline Edit",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.rejectInlineDiff",
+        "title": "Discard Inline Edit",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.generateTestsFromCoverage",
+        "title": "Generate Tests from Coverage Report",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.explainTerminalError",
+        "title": "Explain Error with Codico",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.codeLensExplain",
+        "title": "Explain Function",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.codeLensFix",
+        "title": "Fix Function",
+        "category": "Codico"
+      },
+      {
+        "command": "codico.askAboutDiffHunk",
+        "title": "Ask Codico about this diff",
+        "category": "Codico"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "codico.openChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "!terminalFocus"
+      },
+      {
+        "command": "codico.inlineChat",
+        "key": "ctrl+i",
+        "when": "editorTextFocus && !inlineChatVisible"
+      },
+      {
+        "command": "codico.acceptInlineDiff",
+        "key": "ctrl+enter",
+        "when": "editorTextFocus && codico.inlineDiffVisible"
+      },
+      {
+        "command": "codico.rejectInlineDiff",
+        "key": "escape",
+        "when": "editorTextFocus && codico.inlineDiffVisible"
+      }
+    ],
+    "menus": {
+      "scm/title": [
+        {
+          "command": "codico.generateCommitMessage",
+          "group": "navigation",
+          "when": "scmProvider == git"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "codico.askAboutDiffHunk",
+          "group": "codico@1",
+          "when": "scmProvider == git"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "codico.inlineChat",
+          "group": "codico@1",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "codico.suggestRename",
+          "group": "codico@2",
+          "when": "editorTextFocus"
+        },
+        {
+          "command": "codico.askAboutDiffHunk",
+          "group": "codico@3",
+          "when": "isInDiffEditor"
+        }
+      ],
+      "terminal/context": [
+        {
+          "command": "codico.explainTerminalError",
+          "group": "codico@1",
+          "when": "terminalHasBeenCreated"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codico",
+      "properties": {
+        "codico.model": {
+          "type": "string",
+          "default": "deepseek/deepseek-v4-flash",
+          "description": "Model ID to use. Use an OpenRouter model ID (e.g. deepseek/deepseek-v4-flash) or prefix with ollama/ to use a local Ollama model (e.g. ollama/qwen2.5-coder:7b)."
+        },
+        "codico.ollamaBaseUrl": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL for the local Ollama server. Change this if Ollama is running on a non-default port or remote host."
+        },
+        "codico.systemPrompt": {
+          "type": "string",
+          "default": "",
+          "description": "Optional custom system prompt prefix"
+        },
+        "codico.autoInjectContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically include the active file path and selection as context in each message"
+        },
+        "codico.maxIterations": {
+          "type": "number",
+          "default": 16,
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Maximum number of agentic loop iterations before stopping"
+        },
+        "codico.inlineCompletionsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable ghost-text inline completions as you type"
+        },
+        "codico.inlineCompletionsDebounceMs": {
+          "type": "number",
+          "default": 600,
+          "minimum": 200,
+          "maximum": 3000,
+          "description": "Debounce delay in ms before requesting an inline completion"
+        },
+        "codico.openTabsContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Include open editor tabs as additional context when sending messages"
+        },
+        "codico.globalHistory": {
+          "type": "boolean",
+          "default": false,
+          "description": "Persist conversation history across all workspaces (global) instead of per-workspace"
+        },
+        "codico.embeddingModel": {
+          "type": "string",
+          "default": "nomic-ai/nomic-embed-text",
+          "description": "OpenRouter model ID used to generate embeddings for semantic workspace search. Must support the /v1/embeddings endpoint."
+        },
+        "codico.autoIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically build the workspace semantic index in the background when a workspace is opened for the first time. Shows a status bar spinner; does not interrupt your work."
+        },
+        "codico.nextEditSuggestionsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show AI-predicted next edit suggestions (Tab to accept) after you make a change"
+        },
+        "codico.renameSuggestionsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Pre-fill the rename input (F2) with an AI-suggested identifier name"
+        },
+        "codico.symbolContextEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically include LSP symbol info (type, definition, references) for the symbol under cursor as context"
+        },
+        "codico.followUpSuggestionsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show 2-3 suggested follow-up questions after each AI response"
+        },
+        "codico.responseSummaryEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append a Summary and Conclusion block at the end of each AI response, before follow-up suggestions"
+        },
+        "codico.autoInjectDiagnostics": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically include all workspace Problems panel errors and warnings in the AI context preamble for every message"
+        },
+        "codico.completionNotificationsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a VS Code notification when the agent finishes a task while the window is not focused"
+        },
+        "codico.completionNotificationThresholdMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "description": "Minimum task duration (milliseconds) before a completion notification is shown"
+        },
+        "codico.proactiveErrorDetection": {
+          "type": "boolean",
+          "default": true,
+          "description": "When you open a file with errors, show an offer in the chat panel to fix them automatically"
+        },
+        "codico.codeLensEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Explain / Fix CodeLens actions above function definitions"
+        },
+        "codico.autoCompactThreshold": {
+          "type": "number",
+          "default": 100000,
+          "minimum": 10000,
+          "description": "Prompt token count above which auto-compact triggers (when Auto Compact is enabled in the chat UI)"
+        },
+        "codico.mcpServers": {
+          "type": "array",
+          "default": [],
+          "description": "List of MCP (Model Context Protocol) servers to connect to. Each entry: { name, command, args?, env? }. You can also use a .mcp.json file in the workspace root.",
+          "items": {
+            "type": "object",
+            "required": ["name", "command"],
+            "properties": {
+              "name": { "type": "string", "description": "Unique display name for this MCP server" },
+              "command": { "type": "string", "description": "Executable to run (e.g. npx, node, python)" },
+              "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments to pass to the command" },
+              "env": { "type": "object", "description": "Extra environment variables for the server process", "additionalProperties": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "playwright-core": "^1.60.0"
+  }
+}

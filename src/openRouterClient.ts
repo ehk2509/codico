@@ -1,0 +1,399 @@
+import * as https from 'https';
+
+export type StreamChunk =
+    | { type: 'thinking'; text: string }
+    | { type: 'content'; text: string }
+    | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number }
+    | { type: 'finish'; reason: string }       // non-'stop' finish_reason from the model
+    | { type: 'stream_error'; message: string }; // error object inside an SSE event
+
+export type MessageContentPart =
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } };
+
+export type ChatMessage = {
+    role: 'system' | 'user' | 'assistant';
+    content: string | MessageContentPart[];
+};
+
+export const CHAT_SYSTEM_PROMPT = `You are Codico, a helpful coding assistant inside Visual Studio Code.
+
+## Tools (read-only)
+
+\`\`\`read_file
+filepath: <relative path>
+\`\`\`
+\`\`\`list_directory
+dirpath: <relative path, or . for root>
+\`\`\`
+\`\`\`search_files
+pattern: <text or regex>
+glob: <optional, e.g. **/*.ts>
+regex: true|false
+\`\`\`
+\`\`\`find_files
+pattern: <filename or glob>
+dirpath: <optional subdirectory>
+\`\`\`
+\`\`\`get_diagnostics
+filepath: <relative path, or omit for workspace>
+\`\`\`
+\`\`\`fetch_url
+url: <full URL>
+\`\`\`
+\`\`\`lsp_symbol
+query: <symbol name>
+\`\`\`
+
+## Rules
+1. Explore before answering: use search_files or find_files to locate relevant code, then read_file to inspect it.
+2. Give precise, code-grounded answers with file paths and line references where relevant.
+3. Do NOT emit write_file, edit_file, run_terminal, or any browser tool calls — you are in read-only Ask mode.
+4. One sentence before each tool call so the user sees what you are doing.
+5. Emit one tool fence at a time. Continue autonomously after each result.`;
+
+export const SYSTEM_PROMPT = `You are Codico, an autonomous coding assistant inside Visual Studio Code.
+
+## Tools
+
+Invoke tools using these exact fenced-code-block formats. One tool per response block; results come back as a follow-up.
+
+\`\`\`read_file
+filepath: <relative path>
+\`\`\`
+\`\`\`list_directory
+dirpath: <relative path, or . for root>
+\`\`\`
+\`\`\`write_file
+filepath: <relative path>
+content:
+<full file content>
+\`\`\`
+\`\`\`edit_file
+filepath: <relative path>
+old_str:
+<exact string to replace — whitespace must match>
+new_str:
+<replacement>
+\`\`\`
+\`\`\`run_terminal
+command: <shell command>
+\`\`\`
+\`\`\`search_files
+pattern: <text or regex>
+glob: <optional, e.g. **/*.ts>
+regex: true|false
+\`\`\`
+\`\`\`find_files
+pattern: <filename or glob>
+dirpath: <optional subdirectory>
+\`\`\`
+\`\`\`get_diagnostics
+filepath: <relative path, or omit for workspace>
+\`\`\`
+\`\`\`fetch_url
+url: <full URL>
+\`\`\`
+\`\`\`browser_navigate
+url: <full URL>
+\`\`\`
+\`\`\`browser_click
+selector: <CSS selector or visible text>
+\`\`\`
+\`\`\`browser_type
+selector: <CSS selector>
+text: <text to type>
+submit: true|false
+\`\`\`
+\`\`\`browser_get_text
+selector: <CSS selector, or omit for full page>
+\`\`\`
+\`\`\`browser_screenshot
+\`\`\`
+\`\`\`browser_close
+\`\`\`
+\`\`\`lsp_symbol
+query: <symbol name>
+\`\`\`
+\`\`\`debug_get_variables
+frame_id: <optional frame index, 0 = top of stack>
+\`\`\`
+\`\`\`debug_get_callstack
+\`\`\`
+\`\`\`debug_list_breakpoints
+\`\`\`
+\`\`\`update_todo
+- [ ] pending task
+- [x] completed task
+- [~] currently working on this
+- [!] failed task
+\`\`\`
+
+## Rules
+1. Explore before editing: list_directory → read_file, then change.
+2. Prefer edit_file for partial changes; write_file only for whole-file rewrites.
+3. write_file must contain the COMPLETE file — never truncate.
+4. edit_file old_str must match exactly once, including all whitespace.
+5. One sentence before each tool call so the user sees what you are doing.
+6. Emit one tool fence at a time. Continue autonomously after each result.
+7. Run get_diagnostics after code changes to verify no new errors.
+8. Use fetch_url for static docs/READMEs; use browser_navigate for SPAs and interactive pages.
+9. Write clean, idiomatic, production-quality code.
+10. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise).
+11. For multi-step tasks, call update_todo at the start to declare your plan, then call it again after each step to check off completed items and highlight the active one. Use [~] for the item you are currently working on, [x] when done, [!] if a step failed.
+
+## Clarification
+
+When the task is ambiguous, ask before proceeding using this block (renders as interactive UI):
+
+\`\`\`
+<clarify>
+question: <your question>
+type: single|multi
+options:
+- Option A
+- Option B
+free_input: true
+</clarify>
+\`\`\`
+
+Do not emit tool calls in the same response as a \`<clarify>\` block.`;
+
+/**
+ * Streams a chat completion from OpenRouter.
+ * Yields thinking chunks (from delta.reasoning or <think> tags) and content chunks separately.
+ */
+export function streamOpenRouter(
+    apiKey: string,
+    history: ChatMessage[],
+    model: string,
+    customSystemPromptPrefix?: string,
+    signal?: AbortSignal,
+    thinkingEffort: 'high' | 'medium' | 'low' = 'high',
+    overrideSystemPrompt?: string
+): AsyncIterable<StreamChunk> {
+    const basePrompt = overrideSystemPrompt ?? SYSTEM_PROMPT;
+    const effectiveSystemPrompt = customSystemPromptPrefix
+        ? `${basePrompt}\n\n${customSystemPromptPrefix}`
+        : basePrompt;
+
+    return {
+        [Symbol.asyncIterator]() {
+            // Queue-based async iterator: events pushed by the HTTP response
+            // are drained by successive next() calls.
+            const queue: Array<StreamChunk | null | Error> = [];
+            let resolver: (() => void) | null = null;
+
+            function wake(): void {
+                if (resolver) {
+                    const r = resolver;
+                    resolver = null;
+                    r();
+                }
+            }
+
+            function push(item: StreamChunk | null | Error): void {
+                queue.push(item);
+                wake();
+            }
+
+            // Handle abort signal
+            if (signal) {
+                if (signal.aborted) {
+                    push(null);
+                } else {
+                    signal.addEventListener('abort', () => { push(null); }, { once: true });
+                }
+            }
+
+            // ── <think> tag state machine ─────────────────────────────────
+            let inThinkBlock = false;
+
+            function processContentChunk(raw: string): void {
+                if (!raw) { return; }
+
+                if (!inThinkBlock) {
+                    const tIdx = raw.indexOf('<think>');
+                    if (tIdx !== -1) {
+                        const before = raw.slice(0, tIdx);
+                        if (before) { push({ type: 'content', text: before }); }
+                        inThinkBlock = true;
+                        processContentChunk(raw.slice(tIdx + 7));
+                    } else {
+                        push({ type: 'content', text: raw });
+                    }
+                } else {
+                    const eIdx = raw.indexOf('</think>');
+                    if (eIdx !== -1) {
+                        const inside = raw.slice(0, eIdx);
+                        if (inside) { push({ type: 'thinking', text: inside }); }
+                        inThinkBlock = false;
+                        processContentChunk(raw.slice(eIdx + 8));
+                    } else {
+                        push({ type: 'thinking', text: raw });
+                    }
+                }
+            }
+
+            // ── Build request ─────────────────────────────────────────────
+            const messages: ChatMessage[] = [
+                { role: 'system', content: effectiveSystemPrompt },
+                ...history,
+            ];
+
+            const body = JSON.stringify({
+                model,
+                messages,
+                stream: true,
+                max_tokens: 131072,   // 128K — large enough for long responses while staying within most models' context windows
+                include_reasoning: true,
+                reasoning: { effort: thinkingEffort },
+                stream_options: { include_usage: true },
+            });
+
+            let attempt = 0;
+            const MAX_RETRIES = 3;
+            const BASE_DELAY_MS = 5000;
+
+            function doRequest(): void {
+                if (signal?.aborted) { push(null); return; }
+                attempt++;
+                const req = https.request(
+                {
+                    hostname: 'openrouter.ai',
+                    path: '/api/v1/chat/completions',
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${apiKey}`,
+                        'HTTP-Referer': 'vscode-codico',
+                        'X-Title': 'Codico',
+                        'Content-Length': Buffer.byteLength(body),
+                    },
+                    signal: signal as AbortSignal,
+                } as https.RequestOptions,
+                (res) => {
+                    // Retry on 429 with exponential backoff
+                    if (res.statusCode === 429 && attempt <= MAX_RETRIES) {
+                        const retryAfterHeader = res.headers['retry-after'];
+                        // retry-after can be a number of seconds OR an HTTP-date string.
+                        // parseInt('Sat, 07 Jun ...') = NaN → fall back to exponential backoff.
+                        const parsedSeconds = retryAfterHeader
+                            ? parseInt(retryAfterHeader as string, 10)
+                            : NaN;
+                        const waitMs = Number.isFinite(parsedSeconds) && parsedSeconds > 0
+                            ? Math.min(parsedSeconds * 1000, 60_000)
+                            : Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), 60_000);
+                        push({ type: 'thinking', text: `\n[Rate limited — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})…]\n` });
+                        res.resume(); // drain so socket is freed
+                        setTimeout(() => { if (!signal?.aborted) { doRequest(); } else { push(null); } }, waitMs);
+                        return;
+                    }
+
+                    // Surface other HTTP-level errors (4xx / 5xx)
+                    if (res.statusCode && res.statusCode >= 400) {
+                        let errBody = '';
+                        res.on('data', (d: Buffer) => { errBody += d.toString(); });
+                        res.on('end', () => {
+                            push(new Error(
+                                `OpenRouter HTTP ${res.statusCode}: ${errBody.slice(0, 300)}`
+                            ));
+                        });
+                        return;
+                    }
+
+                    let buffer = '';
+                    // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
+                    let streamEnded = false;
+                    function pushEnd(): void { if (!streamEnded) { streamEnded = true; push(null); } }
+
+                    function processSSELine(trimmed: string): void {
+                        if (!trimmed) { return; }
+                        if (trimmed === 'data: [DONE]') { pushEnd(); return; }
+                        if (!trimmed.startsWith('data: ')) { return; }
+                        try {
+                            const json = JSON.parse(trimmed.slice(6));
+                            if (json.error) {
+                                const msg: string = json.error?.message ?? JSON.stringify(json.error);
+                                push({ type: 'stream_error', message: msg });
+                                pushEnd();
+                                return;
+                            }
+                            const delta = json.choices?.[0]?.delta as
+                                | { reasoning?: string; content?: string }
+                                | undefined;
+                            if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
+                            if (typeof delta?.content === 'string') { processContentChunk(delta.content); }
+                            const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
+                            if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
+                                push({ type: 'finish', reason: finishReason });
+                            }
+                            const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+                            if (usage?.total_tokens) {
+                                push({
+                                    type: 'usage',
+                                    promptTokens: usage.prompt_tokens ?? 0,
+                                    completionTokens: usage.completion_tokens ?? 0,
+                                    totalTokens: usage.total_tokens,
+                                });
+                            }
+                        } catch { /* ignore malformed SSE frames */ }
+                    }
+
+                    function flushBuffer(): void {
+                        if (!buffer) { return; }
+                        const remaining = buffer;
+                        buffer = '';
+                        for (const line of remaining.split('\n')) { processSSELine(line.trim()); }
+                    }
+
+                    res.on('data', (data: Buffer) => {
+                        buffer += data.toString();
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() ?? '';
+                        for (const line of lines) { processSSELine(line.trim()); }
+                    });
+
+                    res.on('end', () => {
+                        flushBuffer();
+                        pushEnd();
+                    });
+                    res.on('error', (err: Error) => {
+                        if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
+                        else { push(err); }
+                    });
+                }
+            );
+
+                req.on('error', (err: Error) => {
+                    if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
+                    else { push(err); }
+                });
+                req.write(body);
+                req.end();
+            }
+
+            doRequest();
+
+            // ── Async iterator implementation ─────────────────────────────
+            return {
+                async next(): Promise<IteratorResult<StreamChunk>> {
+                    // Wait until at least one item is queued
+                    while (queue.length === 0) {
+                        await new Promise<void>((r) => { resolver = r; });
+                    }
+
+                    const item = queue.shift()!;
+
+                    if (item === null) {
+                        return { value: undefined as unknown as StreamChunk, done: true };
+                    }
+                    if (item instanceof Error) {
+                        throw item;
+                    }
+                    return { value: item, done: false };
+                },
+            };
+        },
+    };
+}
