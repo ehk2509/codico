@@ -20,6 +20,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
+import { isRecoverableStreamInterruption, normalizeFinishReason } from './streamCompletion';
 
 /**
  * Returns true if the URL's hostname resolves to a private, loopback, or
@@ -929,6 +930,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._followUpAbortController = null;
 
         const MAX_ITERATIONS = maxIterations;
+        const MAX_STREAM_RECOVERY_ATTEMPTS = 2;
+        let streamRecoveryAttempts = 0;
 
         // Regex for complete tool fences (global — lastIndex is managed manually)
         const TOOL_FENCE_RE = /```(write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo)\r?\n([\s\S]*?)```/g;
@@ -959,6 +962,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
                 let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
                 const inlineToolResults: string[] = [];
+                let recoverableStreamInterruption: string | null = null;
+                let recoverableFinishReason: string | null = null;
 
                 const chatModeOverride = this._chatMode ? CHAT_SYSTEM_PROMPT : undefined;
                 for await (const chunk of isOllama
@@ -1044,9 +1049,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
                     } else if (chunk.type === 'finish') {
-                        this._post({ type: 'streamFinishReason', id: msgId, reason: chunk.reason });
+                        const reason = normalizeFinishReason(chunk.reason);
+                        if (reason === 'length') {
+                            recoverableFinishReason = reason;
+                        } else {
+                            this._post({ type: 'streamFinishReason', id: msgId, reason });
+                        }
                     } else if (chunk.type === 'stream_error') {
-                        this._post({ type: 'streamError', id: msgId, message: chunk.message });
+                        if (isRecoverableStreamInterruption(chunk.message)) {
+                            recoverableStreamInterruption = chunk.message;
+                        } else {
+                            this._post({ type: 'streamError', id: msgId, message: chunk.message });
+                        }
                     }
                 }
 
@@ -1065,7 +1079,55 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     break;
                 }
 
-                this._history.push({ role: 'assistant', content: fullContent });
+                this._history.push({
+                    role: 'assistant',
+                    content: fullContent || (recoverableStreamInterruption ? '[Stream interrupted before content]' : ''),
+                });
+
+                // Unexpected transport EOFs are recoverable: preserve the partial
+                // assistant response and any tool results, then ask the model to
+                // continue from the exact cutoff point. This avoids replaying tools or
+                // discarding useful partial output. Recovery is deliberately bounded.
+                if (recoverableStreamInterruption || recoverableFinishReason === 'length') {
+                    if (streamRecoveryAttempts < MAX_STREAM_RECOVERY_ATTEMPTS) {
+                        streamRecoveryAttempts++;
+
+                        const recoveryParts: string[] = [];
+                        if (inlineToolResults.length > 0) {
+                            recoveryParts.push(`[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`);
+                        }
+
+                        const cause = recoverableStreamInterruption
+                            ? 'The previous assistant response was interrupted by the network/stream transport.'
+                            : 'The previous assistant response reached the provider output-token limit.';
+
+                        recoveryParts.push(
+                            '[System Recovery]\n' +
+                            cause + ' ' +
+                            'Continue exactly from where it stopped. Do not repeat text that was already produced. ' +
+                            'Do not repeat tool calls that already completed. If the cutoff occurred inside an incomplete tool fence, ' +
+                            'start that tool call again as one complete valid fence.'
+                        );
+                        this._history.push({ role: 'user', content: recoveryParts.join('\n\n') });
+
+                        // Recovery should not consume an agentic tool iteration.
+                        i--;
+                        continue;
+                    }
+
+                    if (recoverableFinishReason === 'length') {
+                        this._post({ type: 'streamFinishReason', id: msgId, reason: 'length' });
+                    } else {
+                        this._post({
+                            type: 'streamError',
+                            id: msgId,
+                            message: `${recoverableStreamInterruption} Automatic recovery failed after ${MAX_STREAM_RECOVERY_ATTEMPTS} attempts.`,
+                        });
+                    }
+                    break;
+                }
+
+                streamRecoveryAttempts = 0;
 
                 if (inlineToolResults.length === 0) { break; }
 

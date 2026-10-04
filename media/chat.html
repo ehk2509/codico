@@ -3603,9 +3603,7 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
   function showStreamFinishReason(msgId, reason) {
     var label = FINISH_REASON_LABELS[reason] || ('⚠ Stream ended: ' + reason);
     var wrap = document.getElementById('msg-' + msgId);
-    var ao   = curAoEl || (wrap && wrap.querySelector('.agent-out'));
-    var target = ao || wrap;
-    if (!target) { return; }
+    if (!wrap) { return; }
     var el = document.createElement('div');
     el.className = 'stream-stop-notice warn';
     var txt = document.createElement('span');
@@ -3623,23 +3621,26 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
       });
       el.appendChild(btn);
     }
-    target.appendChild(el);
+    var copyBtn = document.getElementById('copy-' + msgId);
+    if (copyBtn) { wrap.insertBefore(el, copyBtn); }
+    else { wrap.appendChild(el); }
     scrollBottom();
   }
 
   /** Append an error notice inside the assistant message bubble (SSE-level error). */
   function showStreamInlineError(msgId, message) {
     var wrap = document.getElementById('msg-' + msgId);
-    var ao   = curAoEl || (wrap && wrap.querySelector('.agent-out'));
-    var target = ao || wrap;
-    if (!target) { return; }
+    if (!wrap) { return; }
     var isCtxOverflow = /context.length|maximum context|context window|token.limit|too.long|exceed/i.test(message);
+    var isInterrupted = /stream interrupted|stream transport error|automatic recovery failed/i.test(message);
     var el = document.createElement('div');
     el.className = 'stream-stop-notice ' + (isCtxOverflow ? 'warn' : 'err');
     var txt = document.createElement('span');
     txt.textContent = isCtxOverflow
       ? '⚠ Context limit reached — history is too long for the model.'
-      : '✕ Stream error: ' + message;
+      : isInterrupted
+        ? '⚠ Connection interrupted — Codico could not resume automatically.'
+        : '✕ Stream error: ' + message;
     el.appendChild(txt);
     if (isCtxOverflow) {
       var btn = document.createElement('button');
@@ -3653,8 +3654,21 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
         vscode.postMessage({ type: 'compactChat' });
       });
       el.appendChild(btn);
+    } else if (isInterrupted) {
+      var retryBtn = document.createElement('button');
+      retryBtn.className = 'continue-btn';
+      retryBtn.textContent = '▶ Continue';
+      retryBtn.title = 'Continue from the partial response';
+      retryBtn.addEventListener('click', function() {
+        retryBtn.disabled = true;
+        retryBtn.textContent = '…';
+        vscode.postMessage({ type: 'sendMessage', text: 'Continue exactly from where you stopped.', contentParts: undefined });
+      });
+      el.appendChild(retryBtn);
     }
-    target.appendChild(el);
+    var copyBtn = document.getElementById('copy-' + msgId);
+    if (copyBtn) { wrap.insertBefore(el, copyBtn); }
+    else { wrap.appendChild(el); }
     scrollBottom();
   }
 
