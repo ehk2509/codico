@@ -225,8 +225,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const media = this._extensionUri.fsPath + '/media';
         try {
             this._cachedModelsJson = await fs.promises.readFile(media + '/models.json', 'utf8');
-            const models = JSON.parse(this._cachedModelsJson) as Array<{ id?: string }>;
-            this._validModelIds = new Set(models.map(m => m.id).filter(Boolean) as string[]);
+            const groups = JSON.parse(this._cachedModelsJson) as Array<{
+                models?: Array<{ id?: string }>;
+            }>;
+            this._validModelIds = new Set(
+                groups
+                    .flatMap(group => group.models ?? [])
+                    .map(model => model.id)
+                    .filter((id): id is string => Boolean(id))
+            );
         } catch { /* models.json missing — _validModelIds stays null → skip validation */ }
         try {
             this._cachedHtml = await fs.promises.readFile(media + '/chat.html', 'utf8');
