@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 export interface WriteFileTool {
     type: 'write_file';
     filepath: string;
@@ -135,143 +137,241 @@ export type ToolCall =
     | UpdateTodoTool;
 
 /**
+ * Identity of a tool call for loop detection: the tool type plus a hash of all
+ * of its arguments. Two calls only share a fingerprint when they are truly
+ * identical (e.g. the same file written with the same content).
+ */
+export function toolFingerprint(tool: ToolCall): string {
+    const hash = createHash('sha1').update(JSON.stringify(tool)).digest('hex');
+    return `${tool.type}:${hash}`;
+}
+
+const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo';
+const TOOL_FENCE_OPEN_RE = new RegExp('(`{3,})(' + TOOL_NAMES + ')[ \\t]*\\r?\\n', 'g');
+const FENCE_LINE_RE = /^ {0,3}(`{3,})(.*)$/;
+
+export interface ToolFence {
+    type: string;
+    /** Index of the opening backticks. */
+    start: number;
+    /** Index just past the closing backticks. */
+    end: number;
+    body: string;
+}
+
+export interface ToolFenceScan {
+    fences: ToolFence[];
+    /** Start of a tool fence that has not been closed yet, or -1. */
+    unclosedStart: number;
+    unclosedType?: string;
+    /** Body received so far for the unclosed fence. */
+    unclosedBody?: string;
+}
+
+/**
+ * Finds tool fences in model output. Unlike a plain regex this understands code
+ * blocks nested in the fence body (e.g. a README written with write_file): a
+ * fence line with an info string ("```bash") opens a nested block and the next
+ * bare fence line closes it, so only the matching bare line closes the tool fence.
+ * Fences opened with N backticks (e.g. ````write_file) only close on a bare line
+ * of at least N backticks, so shorter fences inside are plain content.
+ *
+ * A closing line is only accepted once its newline has arrived (the stream may
+ * still extend it to "```bash"), unless `final` is set because the stream ended.
+ */
+export function scanToolFences(text: string, from = 0, final = false): ToolFenceScan {
+    const fences: ToolFence[] = [];
+    let pos = from;
+    for (;;) {
+        TOOL_FENCE_OPEN_RE.lastIndex = pos;
+        const open = TOOL_FENCE_OPEN_RE.exec(text);
+        if (!open) { return { fences, unclosedStart: -1 }; }
+
+        const fenceLen = open[1].length;
+        const bodyStart = open.index + open[0].length;
+        let depth = 0;
+        let lineStart = bodyStart;
+        let closed: ToolFence | null = null;
+        while (lineStart <= text.length) {
+            const nl = text.indexOf('\n', lineStart);
+            const terminated = nl !== -1;
+            const lineEnd = terminated ? nl : text.length;
+            const fm = FENCE_LINE_RE.exec(text.slice(lineStart, lineEnd).replace(/\r$/, ''));
+            if (fm && fm[1].length >= fenceLen) {
+                if (fm[2].trim() !== '') {
+                    depth++;
+                } else if (depth > 0) {
+                    depth--;
+                } else if (terminated || final) {
+                    const bodyEnd = Math.max(bodyStart, lineStart - 1);
+                    closed = {
+                        type: open[2],
+                        start: open.index,
+                        end: lineStart + fm[0].indexOf('`') + fm[1].length,
+                        body: text.slice(bodyStart, bodyEnd).replace(/\r$/, ''),
+                    };
+                    break;
+                }
+            }
+            if (!terminated) { break; }
+            lineStart = nl + 1;
+        }
+
+        if (!closed) {
+            return { fences, unclosedStart: open.index, unclosedType: open[2], unclosedBody: text.slice(bodyStart) };
+        }
+        fences.push(closed);
+        pos = closed.end;
+    }
+}
+
+/**
+ * Index of a tool fence opened at or after `from` that is never closed, or -1.
+ * Happens when a model ends its response without writing the closing ```.
+ */
+export function findUnclosedToolFence(text: string, from = 0): number {
+    return scanToolFences(text, from, true).unclosedStart;
+}
+
+/**
  * Parses all tool call fenced blocks from the model's raw output.
  */
 export function parseToolCalls(rawContent: string): ToolCall[] {
     const tools: ToolCall[] = [];
-    const blockRegex = /```(write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo)\r?\n([\s\S]*?)\n```/g;
-    let match: RegExpExecArray | null;
+    for (const fence of scanToolFences(rawContent, 0, true).fences) {
+        tools.push(...parseToolBody(fence.type, fence.body));
+    }
+    return tools;
+}
 
-    while ((match = blockRegex.exec(rawContent)) !== null) {
-        const toolType = match[1];
-        const body = match[2];
-
-        switch (toolType) {
-            case 'write_file': {
-                const tool = parseWriteFileBlock(body);
-                if (tool) { tools.push(tool); }
-                break;
+/** Parses the body of a single tool fence (the text between its opening and closing lines). */
+export function parseToolBody(toolType: string, body: string): ToolCall[] {
+    const tools: ToolCall[] = [];
+    switch (toolType) {
+        case 'write_file': {
+            const tool = parseWriteFileBlock(body);
+            if (tool) { tools.push(tool); }
+            break;
+        }
+        case 'read_file': {
+            const fp = extractField(body, 'filepath');
+            if (fp) { tools.push({ type: 'read_file', filepath: fp }); }
+            break;
+        }
+        case 'list_directory': {
+            const dp = extractField(body, 'dirpath') ?? '.';
+            tools.push({ type: 'list_directory', dirpath: dp });
+            break;
+        }
+        case 'run_terminal': {
+            const cmd = extractMultilineField(body, 'command');
+            if (cmd) { tools.push({ type: 'run_terminal', command: cmd }); }
+            break;
+        }
+        case 'search_files': {
+            const pattern = extractField(body, 'pattern');
+            if (pattern) {
+                const glob = extractField(body, 'glob');
+                const regexRaw = extractField(body, 'regex');
+                const isRegex = regexRaw === 'true';
+                tools.push({ type: 'search_files', pattern, glob, isRegex });
             }
-            case 'read_file': {
-                const fp = extractField(body, 'filepath');
-                if (fp) { tools.push({ type: 'read_file', filepath: fp }); }
-                break;
+            break;
+        }
+        case 'find_files': {
+            const pattern = extractField(body, 'pattern');
+            if (pattern) {
+                const dirpath = extractField(body, 'dirpath');
+                tools.push({ type: 'find_files', pattern, dirpath });
             }
-            case 'list_directory': {
-                const dp = extractField(body, 'dirpath') ?? '.';
-                tools.push({ type: 'list_directory', dirpath: dp });
-                break;
+            break;
+        }
+        case 'edit_file': {
+            const tool = parseEditFileBlock(body);
+            if (tool) { tools.push(tool); }
+            break;
+        }
+        case 'get_diagnostics': {
+            const fp = extractField(body, 'filepath');
+            tools.push({ type: 'get_diagnostics', filepath: fp });
+            break;
+        }
+        case 'fetch_url': {
+            const url = extractField(body, 'url');
+            if (url) { tools.push({ type: 'fetch_url', url }); }
+            break;
+        }
+        case 'browser_navigate': {
+            const url = extractField(body, 'url');
+            if (url) { tools.push({ type: 'browser_navigate', url }); }
+            break;
+        }
+        case 'browser_click': {
+            const selector = extractField(body, 'selector');
+            if (selector) { tools.push({ type: 'browser_click', selector }); }
+            break;
+        }
+        case 'browser_type': {
+            const selector = extractField(body, 'selector');
+            const text = extractFieldAllowEmpty(body, 'text');
+            if (selector && text != null) {
+                const submitRaw = extractField(body, 'submit');
+                tools.push({ type: 'browser_type', selector, text, submit: submitRaw === 'true' });
             }
-            case 'run_terminal': {
-                const cmd = extractMultilineField(body, 'command');
-                if (cmd) { tools.push({ type: 'run_terminal', command: cmd }); }
-                break;
+            break;
+        }
+        case 'browser_get_text': {
+            const selector = extractField(body, 'selector');
+            tools.push({ type: 'browser_get_text', selector });
+            break;
+        }
+        case 'browser_screenshot': {
+            tools.push({ type: 'browser_screenshot' });
+            break;
+        }
+        case 'browser_close': {
+            tools.push({ type: 'browser_close' });
+            break;
+        }
+        case 'mcp_call': {
+            const tool = parseMcpCallBlock(body);
+            if (tool) { tools.push(tool); }
+            break;
+        }
+        case 'lsp_symbol': {
+            const query = extractField(body, 'query');
+            if (query) { tools.push({ type: 'lsp_symbol', query }); }
+            break;
+        }
+        case 'debug_get_variables': {
+            const frameIdRaw = extractField(body, 'frame_id');
+            const frameId = frameIdRaw ? parseInt(frameIdRaw, 10) : undefined;
+            tools.push({ type: 'debug_get_variables', frameId: Number.isNaN(frameId) ? undefined : frameId });
+            break;
+        }
+        case 'debug_get_callstack': {
+            tools.push({ type: 'debug_get_callstack' });
+            break;
+        }
+        case 'debug_list_breakpoints': {
+            tools.push({ type: 'debug_list_breakpoints' });
+            break;
+        }
+        case 'update_todo': {
+            const items: UpdateTodoTool['items'] = [];
+            for (const line of body.split('\n')) {
+                const trimmed = line.trim();
+                const doneMatch = /^-\s+\[x\]\s+(.+)/i.exec(trimmed);
+                const activeMatch = /^-\s+\[~\]\s+(.+)/.exec(trimmed);
+                const failMatch = /^-\s+\[!\]\s+(.+)/.exec(trimmed);
+                const pendingMatch = /^-\s+\[\s\]\s+(.+)/.exec(trimmed);
+                if (doneMatch)    { items.push({ status: 'done',    text: doneMatch[1].trim() }); }
+                else if (activeMatch) { items.push({ status: 'active', text: activeMatch[1].trim() }); }
+                else if (failMatch)   { items.push({ status: 'failed', text: failMatch[1].trim() }); }
+                else if (pendingMatch){ items.push({ status: 'pending',text: pendingMatch[1].trim() }); }
             }
-            case 'search_files': {
-                const pattern = extractField(body, 'pattern');
-                if (pattern) {
-                    const glob = extractField(body, 'glob');
-                    const regexRaw = extractField(body, 'regex');
-                    const isRegex = regexRaw === 'true';
-                    tools.push({ type: 'search_files', pattern, glob, isRegex });
-                }
-                break;
-            }
-            case 'find_files': {
-                const pattern = extractField(body, 'pattern');
-                if (pattern) {
-                    const dirpath = extractField(body, 'dirpath');
-                    tools.push({ type: 'find_files', pattern, dirpath });
-                }
-                break;
-            }
-            case 'edit_file': {
-                const tool = parseEditFileBlock(body);
-                if (tool) { tools.push(tool); }
-                break;
-            }
-            case 'get_diagnostics': {
-                const fp = extractField(body, 'filepath');
-                tools.push({ type: 'get_diagnostics', filepath: fp });
-                break;
-            }
-            case 'fetch_url': {
-                const url = extractField(body, 'url');
-                if (url) { tools.push({ type: 'fetch_url', url }); }
-                break;
-            }
-            case 'browser_navigate': {
-                const url = extractField(body, 'url');
-                if (url) { tools.push({ type: 'browser_navigate', url }); }
-                break;
-            }
-            case 'browser_click': {
-                const selector = extractField(body, 'selector');
-                if (selector) { tools.push({ type: 'browser_click', selector }); }
-                break;
-            }
-            case 'browser_type': {
-                const selector = extractField(body, 'selector');
-                const text = extractFieldAllowEmpty(body, 'text');
-                if (selector && text != null) {
-                    const submitRaw = extractField(body, 'submit');
-                    tools.push({ type: 'browser_type', selector, text, submit: submitRaw === 'true' });
-                }
-                break;
-            }
-            case 'browser_get_text': {
-                const selector = extractField(body, 'selector');
-                tools.push({ type: 'browser_get_text', selector });
-                break;
-            }
-            case 'browser_screenshot': {
-                tools.push({ type: 'browser_screenshot' });
-                break;
-            }
-            case 'browser_close': {
-                tools.push({ type: 'browser_close' });
-                break;
-            }
-            case 'mcp_call': {
-                const tool = parseMcpCallBlock(body);
-                if (tool) { tools.push(tool); }
-                break;
-            }
-            case 'lsp_symbol': {
-                const query = extractField(body, 'query');
-                if (query) { tools.push({ type: 'lsp_symbol', query }); }
-                break;
-            }
-            case 'debug_get_variables': {
-                const frameIdRaw = extractField(body, 'frame_id');
-                const frameId = frameIdRaw ? parseInt(frameIdRaw, 10) : undefined;
-                tools.push({ type: 'debug_get_variables', frameId: Number.isNaN(frameId) ? undefined : frameId });
-                break;
-            }
-            case 'debug_get_callstack': {
-                tools.push({ type: 'debug_get_callstack' });
-                break;
-            }
-            case 'debug_list_breakpoints': {
-                tools.push({ type: 'debug_list_breakpoints' });
-                break;
-            }
-            case 'update_todo': {
-                const items: UpdateTodoTool['items'] = [];
-                for (const line of body.split('\n')) {
-                    const trimmed = line.trim();
-                    const doneMatch = /^-\s+\[x\]\s+(.+)/i.exec(trimmed);
-                    const activeMatch = /^-\s+\[~\]\s+(.+)/.exec(trimmed);
-                    const failMatch = /^-\s+\[!\]\s+(.+)/.exec(trimmed);
-                    const pendingMatch = /^-\s+\[\s\]\s+(.+)/.exec(trimmed);
-                    if (doneMatch)    { items.push({ status: 'done',    text: doneMatch[1].trim() }); }
-                    else if (activeMatch) { items.push({ status: 'active', text: activeMatch[1].trim() }); }
-                    else if (failMatch)   { items.push({ status: 'failed', text: failMatch[1].trim() }); }
-                    else if (pendingMatch){ items.push({ status: 'pending',text: pendingMatch[1].trim() }); }
-                }
-                if (items.length > 0) { tools.push({ type: 'update_todo', items }); }
-                break;
-            }
+            if (items.length > 0) { tools.push({ type: 'update_todo', items }); }
+            break;
         }
     }
 

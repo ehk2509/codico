@@ -134,14 +134,16 @@ frame_id: <optional frame index, 0 = top of stack>
 1. Explore before editing: list_directory → read_file, then change.
 2. Prefer edit_file for partial changes; write_file only for whole-file rewrites.
 3. write_file must contain the COMPLETE file — never truncate.
+   Code blocks inside write_file/edit_file content are fine, but always give their opening fence a language (\`\`\`bash, \`\`\`text). Alternatively open the tool fence with four backticks (\`\`\`\`write_file) and close it with four.
 4. edit_file old_str must match exactly once, including all whitespace.
-5. One sentence before each tool call so the user sees what you are doing.
+5. One sentence before each tool call so the user sees what you are doing, followed by the tool fence in the same response — never end a response after announcing an action.
 6. Emit one tool fence at a time. Continue autonomously after each result.
 7. Run get_diagnostics after code changes to verify no new errors.
 8. Use fetch_url for static docs/READMEs; use browser_navigate for SPAs and interactive pages.
 9. Write clean, idiomatic, production-quality code.
 10. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise).
 11. For multi-step tasks, call update_todo at the start to declare your plan, then call it again after each step to check off completed items and highlight the active one. Use [~] for the item you are currently working on, [x] when done, [!] if a step failed.
+12. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
 
 ## Clarification
 

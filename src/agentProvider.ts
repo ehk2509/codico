@@ -8,7 +8,7 @@ import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
-import { parseToolCalls, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
+import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
 import { BrowserManager } from './browserManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
@@ -20,7 +20,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
-import { isRecoverableStreamInterruption, normalizeFinishReason } from './streamCompletion';
+import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 
 /**
  * Returns true if the URL's hostname resolves to a private, loopback, or
@@ -132,10 +132,25 @@ interface ThreadEntry {
     hasBeenNamed?: boolean;
 }
 
+/** A webview event recorded while an assistant reply streamed, without its message id. */
+type ReplayEvent = { type: string; text?: string; diff?: string; [key: string]: unknown };
+
 interface DisplayMessage {
     role: 'user' | 'assistant';
+    /** Plain-text summary, used for search and for threads saved before events were recorded. */
     text: string;
+    /** Events that rebuild the full reply (text, reasoning, tool steps, terminal output). */
+    events?: ReplayEvent[];
 }
+
+/** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
+const REPLAY_TYPES = new Set([
+    'appendThinking', 'appendContent', 'toolStart', 'toolResult', 'fileWriteResult',
+    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError',
+]);
+/** Approximate characters of streamed text stored per reply. */
+const REPLAY_BUDGET = 400_000;
+const REPLAY_DIFF_LIMIT = 20_000;
 
 export class AgentProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'codico.chatView';
@@ -161,6 +176,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _history: ChatMessage[] = [];
     private _activeThreadId: string = '';
     private _displayMessages: DisplayMessage[] = [];
+    /** Collects the events of the reply currently streaming, for replay on thread load. */
+    private _recording: { msgId: string; events: ReplayEvent[]; size: number; truncated: boolean } | null = null;
     private _abortController: AbortController | null = null;
     private _followUpAbortController: AbortController | null = null;
     private _busy = false;
@@ -168,6 +185,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _repoInstructions: string | null | undefined = undefined; // undefined = not yet read
     /** Pending inline write-permission requests: permId → resolve fn */
     private _pendingWritePermissions = new Map<string, (result: { granted: boolean; editedContent?: string }) => void>();
+    /** Resolves the pending step checkpoint: true = keep going, false = stop. */
+    private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
+    /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
+    private readonly _bgProcesses = new Map<number, { command: string; startedAt: number }>();
+    private _bgPollTimer: ReturnType<typeof setInterval> | undefined;
     /** Pending inline terminal-permission requests: permId → resolve fn */
     private _pendingTerminalPermissions = new Map<string, (granted: boolean) => void>();
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
@@ -211,6 +233,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
             this._sessionAbort.abort();
+            this._killBackgroundProcesses();
         }});
         // Reload thread list when globalHistory setting is toggled so threads from the
         // newly-active store are immediately visible instead of appearing lost.
@@ -281,6 +304,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+            // Show the active thread's full conversation (the panel starts empty after a reload)
+            if (!this._busy && this._displayMessages.length > 0) {
+                const active = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === this._activeThreadId);
+                this._post({ type: 'threadLoaded', id: this._activeThreadId, name: active?.name ?? '', displayMessages: this._displayMessages });
+            }
             // Offer to resume an interrupted agentic session from the previous run
             if (this._isSessionInterrupted()) {
                 const summary = this._getInterruptedTaskSummary();
@@ -392,6 +420,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 case 'closePanel':
                     await vscode.commands.executeCommand('workbench.action.closeSidebar');
+                    break;
+                case 'checkpointResponse':
+                    this._checkpointResolver?.(msg.continue === true);
+                    this._checkpointResolver = null;
+                    break;
+                case 'killBackgroundProcesses':
+                    this._killBackgroundProcesses();
                     break;
                 case 'abortStream':
                     this._abortController?.abort();
@@ -841,7 +876,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
         const customPrefix = config.get<string>('systemPrompt', '') || undefined;
         const autoInject = config.get<boolean>('autoInjectContext', true);
-        const maxIterations = config.get<number>('maxIterations', 8);
+        // 0 (the default) means no iteration limit
+        const maxIterations = config.get<number>('maxIterations', 0);
+        // Pause for confirmation every N steps (0 = never)
+        const checkpointSteps = config.get<number>('checkpointSteps', 50);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
@@ -911,7 +949,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (!_skipUserPush) {
             this._history.push({ role: 'user', content: userContent });
             // Track for thread display (resume view when switching threads)
-            this._displayMessages.push({ role: 'user', text: rawText.slice(0, 300) });
+            this._displayMessages.push({ role: 'user', text: rawText.slice(0, 20_000) });
         }
 
         // Auto-name the thread immediately from the first user message so the sidebar updates right away
@@ -921,6 +959,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         const msgId = Date.now().toString();
         this._post({ type: 'startMessage', id: msgId });
+        this._recording = { msgId, events: [], size: 0, truncated: false };
 
         this._abortController = new AbortController();
         const { signal } = this._abortController;
@@ -929,12 +968,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._followUpAbortController?.abort();
         this._followUpAbortController = null;
 
-        const MAX_ITERATIONS = maxIterations;
-        const MAX_STREAM_RECOVERY_ATTEMPTS = 2;
+        const MAX_ITERATIONS = maxIterations > 0 ? maxIterations : Infinity;
+        const MAX_STREAM_RECOVERY_ATTEMPTS = 5;
         let streamRecoveryAttempts = 0;
+        // Visible text just before a cutoff; the resumed response is checked against it
+        // so any restarted sentence is dropped and the seam stays invisible.
+        let resumeTail: string | null = null;
+        let recoveryStatusShown = false;
+        const MAX_ACTION_NUDGES = 2;
+        let actionNudges = 0;
 
-        // Regex for complete tool fences (global — lastIndex is managed manually)
-        const TOOL_FENCE_RE = /```(write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo)\r?\n([\s\S]*?)```/g;
 
         // Circuit breaker: track how many times each unique tool call has been issued
         // across all iterations. If the same call fires 3 times the model is looping —
@@ -942,21 +985,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
 
-        function _toolFingerprint(tool: ToolCall): string {
-            switch (tool.type) {
-                case 'search_files':   return `search_files:${tool.pattern}:${tool.glob ?? ''}:${tool.isRegex}`;
-                case 'find_files':     return `find_files:${tool.pattern}:${tool.dirpath ?? ''}`;
-                case 'read_file':      return `read_file:${tool.filepath}`;
-                case 'list_directory': return `list_directory:${tool.dirpath}`;
-                case 'fetch_url':      return `fetch_url:${tool.url}`;
-                case 'lsp_symbol':     return `lsp_symbol:${tool.query}`;
-                default:               return tool.type;
-            }
-        }
-
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
                 if (signal.aborted) { break; }
+                this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
 
                 let fullContent = '';
                 let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
@@ -965,6 +997,110 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let recoverableStreamInterruption: string | null = null;
                 let recoverableFinishReason: string | null = null;
 
+                let resumeBuffer = '';
+
+                // Large write_file/edit_file bodies are hidden until complete; show their
+                // progress in the status bar so a long write never looks idle.
+                let draftReported = false;
+                let draftLines = 0;
+                const reportDraftProgress = (fence: string) => {
+                    const m = /^```(write_file|edit_file)\r?\nfilepath:\s*(.+)/.exec(fence);
+                    if (!m) { return; }
+                    const lines = fence.split('\n').length;
+                    if (draftReported && lines - draftLines < 10) { return; }
+                    draftReported = true;
+                    draftLines = lines;
+                    const name = path.basename(m[2].trim());
+                    const verb = m[1] === 'write_file' ? 'Writing' : 'Editing';
+                    this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
+                };
+
+                // Dispatch every newly complete tool fence, sending the text before each first.
+                // `final` accepts a closing line that is the last thing in the stream.
+                const dispatchFences = async (final: boolean): Promise<void> => {
+                    for (const fence of scanToolFences(fullContent, dispatchedUpTo, final).fences) {
+                        const fenceStart = fence.start;
+                        const fenceEnd = fence.end;
+
+                        // Send text before this fence (strips the fence from display)
+                        if (fenceStart > lastSentPos) {
+                            this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, fenceStart) });
+                        }
+                        lastSentPos = fenceEnd;
+                        dispatchedUpTo = fenceEnd;
+
+                        // Dispatch tool — toolStart is posted inside _dispatchTool,
+                        // which causes the webview to finalize the current text segment
+                        // and create a new one after the pill
+                        const tools = parseToolBody(fence.type, fence.body);
+                        if (tools.length > 0) {
+                            const tool = tools[0];
+                            const fp = toolFingerprint(tool);
+                            const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
+                            _toolCallCounts.set(fp, callCount);
+
+                            if (callCount > MAX_IDENTICAL_CALLS) {
+                                // Model is stuck in a loop — inject a hard nudge and
+                                // break out of the stream without dispatching again.
+                                const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
+                                inlineToolResults.push(nudge);
+                                this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
+                                return;
+                            }
+
+                            await this._dispatchTool(tool, msgId, signal);
+                            if (this._lastInlineResult !== undefined) {
+                                inlineToolResults.push(this._lastInlineResult);
+                                this._lastInlineResult = undefined;
+                            }
+                        }
+                    }
+                };
+
+                const processContent = async (text: string): Promise<void> => {
+                    fullContent += text;
+
+                    // Dispatch any newly complete tool fences, sending pre-fence text first
+                    await dispatchFences(false);
+
+                    // Determine safe send boundary: hold back only the last ``` if it could
+                    // still become a tool fence (nothing after it, or a tool-name first letter
+                    // with no newline yet). Once a newline is received after ```, the name is
+                    // confirmed and we know whether it's a tool fence or not — no more holdback.
+                    // This avoids freezing content during common language fences like ```bash,
+                    // ```rust, ```shell, etc. for the entire duration of the code block.
+                    const tail = fullContent.slice(dispatchedUpTo);
+                    const lastTripleIdx = tail.lastIndexOf('```');
+                    let safeEnd: number;
+                    if (lastTripleIdx === -1) {
+                        // No ``` at all — hold back 1-2 trailing backticks that could start one
+                        const trailingTicks = tail.match(/`+$/)?.[0].length ?? 0;
+                        safeEnd = trailingTicks > 0 && trailingTicks < 3
+                            ? fullContent.length - trailingTicks
+                            : fullContent.length;
+                    } else {
+                        const afterTriple = tail.slice(lastTripleIdx + 3);
+                        // Unresolved if nothing follows, or a tool-name letter without a newline yet
+                        const unresolved = afterTriple.length === 0 ||
+                            (/^[wrslfesgbmdu]/.test(afterTriple) && !afterTriple.includes('\n'));
+                        safeEnd = unresolved ? dispatchedUpTo + lastTripleIdx : fullContent.length;
+                    }
+                    // Never display the body of a tool fence that is still open: it is either
+                    // dispatched once complete or dropped if the stream is cut off.
+                    const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
+                    if (openFence !== -1) {
+                        safeEnd = Math.min(safeEnd, openFence);
+                        reportDraftProgress(fullContent.slice(openFence));
+                    } else if (draftReported) {
+                        draftReported = false;
+                        this._post({ type: 'activity', text: null });
+                    }
+                    if (safeEnd > lastSentPos) {
+                        this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, safeEnd) });
+                        lastSentPos = safeEnd;
+                    }
+                };
+
                 const chatModeOverride = this._chatMode ? CHAT_SYSTEM_PROMPT : undefined;
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, this._history, ollamaModel, effectivePrefix, signal, chatModeOverride)
@@ -972,79 +1108,24 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         ? streamDirect(directApiKey, this._history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride)
                         : streamOpenRouter(apiKey, this._history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride)) {
                     if (signal.aborted) { break; }
+                    if (recoveryStatusShown) {
+                        recoveryStatusShown = false;
+                        this._post({ type: 'activity', text: null });
+                    }
                     if (chunk.type === 'thinking') {
                         this._post({ type: 'appendThinking', id: msgId, text: chunk.text });
                     } else if (chunk.type === 'content') {
-                        fullContent += chunk.text;
-
-                        // Dispatch any newly complete tool fences, sending pre-fence text first
-                        TOOL_FENCE_RE.lastIndex = dispatchedUpTo;
-                        let m: RegExpExecArray | null;
-                        while ((m = TOOL_FENCE_RE.exec(fullContent)) !== null) {
-                            const fenceStart = m.index;
-                            const fenceEnd = m.index + m[0].length;
-
-                            // Send text before this fence (strips the fence from display)
-                            if (fenceStart > lastSentPos) {
-                                this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, fenceStart) });
-                            }
-                            lastSentPos = fenceEnd;
-                            dispatchedUpTo = fenceEnd;
-                            TOOL_FENCE_RE.lastIndex = fenceEnd;
-
-                            // Dispatch tool — toolStart is posted inside _dispatchTool,
-                            // which causes the webview to finalize the current text segment
-                            // and create a new one after the pill
-                            const tools = parseToolCalls(m[0]);
-                            if (tools.length > 0) {
-                                const tool = tools[0];
-                                const fp = _toolFingerprint(tool);
-                                const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
-                                _toolCallCounts.set(fp, callCount);
-
-                                if (callCount > MAX_IDENTICAL_CALLS) {
-                                    // Model is stuck in a loop — inject a hard nudge and
-                                    // break out of the stream without dispatching again.
-                                    const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
-                                    inlineToolResults.push(nudge);
-                                    this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
-                                    break;
-                                }
-
-                                await this._dispatchTool(tool, msgId, signal);
-                                if (this._lastInlineResult !== undefined) {
-                                    inlineToolResults.push(this._lastInlineResult);
-                                    this._lastInlineResult = undefined;
-                                }
-                            }
+                        let text = chunk.text;
+                        if (resumeTail !== null) {
+                            // Buffer the start of a resumed response until it can be
+                            // compared with the pre-cutoff text, then drop any repetition.
+                            resumeBuffer += text;
+                            if (resumeBuffer.length < resumeTail.length + 20) { continue; }
+                            text = resumeBuffer.slice(repeatedPrefixLength(resumeTail, resumeBuffer));
+                            resumeTail = null;
+                            resumeBuffer = '';
                         }
-
-                        // Determine safe send boundary: hold back only the last ``` if it could
-                        // still become a tool fence (nothing after it, or a tool-name first letter
-                        // with no newline yet). Once a newline is received after ```, the name is
-                        // confirmed and we know whether it's a tool fence or not — no more holdback.
-                        // This avoids freezing content during common language fences like ```bash,
-                        // ```rust, ```shell, etc. for the entire duration of the code block.
-                        const tail = fullContent.slice(dispatchedUpTo);
-                        const lastTripleIdx = tail.lastIndexOf('```');
-                        let safeEnd: number;
-                        if (lastTripleIdx === -1) {
-                            // No ``` at all — hold back 1-2 trailing backticks that could start one
-                            const trailingTicks = tail.match(/`+$/)?.[0].length ?? 0;
-                            safeEnd = trailingTicks > 0 && trailingTicks < 3
-                                ? fullContent.length - trailingTicks
-                                : fullContent.length;
-                        } else {
-                            const afterTriple = tail.slice(lastTripleIdx + 3);
-                            // Unresolved if nothing follows, or a tool-name letter without a newline yet
-                            const unresolved = afterTriple.length === 0 ||
-                                (/^[wrslfesgbmdu]/.test(afterTriple) && !afterTriple.includes('\n'));
-                            safeEnd = unresolved ? dispatchedUpTo + lastTripleIdx : fullContent.length;
-                        }
-                        if (safeEnd > lastSentPos) {
-                            this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, safeEnd) });
-                            lastSentPos = safeEnd;
-                        }
+                        if (text) { await processContent(text); }
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
@@ -1060,6 +1141,61 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             recoverableStreamInterruption = chunk.message;
                         } else {
                             this._post({ type: 'streamError', id: msgId, message: chunk.message });
+                        }
+                    }
+                }
+
+                if (draftReported) { this._post({ type: 'activity', text: null }); }
+
+                // Stream ended while the start of a resumed response was still buffered
+                if (resumeTail !== null && resumeBuffer) {
+                    const text = resumeBuffer.slice(repeatedPrefixLength(resumeTail, resumeBuffer));
+                    resumeTail = null;
+                    resumeBuffer = '';
+                    if (text && !signal.aborted) { await processContent(text); }
+                }
+
+                // On a cutoff, drop an incomplete trailing tool fence: it was never shown or
+                // executed, and the model re-issues it in full when it resumes.
+                const isCutoff = !signal.aborted && (recoverableStreamInterruption !== null || recoverableFinishReason === 'length');
+                let droppedToolCall = false;
+                if (isCutoff) {
+                    const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
+                    if (openFence !== -1) {
+                        fullContent = fullContent.slice(0, Math.max(openFence, lastSentPos));
+                        droppedToolCall = true;
+                    }
+                }
+
+                // A model can end its response cleanly without writing the closing ``` of
+                // its last tool fence. Close it and dispatch the call instead of silently
+                // treating the turn as finished. Cut-off streams are left to recovery.
+                const cleanEnd = !signal.aborted && !recoverableStreamInterruption && recoverableFinishReason !== 'length';
+                // A closing fence line that is the very last thing in the stream
+                if (cleanEnd) { await dispatchFences(true); }
+                const unclosed = cleanEnd ? scanToolFences(fullContent, dispatchedUpTo, true) : null;
+                const unclosedFenceStart = unclosed ? unclosed.unclosedStart : -1;
+                if (unclosed && unclosedFenceStart !== -1) {
+                    const ticks = /^`+/.exec(fullContent.slice(unclosedFenceStart))?.[0] ?? '```';
+                    const tools = parseToolBody(unclosed.unclosedType ?? '', (unclosed.unclosedBody ?? '').replace(/\r?\n$/, ''));
+                    if (!fullContent.endsWith('\n')) { fullContent += '\n'; }
+                    fullContent += ticks;
+                    if (tools.length > 0) {
+                        if (unclosedFenceStart > lastSentPos) {
+                            this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, unclosedFenceStart) });
+                        }
+                        lastSentPos = fullContent.length;
+                        dispatchedUpTo = fullContent.length;
+                        const tool = tools[0];
+                        const fp = toolFingerprint(tool);
+                        const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
+                        _toolCallCounts.set(fp, callCount);
+                        if (callCount <= MAX_IDENTICAL_CALLS) {
+                            await this._dispatchTool(tool, msgId, signal);
+                            if (this._lastInlineResult !== undefined) {
+                                inlineToolResults.push(this._lastInlineResult);
+                                this._lastInlineResult = undefined;
+                            }
                         }
                     }
                 }
@@ -1104,11 +1240,26 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         recoveryParts.push(
                             '[System Recovery]\n' +
                             cause + ' ' +
-                            'Continue exactly from where it stopped. Do not repeat text that was already produced. ' +
-                            'Do not repeat tool calls that already completed. If the cutoff occurred inside an incomplete tool fence, ' +
-                            'start that tool call again as one complete valid fence.'
+                            'Your output is appended directly after what was already shown to the user, so continue exactly ' +
+                            'from where it stopped, even mid-sentence. Do not repeat text that was already produced, do not ' +
+                            'mention the interruption, and do not repeat tool calls that already completed.' +
+                            (droppedToolCall
+                                ? ' Your last tool call was cut off before it was complete and was NOT executed: issue it again in full as one complete valid fence.'
+                                : '')
                         );
                         this._history.push({ role: 'user', content: recoveryParts.join('\n\n') });
+
+                        // Compare the resumed response against the text shown just before the cutoff
+                        const visibleTail = fullContent.slice(dispatchedUpTo).slice(-RESUME_OVERLAP_WINDOW);
+                        resumeTail = visibleTail.trim() ? visibleTail : null;
+
+                        this._post({ type: 'activity', text: recoverableStreamInterruption ? 'Reconnecting\u2026' : 'Continuing\u2026' });
+                        recoveryStatusShown = true;
+
+                        // Give a dropped connection a moment before reconnecting
+                        if (recoverableStreamInterruption) {
+                            await new Promise(resolve => setTimeout(resolve, 1000 * streamRecoveryAttempts));
+                        }
 
                         // Recovery should not consume an agentic tool iteration.
                         i--;
@@ -1129,7 +1280,24 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 streamRecoveryAttempts = 0;
 
-                if (inlineToolResults.length === 0) { break; }
+                if (inlineToolResults.length === 0) {
+                    // Some models announce an action ("I'll locate the file.") and end the
+                    // turn without emitting the tool fence. Ask them to issue it rather than
+                    // treating the announcement as the final answer. Bounded per request.
+                    if (isUnfulfilledActionAnnouncement(fullContent) && actionNudges < MAX_ACTION_NUDGES) {
+                        actionNudges++;
+                        this._history.push({
+                            role: 'user',
+                            content: '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
+                                'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.',
+                        });
+                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
+                    break;
+                }
+
+                actionNudges = 0;
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
@@ -1144,6 +1312,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // Inject tool results so the AI can continue
                 const resultText = `[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`;
                 this._history.push({ role: 'user', content: resultText });
+
+                // Periodic checkpoint so a run that has gone off track does not spend
+                // tokens indefinitely. Waits for the user; Stop also ends the wait.
+                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && i < MAX_ITERATIONS - 1) {
+                    const keepGoing = await new Promise<boolean>((resolve) => {
+                        this._checkpointResolver = resolve;
+                        signal.addEventListener('abort', () => resolve(false), { once: true });
+                        this._post({ type: 'checkpoint', id: msgId, steps: i + 1 });
+                    });
+                    this._checkpointResolver = null;
+                    if (!keepGoing) { break; }
+                }
 
                 // Warn the user when the iteration cap is about to be hit on the last loop
                 if (i === MAX_ITERATIONS - 1) {
@@ -1166,6 +1346,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         this._post({ type: 'endMessage', id: msgId });
+        const recording = this._recording;
+        this._recording = null;
+        if (recording?.truncated) {
+            recording.events.push({ type: 'appendContent', text: '\n\n*\u2026 (the rest of this response was too long to store)*' });
+        }
         this._abortController = null;
 
         // ── Completion notification (fires when user has switched away) ───────────
@@ -1186,18 +1371,23 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        // Track assistant response for thread resume display
-        if (!signal.aborted && this._history.length > 0) {
+        // Track assistant response for thread resume display: the full recorded reply,
+        // plus a short text summary used for thread search
+        let summaryText = '';
+        if (this._history.length > 0) {
             const lastMsg = this._history[this._history.length - 1];
             if (lastMsg.role === 'assistant') {
                 const raw = typeof lastMsg.content === 'string'
                     ? lastMsg.content
                     : (lastMsg.content as MessageContentPart[]).filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('');
                 const displayText = raw
-                    .replace(/```(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?```/g, '[tool call]')
+                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
                     .trim().slice(0, 300);
-                if (displayText) { this._displayMessages.push({ role: 'assistant', text: displayText }); }
+                summaryText = displayText;
             }
+        }
+        if (summaryText || (recording && recording.events.length > 0)) {
+            this._displayMessages.push({ role: 'assistant', text: summaryText, events: recording?.events });
         }
 
         // In edits mode: surface queued proposals for review
@@ -1804,20 +1994,37 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
             // Do not launch login shells: shell startup files are outside the
             // workspace trust boundary and should not run for every agent command.
+            // On POSIX the shell leads its own process group so a timeout or Stop can
+            // kill everything it started, including background jobs (`server &`).
+            const useProcessGroup = process.platform !== 'win32';
             const child = cp.spawn(shell, shellArgs, {
                 cwd,
                 env: process.env,
-                timeout: 60_000,
+                detached: useProcessGroup,
             });
 
-            // Kill the child process when the user clicks Stop
-            let killTimer: ReturnType<typeof setTimeout> | undefined;
-            const onAbort = () => {
-                child.kill('SIGTERM');
-                killTimer = setTimeout(() => {
-                    try { child.kill('SIGKILL'); } catch { /* already exited */ }
-                }, 3_000);
+            const timeoutSec = Math.max(10, vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300));
+            const TIMEOUT_MS = timeoutSec * 1000;
+            const killTree = (sig: NodeJS.Signals) => {
+                try {
+                    if (useProcessGroup && child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); }
+                } catch { /* already exited */ }
             };
+
+            let timedOut = false;
+            let killTimer: ReturnType<typeof setTimeout> | undefined;
+            let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
+            let exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
+            const terminate = () => {
+                killTree('SIGTERM');
+                killTimer = setTimeout(() => killTree('SIGKILL'), 3_000);
+                // Settle even if something still holds the output pipes open
+                forceSettleTimer = setTimeout(() => finish(null, 'SIGKILL'), 5_000);
+            };
+            const timeoutTimer = setTimeout(() => { timedOut = true; terminate(); }, TIMEOUT_MS);
+
+            // Kill the command and everything it started when the user clicks Stop
+            const onAbort = () => terminate();
             signal.addEventListener('abort', onAbort, { once: true });
 
             const outputChunks: string[] = [];
@@ -1836,34 +2043,50 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const settle = (result: string, success: boolean, errorMsg?: string) => {
                 if (settled) { return; }
                 settled = true;
+                clearTimeout(timeoutTimer);
                 clearTimeout(killTimer);
+                clearTimeout(forceSettleTimer);
+                clearTimeout(exitGraceTimer);
                 signal.removeEventListener('abort', onAbort);
+                // Stop reading: a background job may keep the pipes open indefinitely
+                child.stdout.destroy();
+                child.stderr.destroy();
                 this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success, error: errorMsg });
                 resolve(result);
             };
 
-            child.on('close', (code, sig) => {
-                const output = outputChunks.join('');
+            const finish = (code: number | null, sig: NodeJS.Signals | null, note = '') => {
+                const output = outputChunks.join('') + note;
                 if (signal.aborted) {
                     settle(`[run_terminal: ${tool.command}] Stopped by user.\n${output.slice(0, 4000)}`, false);
                     return;
                 }
-                const exitCode = code ?? (sig ? 1 : 0);
-                // sig is set by Node's built-in timeout:60_000 kill (SIGTERM) or the onAbort SIGKILL
-                const timedOut = !signal.aborted && (sig === 'SIGTERM' || sig === 'SIGKILL');
                 if (timedOut) {
                     settle(
-                        `[run_terminal: ${tool.command}]\n(timed out after 60s)\n${output.slice(0, 4000)}`,
+                        `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. ` +
+                        `Long-running processes such as servers must not be started with run_terminal.)\n${output.slice(0, 4000)}`,
                         false,
-                        'Timed out after 60s'
+                        `Timed out after ${timeoutSec}s`
                     );
-                } else {
-                    settle(
-                        `[run_terminal: ${tool.command}]\nExit: ${exitCode}\n${output.slice(0, 4000)}`,
-                        exitCode === 0
-                    );
+                    return;
                 }
+                const exitCode = code ?? (sig ? 1 : 0);
+                const bgNote = useProcessGroup && child.pid && this._trackBackgroundGroup(child.pid, tool.command)
+                    ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
+                    : '';
+                settle(
+                    `[run_terminal: ${tool.command}]\nExit: ${exitCode}\n${output.slice(0, 4000)}${bgNote}`,
+                    exitCode === 0
+                );
+            };
+
+            // 'close' waits for every holder of the output pipes, which never happens when
+            // the command leaves a background job running. Once the shell itself exits,
+            // allow a moment for trailing output and then report the result.
+            child.on('exit', (code, sig) => {
+                exitGraceTimer = setTimeout(() => finish(code, sig), 1_000);
             });
+            child.on('close', (code, sig) => finish(code, sig));
 
             child.on('error', (err) => {
                 if (signal.aborted) {
@@ -1872,6 +2095,50 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 settle(`[run_terminal: ${tool.command}] ERROR: ${err.message}`, false, err.message);
             });
+        });
+    }
+
+    /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */
+    private _trackBackgroundGroup(pgid: number, command: string): boolean {
+        if (!AgentProvider._groupAlive(pgid)) { return false; }
+        this._bgProcesses.set(pgid, { command, startedAt: Date.now() });
+        this._postBackgroundProcesses();
+        if (!this._bgPollTimer) {
+            this._bgPollTimer = setInterval(() => this._pruneBackgroundProcesses(), 5_000);
+        }
+        return true;
+    }
+
+    private static _groupAlive(pgid: number): boolean {
+        try { process.kill(-pgid, 0); return true; } catch { return false; }
+    }
+
+    private _pruneBackgroundProcesses(): void {
+        let changed = false;
+        for (const pgid of [...this._bgProcesses.keys()]) {
+            if (!AgentProvider._groupAlive(pgid)) { this._bgProcesses.delete(pgid); changed = true; }
+        }
+        if (this._bgProcesses.size === 0 && this._bgPollTimer) {
+            clearInterval(this._bgPollTimer);
+            this._bgPollTimer = undefined;
+        }
+        if (changed) { this._postBackgroundProcesses(); }
+    }
+
+    private _killBackgroundProcesses(): void {
+        for (const pgid of this._bgProcesses.keys()) {
+            try { process.kill(-pgid, 'SIGTERM'); } catch { /* already gone */ }
+            setTimeout(() => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* exited */ } }, 3_000);
+        }
+        this._bgProcesses.clear();
+        if (this._bgPollTimer) { clearInterval(this._bgPollTimer); this._bgPollTimer = undefined; }
+        this._postBackgroundProcesses();
+    }
+
+    private _postBackgroundProcesses(): void {
+        this._post({
+            type: 'backgroundProcesses',
+            processes: [...this._bgProcesses.values()].map(p => ({ command: p.command, startedAt: p.startedAt })),
         });
     }
 
@@ -3059,6 +3326,30 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
 
     private _post(msg: ExtensionMessage): void {
         this._view?.webview.postMessage(msg);
+        if (this._recording && (msg as { id?: unknown }).id === this._recording.msgId) {
+            this._recordEvent(msg);
+        }
+    }
+
+    private _recordEvent(msg: ExtensionMessage): void {
+        const rec = this._recording;
+        if (!rec || !REPLAY_TYPES.has(msg.type)) { return; }
+        const { id: _id, ...rest } = msg as ExtensionMessage & { id: string };
+        const ev = rest as ReplayEvent;
+        if (typeof ev.diff === 'string' && ev.diff.length > REPLAY_DIFF_LIMIT) {
+            ev.diff = ev.diff.slice(0, REPLAY_DIFF_LIMIT) + '\n\u2026 (diff truncated)';
+        }
+        const streamed = ev.type === 'appendContent' || ev.type === 'appendThinking' || ev.type === 'terminalChunk';
+        const size = streamed ? (ev.text ?? '').length : JSON.stringify(ev).length;
+        if (streamed && rec.size + size > REPLAY_BUDGET) { rec.truncated = true; return; }
+        rec.size += size;
+        // Merge consecutive chunks of the same stream into one event
+        const last = rec.events[rec.events.length - 1];
+        if (streamed && last && last.type === ev.type) {
+            last.text = (last.text ?? '') + (ev.text ?? '');
+            return;
+        }
+        rec.events.push({ ...ev });
     }
 
     private _postSelectionBadge(): void {
@@ -3118,6 +3409,8 @@ type WebviewMessage =
     | { type: 'openSettings' }
     | { type: 'closePanel' }
     | { type: 'abortStream' }
+    | { type: 'checkpointResponse'; continue: boolean }
+    | { type: 'killBackgroundProcesses' }
     | { type: 'changeModel'; model: string }
     | { type: 'changeEffort'; effort: 'high' | 'medium' | 'low' }
     | { type: 'requestContext'; kind: 'file' | 'selection' | 'diagnostics' | 'files-pick' }
@@ -3182,13 +3475,17 @@ type ExtensionMessage =
     | { type: 'allProposalsResolved' }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
-    | { type: 'threadLoaded'; id: string; name: string; displayMessages: Array<{ role: 'user' | 'assistant'; text: string }> }
+    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[] }
     | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
     | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string }
     | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string }
     | { type: 'terminalChunk'; id: string; text: string }
+    | { type: 'stepProgress'; id: string; step: number }
+    | { type: 'activity'; text: string | null }
+    | { type: 'checkpoint'; id: string; steps: number }
+    | { type: 'backgroundProcesses'; processes: { command: string; startedAt: number }[] }
     | { type: 'autoCommitDone'; message: string }
     | { type: 'autoCommitError'; message: string }
     | { type: 'proactiveOffer'; filename: string; errorCount: number; warningCount: number }
