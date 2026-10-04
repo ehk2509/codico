@@ -203,8 +203,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = new WorkspaceIndex(_context);
         this._editProposals.register(_context);
         this._initThreadsSync();
-        // Load persisted index from previous session (non-blocking)
-        void this._workspaceIndex.load();
         // Pre-load bundled media files async so _buildHtml and _isValidModelId
         // never need to call readFileSync on the extension host's UI thread.
         void this._preloadMediaFiles();
@@ -396,6 +394,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._pendingTerminalPermissions.clear();
                     this._allowAllWrites = false;
                     this._allowAllTerminal = false;
+                    this._allowAllExternal = false;
                     break;
                 case 'writePermissionResponse': {
                     const resolve = this._pendingWritePermissions.get(msg.permId);
