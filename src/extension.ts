@@ -27,13 +27,17 @@ export function activate(context: vscode.ExtensionContext): void {
         )
     );
 
-    // ── Auto-index workspace on first open ────────────────────────────────────
+    // ── Restore local index metadata, then optionally auto-index ────────────────
     void (async () => {
-        const cfg = vscode.workspace.getConfiguration('codico');
-        if (!cfg.get<boolean>('autoIndex', false)) { return; }
         if (!vscode.workspace.workspaceFolders?.length) { return; }
+
+        // Loading is always local: persisted vectors/metadata are hydrated from the
+        // current source tree without sending code anywhere.
         const loaded = await provider.workspaceIndex.load();
-        if (loaded) { return; } // already indexed from a previous session
+
+        const cfg = vscode.workspace.getConfiguration('codico');
+        if (!cfg.get<boolean>('autoIndex', false) || loaded) { return; }
+
         const apiKey = await context.secrets.get('openRouterApiKey') ?? '';
         provider.workspaceIndex.setApiKey(apiKey);
         void provider.workspaceIndex.buildIndexBackground();
