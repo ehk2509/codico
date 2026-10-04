@@ -386,8 +386,12 @@ export function streamOpenRouter(
             );
 
                 req.on('error', (err: Error) => {
-                    if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                    else { push(err); }
+                    if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                        push(null);
+                    } else {
+                        push({ type: 'stream_error', message: `OpenRouter stream transport error: ${err.message}` });
+                        push(null);
+                    }
                 });
                 req.write(body);
                 req.end();
