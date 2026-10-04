@@ -6,6 +6,7 @@ export interface McpServerConfig {
     command: string;
     args?: string[];
     env?: Record<string, string>;
+    source?: 'settings' | 'workspace';
 }
 
 export interface McpServerStatus {
@@ -153,7 +154,7 @@ export async function loadMcpConfigs(): Promise<McpServerConfig[]> {
         .get<McpServerConfig[]>('mcpServers', []);
     for (const cfg of settingsList) {
         if (cfg.name && cfg.command && !seen.has(cfg.name)) {
-            configs.push(cfg);
+            configs.push({ ...cfg, source: 'settings' });
             seen.add(cfg.name);
         }
     }
@@ -174,7 +175,7 @@ export async function loadMcpConfigs(): Promise<McpServerConfig[]> {
                 if (json.mcpServers && typeof json.mcpServers === 'object') {
                     for (const [name, cfg] of Object.entries(json.mcpServers)) {
                         if (!seen.has(name) && cfg.command) {
-                            configs.push({ name, command: cfg.command, args: cfg.args ?? [], env: cfg.env });
+                            configs.push({ name, command: cfg.command, args: cfg.args ?? [], env: cfg.env, source: 'workspace' });
                             seen.add(name);
                         }
                     }
