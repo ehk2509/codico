@@ -238,8 +238,12 @@ function _streamOpenAICompat(
         }
     );
     req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-        else { push(e); push(null); }
+        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+            push(null);
+        } else {
+            push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
+            push(null);
+        }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
     req.write(body); req.end();
@@ -350,8 +354,12 @@ function _streamAnthropic(
         }
     );
     req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-        else { push(e); push(null); }
+        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+            push(null);
+        } else {
+            push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
+            push(null);
+        }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
     req.write(body); req.end();
@@ -452,8 +460,12 @@ function _streamGoogle(
         }
     );
     req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-        else { push(e); push(null); }
+        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+            push(null);
+        } else {
+            push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
+            push(null);
+        }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
     req.write(body); req.end();
