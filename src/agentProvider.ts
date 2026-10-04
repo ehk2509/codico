@@ -12,7 +12,7 @@ import { parseToolCalls, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryToo
 import { FileManager } from './fileManager';
 import { BrowserManager } from './browserManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
-import { McpManager, loadMcpConfigs } from './mcpManager';
+import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
 import { WorkspaceIndex } from './workspaceIndex';
 import { buildSymbolContext, resolveSymbol } from './symbolProvider';
 import { buildPrContext } from './prContextProvider';
@@ -647,7 +647,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const approved = [];
+        const approved: McpServerConfig[] = [];
         const persisted = this._context.workspaceState.get<Record<string, true>>(
             'codico.approvedWorkspaceMcp.v1',
             {}
@@ -2103,6 +2103,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleFetchUrl(tool: FetchUrlTool, msgId: string, _redirectDepth = 0): Promise<string> {
         const MAX_CHARS = 24_000;
+        if (_redirectDepth === 0 && !await this._confirmExternalAction('fetch a URL', tool.url)) {
+            return `[fetch_url: ${tool.url}] Denied by user`;
+        }
         try {
             // Validate URL scheme — only http/https allowed
             let parsed: URL;
