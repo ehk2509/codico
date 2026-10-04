@@ -20,7 +20,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
-import { isRecoverableStreamInterruption } from './streamCompletion';
+import { isRecoverableStreamInterruption, normalizeFinishReason } from './streamCompletion';
 
 /**
  * Returns true if the URL's hostname resolves to a private, loopback, or
@@ -1048,7 +1048,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
                     } else if (chunk.type === 'finish') {
-                        this._post({ type: 'streamFinishReason', id: msgId, reason: chunk.reason });
+                        this._post({ type: 'streamFinishReason', id: msgId, reason: normalizeFinishReason(chunk.reason) });
                     } else if (chunk.type === 'stream_error') {
                         if (isRecoverableStreamInterruption(chunk.message)) {
                             recoverableStreamInterruption = chunk.message;
