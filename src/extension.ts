@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // ── Auto-index workspace on first open ────────────────────────────────────
     void (async () => {
         const cfg = vscode.workspace.getConfiguration('codico');
-        if (!cfg.get<boolean>('autoIndex', true)) { return; }
+        if (!cfg.get<boolean>('autoIndex', false)) { return; }
         if (!vscode.workspace.workspaceFolders?.length) { return; }
         const loaded = await provider.workspaceIndex.load();
         if (loaded) { return; } // already indexed from a previous session
