@@ -1,4 +1,5 @@
 import * as https from 'https';
+import { StreamCompletionGuard } from './streamCompletion';
 
 export type StreamChunk =
     | { type: 'thinking'; text: string }
@@ -303,18 +304,24 @@ export function streamOpenRouter(
                     }
 
                     let buffer = '';
+                    const completion = new StreamCompletionGuard();
                     // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
                     let streamEnded = false;
                     function pushEnd(): void { if (!streamEnded) { streamEnded = true; push(null); } }
 
                     function processSSELine(trimmed: string): void {
                         if (!trimmed) { return; }
-                        if (trimmed === 'data: [DONE]') { pushEnd(); return; }
+                        if (trimmed === 'data: [DONE]') {
+                            completion.markTerminal();
+                            pushEnd();
+                            return;
+                        }
                         if (!trimmed.startsWith('data: ')) { return; }
                         try {
                             const json = JSON.parse(trimmed.slice(6));
                             if (json.error) {
                                 const msg: string = json.error?.message ?? JSON.stringify(json.error);
+                                completion.markTerminal();
                                 push({ type: 'stream_error', message: msg });
                                 pushEnd();
                                 return;
@@ -325,8 +332,11 @@ export function streamOpenRouter(
                             if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
                             if (typeof delta?.content === 'string') { processContentChunk(delta.content); }
                             const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
-                            if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
-                                push({ type: 'finish', reason: finishReason });
+                            if (finishReason) {
+                                completion.markTerminal();
+                                if (finishReason !== 'stop' && finishReason !== 'tool_calls') {
+                                    push({ type: 'finish', reason: finishReason });
+                                }
                             }
                             const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
                             if (usage?.total_tokens) {
@@ -356,11 +366,21 @@ export function streamOpenRouter(
 
                     res.on('end', () => {
                         flushBuffer();
+                        if (!signal?.aborted) {
+                            const interrupted = completion.unexpectedEofMessage('OpenRouter');
+                            if (interrupted) {
+                                push({ type: 'stream_error', message: interrupted });
+                            }
+                        }
                         pushEnd();
                     });
                     res.on('error', (err: Error) => {
-                        if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                        else { push(err); }
+                        if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                            pushEnd();
+                        } else {
+                            push({ type: 'stream_error', message: `OpenRouter stream transport error: ${err.message}` });
+                            pushEnd();
+                        }
                     });
                 }
             );
