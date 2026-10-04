@@ -240,6 +240,7 @@ export class WorkspaceIndex {
         this._chunks    = [];
         this._indexedAt = 0;
         await this._context.workspaceState.update(STORAGE_KEY, undefined);
+        await this._context.workspaceState.update(LEGACY_STORAGE_KEY, undefined);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
