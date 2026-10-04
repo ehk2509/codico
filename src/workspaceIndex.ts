@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
 import * as path from 'path';
+import * as crypto from 'crypto';
 import { ignoreRules } from './ignoreRules';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,7 +50,12 @@ const IGNORE_EXTS = new Set([
     '.pyc', '.pyo',
 ]);
 
-const STORAGE_KEY = 'codico.workspaceIndex.v1';
+const STORAGE_KEY = 'codico.workspaceIndex.v2';
+const LEGACY_STORAGE_KEY = 'codico.workspaceIndex.v1';
+
+function hashIndexText(text: string): string {
+    return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
 // ── Cosine similarity ─────────────────────────────────────────────────────────
 
@@ -85,7 +91,7 @@ export class WorkspaceIndex {
         return {
             chunkCount: this._chunks.length,
             fileCount:  new Set(this._chunks.map(c => c.file)).size,
-            hasVectors: this._chunks.some(c => c.vector && c.vector.length > 0),
+            hasVectors: this._chunks.length > 0 && this._chunks.every(c => c.vector && c.vector.length > 0),
             ageMs:      this._indexedAt > 0 ? Date.now() - this._indexedAt : Infinity,
         };
     }
@@ -133,7 +139,10 @@ export class WorkspaceIndex {
 
         // Vector path
         const withVectors = this._chunks.filter(c => c.vector && c.vector.length > 0);
-        if (withVectors.length > 0 && this._apiKey) {
+        // Never mix current source text with only partially valid/stale embeddings.
+        // If any chunk lacks a verified vector, fall back to keyword search across
+        // the complete current workspace until a rebuild/reindex restores coverage.
+        if (withVectors.length === this._chunks.length && withVectors.length > 0 && this._apiKey) {
             try {
                 const [qvec] = await this._embedBatch([query]);
                 if (qvec && qvec.length > 0) {
@@ -175,15 +184,66 @@ export class WorkspaceIndex {
         void this._persist();
     }
 
-    /** Load a previously persisted index from workspace storage. Returns true if loaded. */
+    /**
+     * Load a previously persisted index from workspace storage.
+     *
+     * Persisted entries intentionally do not contain raw source text. On restore we
+     * re-read the current files and hydrate each chunk from disk. Embeddings are only
+     * reused when the current chunk hash matches the hash stored with the vector, so
+     * stale vectors can never be paired with changed source code.
+     */
     async load(): Promise<boolean> {
-        const saved = this._context.workspaceState.get<{ chunks: IndexChunk[]; indexedAt: number }>(STORAGE_KEY);
-        if (saved?.chunks?.length) {
-            this._chunks    = saved.chunks;
-            this._indexedAt = saved.indexedAt ?? 0;
-            return true;
+        type PersistedChunk = {
+            file: string;
+            startLine: number;
+            vector?: number[];
+            textHash?: string;
+        };
+        type PersistedIndex = { chunks: PersistedChunk[]; indexedAt: number };
+
+        const saved =
+            this._context.workspaceState.get<PersistedIndex>(STORAGE_KEY) ??
+            this._context.workspaceState.get<PersistedIndex>(LEGACY_STORAGE_KEY);
+        if (!saved?.chunks?.length) { return false; }
+
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) { return false; }
+
+        const root = folders[0].uri;
+        const persistedByKey = new Map(
+            saved.chunks.map(c => [`${c.file}:${c.startLine}`, c] as const)
+        );
+        const hydrated: IndexChunk[] = [];
+        const files = Array.from(new Set(saved.chunks.map(c => c.file)));
+
+        for (const file of files) {
+            const currentChunks = await this._chunkFile(vscode.Uri.joinPath(root, file));
+            for (const chunk of currentChunks) {
+                const persisted = persistedByKey.get(`${chunk.file}:${chunk.startLine}`);
+                if (
+                    persisted?.vector &&
+                    persisted.vector.length > 0 &&
+                    persisted.textHash &&
+                    persisted.textHash === hashIndexText(chunk.text)
+                ) {
+                    chunk.vector = persisted.vector;
+                }
+                hydrated.push(chunk);
+            }
         }
-        return false;
+
+        if (hydrated.length === 0) { return false; }
+
+        this._chunks = hydrated;
+        this._indexedAt = saved.indexedAt ?? 0;
+
+        // Migrate legacy metadata lazily. Legacy v1 entries had no text hash, so
+        // their vectors are deliberately not trusted; keyword search remains usable.
+        if (!this._context.workspaceState.get<PersistedIndex>(STORAGE_KEY)) {
+            void this._persist();
+            void this._context.workspaceState.update(LEGACY_STORAGE_KEY, undefined);
+        }
+        return true;
     }
 
     /** Clear the index from memory and persistent storage. */
@@ -385,7 +445,12 @@ export class WorkspaceIndex {
     private async _persist(): Promise<void> {
         // Strip chunk text before persisting — only keep metadata and vectors.
         // Raw source text could contain secrets and should not be stored unencrypted.
-        const stripped = this._chunks.map(c => ({ file: c.file, startLine: c.startLine, vector: c.vector }));
+        const stripped = this._chunks.map(c => ({
+            file: c.file,
+            startLine: c.startLine,
+            vector: c.vector,
+            textHash: hashIndexText(c.text),
+        }));
         await this._context.workspaceState.update(STORAGE_KEY, {
             chunks:    stripped,
             indexedAt: this._indexedAt,
