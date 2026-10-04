@@ -25,7 +25,7 @@ Call AI providers directly with your own API keys — no OpenRouter account requ
 Direct models appear in the model picker under a 🔑 section. Each provider stores its key independently in VS Code's encrypted `SecretStorage`.
 
 ### OpenRouter
-Access hundreds of models through a single API key — including free-tier models from DeepSeek, Google, NVIDIA, Qwen, and more. Set your key via `Codico: Set OpenRouter API Key` or the ⚙ settings menu.
+Access hundreds of models through a single API key — including free-tier models from Qwen, Google, NVIDIA, Poolside, Cohere, and more. Set your key via `Codico: Set OpenRouter API Key` or the ⚙ settings menu.
 
 ### Local Models (Ollama)
 Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.5-coder:7b`. No API key required.
@@ -35,7 +35,13 @@ Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.
 ## Features
 
 ### Agentic Loop
-The agent runs up to 16 iterations (configurable) per message. After each response it executes any tool calls, feeds the results back to the model, and continues working until the task is fully complete — without requiring follow-up from you.
+After each response the agent executes any tool calls, feeds the results back to the model, and keeps working until the task is complete — without requiring follow-up from you.
+
+- **No step limit by default** (`codico.maxIterations`, `0` = unlimited). The status bar shows the current step.
+- **Checkpoints** — every `codico.checkpointSteps` steps (default 50) the agent pauses and asks **▶ Continue** or **Stop here**, so a run that has gone off track can't spend tokens indefinitely.
+- **Loop detection** — a tool call repeated with identical arguments more than 3 times is blocked and the model is told to try a different approach.
+- **Automatic recovery** — if a response is cut off (output-token limit or dropped connection), the agent resumes in the same message: half-written tool calls are re-issued, repeated text is trimmed, and up to 5 retries are made with backoff. The status bar shows *Reconnecting…* meanwhile.
+- **Stalled turns** — if the model announces an action ("I'll read the file…") but emits no tool call, or forgets to close its last tool call, the agent recovers instead of stopping.
 
 ### Live Thinking Visualization
 For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-thought is shown in a collapsible "Reasoning trace" panel above each response, streamed in real time.
@@ -63,7 +69,9 @@ For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-th
 | `debug_get_callstack` | Read full call stack across all threads |
 | `debug_list_breakpoints` | List all breakpoints with location, condition, and enabled state |
 
-Every tool that modifies files or runs code shows a **permission dialog** — you can allow or deny each one individually, or click **Allow All** to approve the rest of the session.
+Every tool that modifies files or runs code shows a **permission dialog** — you can allow or deny each one individually, or click **Allow All** to approve the rest of the current response (permissions reset with each new message).
+
+File content passed to `write_file` / `edit_file` may itself contain Markdown code fences (for example a README), as long as each inner fence names a language (`` ```bash ``); the agent may also open the tool call with four backticks.
 
 ---
 
@@ -84,6 +92,8 @@ When the agent runs a shell command, output streams directly into the chat panel
 - Output scrolls automatically as new lines arrive; scroll up to pause auto-scroll
 - On completion the indicator changes to ✓ Done (green) or ✗ Failed (red)
 - Successful runs auto-collapse after 2 seconds; click the header to expand/collapse at any time
+- Commands are killed after `codico.terminalTimeoutSeconds` (default 300 s), together with every process they started; **■ Stop** does the same immediately
+- A command that leaves a process running in the background (e.g. `nohup npm start &`) no longer blocks the agent. The status bar shows a **⚙ N background processes ✕** chip — hover to see the commands, click to stop them. They are also stopped when VS Code closes.
 
 ---
 
@@ -114,7 +124,7 @@ Every file write and edit shows a colored diff before and after the change:
 ---
 
 ### Auto-Commit After Task
-A **⬇ Auto-commit** toggle in the chat header triggers an automatic `git add -A && git commit` after the agent finishes any turn that wrote files:
+A **📥 Auto-commit** toggle in the chat header triggers an automatic `git add -A && git commit` after the agent finishes any turn that wrote files:
 
 - Commit message is AI-generated from the conversation context (works with all providers)
 - A status bar flash confirms the commit: `✔ Committed: <message>`
@@ -160,6 +170,8 @@ Manage multiple independent conversations per project:
 - A **thread bar** shows all sessions as vertical cards with name, timestamp, rename (✏) and delete (🗑) buttons
 - Click **+** to create a new thread; click 🔍 to search across all threads
 - The first message in a new thread auto-names it immediately
+- Reopening a thread — or reloading the window — restores the full conversation exactly as it streamed: text, reasoning, tool steps, diffs and terminal output (about 400k characters per reply are stored; threads saved by older versions show short summaries)
+- If the window closed while the agent was mid-task, a **Session was interrupted — resume?** banner offers to continue it
 - Threads are persisted to `workspaceState` (per-project) or `globalState` (cross-window) depending on `codico.globalHistory`
 
 ---
@@ -185,6 +197,8 @@ Manage multiple independent conversations per project:
 | `/tests` | Write unit tests for the active file or selection |
 | `/review` | Structured code review of the active file |
 | `/plan` | Create a step-by-step plan for a goal, then approve to execute |
+| `/test` | Detect the project's test command, run it, and fix failures until the suite passes |
+| `/compact` | Summarize the conversation history to reduce context size |
 | `/pr` | Fetch the open GitHub PR for the current branch and review it |
 | `/coverage` | Parse the coverage report and generate tests for uncovered lines |
 | `/new <description>` | Scaffold a new file or project from a natural-language description |
@@ -197,6 +211,7 @@ Type `/` in the input box to see the autocomplete popup.
 
 | Command | Effect |
 |---|---|
+| `codico.openChat` | Focus the chat panel (`Ctrl+Shift+L`) |
 | `codico.setApiKey` | Set your OpenRouter API key |
 | `codico.setDirectApiKey` | Set a direct provider API key (Anthropic, OpenAI, Google, Groq…) |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
@@ -207,6 +222,14 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.undoLastChange` | Undo the last AI-applied file change |
 | `codico.redoLastChange` | Redo the last undone AI change |
 | `codico.generateCommitMessage` | Generate a commit message from the staged diff |
+| `codico.showPrContext` | Show the GitHub PR context for the current branch |
+| `codico.generateTestsFromCoverage` | Generate tests for uncovered lines in a coverage report |
+| `codico.suggestRename` | Suggest a better name for the symbol under the cursor |
+| `codico.askAboutDiffHunk` | Ask about a changed file or diff hunk (SCM / editor context menu) |
+| `codico.explainTerminalError` | Explain the selected terminal output (terminal context menu) |
+| `codico.inlineChat` | Inline Chat: edit the selection with AI (`Ctrl+I`) |
+| `codico.acceptInlineDiff` / `codico.rejectInlineDiff` | Accept or discard an inline edit (`Ctrl+Enter` / `Esc`) |
+| `codico.codeLensExplain` / `codico.codeLensFix` | Explain or fix a function (used by the CodeLens actions) |
 
 ---
 
@@ -234,6 +257,21 @@ Attach live workspace context to any message via the toolbar above the input box
 **Auto selection injection** — when you highlight code in any editor, a `✂ filename:line-range` chip automatically appears in the input area and the selected code is included in the next message context. The chip disappears when you deselect. No click required.
 
 Context chips appear as removable badges before sending.
+
+**Images** — attach screenshots or diagrams with the **📎** button, by pasting, or by drag-and-drop (requires a vision-capable model).
+
+---
+
+### Chat Modes
+The toggle under the input box switches how the next message is handled:
+
+- **💬 Ask** — read-only: the agent searches and answers; file writes, edits, terminal commands, browser actions and MCP calls are blocked
+- **📋 Plan** — the agent first produces a step-by-step plan; approve it to execute (same as `/plan`)
+- **🤖 Agent** — fully autonomous with all tools (default)
+
+While a response is streaming, **Send** becomes **Queue →**: your next message is sent automatically when the current response finishes.
+
+When a request is ambiguous, the agent may ask a **clarifying question** rendered as clickable options (with optional free-text input) before it starts.
 
 ---
 
@@ -291,13 +329,14 @@ Click the **✏ Edits** toggle in the header to enter Edits Mode:
 Keep long sessions efficient:
 
 - **↓↑ Compact context** button — summarize the conversation history immediately to reduce token usage
-- **↙ Auto-compact** toggle — automatically compact when prompt tokens exceed the `codico.autoCompactThreshold` (default: 100,000 tokens)
-- Compaction preserves all key decisions, files changed, errors resolved, and outstanding tasks; the last 2 turns are kept verbatim for continuity
+- **↙ Auto-compact** toggle (on by default) — automatically compact when prompt tokens exceed `codico.autoCompactThreshold` (default: 100,000 tokens), including between steps of a running task
+- Compaction preserves key decisions, files changed, errors resolved, and outstanding tasks; the most recent messages are kept verbatim for continuity
+- The chat display is not affected — reopening a thread still shows the full conversation
 
 ---
 
 ### Follow-up Suggestions
-After each response, 2–3 context-aware follow-up question chips appear below the message. Click one to send it instantly. Toggle with `codico.followUpSuggestionsEnabled`.
+After each response, 3 context-aware follow-up suggestion chips appear below the message. Click one to send it instantly. Toggle with `codico.followUpSuggestionsEnabled`.
 
 ---
 
@@ -335,7 +374,22 @@ Run **Codico: Index Workspace** to build a vector embedding index of all source 
 ---
 
 ### Suggest Rename
-Right-click any symbol → **Suggest Rename** — the agent proposes a more meaningful name based on context and usage.
+Right-click any symbol → **Suggest Rename** — the agent proposes a more meaningful name based on context and usage. With `codico.renameSuggestionsEnabled`, the built-in rename box (`F2`) is also pre-filled with an AI-suggested name.
+
+---
+
+### Next Edit Suggestions
+After you make a change, the agent predicts the next related edit and shows it as a suggestion; press `Tab` to accept. Toggle with `codico.nextEditSuggestionsEnabled`.
+
+---
+
+### Explain Terminal Errors
+Select failing output in the integrated terminal, right-click → **Explain Error with Codico** to send it to the chat for a diagnosis.
+
+---
+
+### Excluding Files (`.copilotignore`)
+Add a `.copilotignore` file (gitignore syntax) to the workspace root to exclude matching files from the semantic workspace index, inline completions and next-edit suggestions. Changes are picked up automatically. It does not stop the agent's own tools — the agent can still open an ignored file with `read_file` if asked.
 
 ---
 
@@ -368,11 +422,12 @@ Switch models from the chat header dropdown. Models are grouped by tier:
 - Grok (xAI): Grok 3, Grok 3 Mini
 - Cerebras: Llama 4 Scout 17B, Llama 3.1 70B
 
-**🆓 Free (via OpenRouter)**
-- DeepSeek, Qwen, OpenAI, Google, NVIDIA, MoonshotAI, Poolside and more
+**🆓 Free (via OpenRouter)** — zero-cost models only
+- Qwen, Google (Gemma), NVIDIA (Nemotron), Poolside (Laguna), Cohere, Thinking Machines, InclusionAI and more, plus the OpenRouter free router
 
 **💎 Premium (via OpenRouter)**
-- DeepSeek, Anthropic, OpenAI, Google, Mistral, xAI, Qwen and more
+- Anthropic (Claude), OpenAI (GPT), Google (Gemini), DeepSeek, Qwen, xAI (Grok), Mistral, MoonshotAI (Kimi), Z.ai (GLM) and more
+- The default model, **DeepSeek V4 Flash ★**, is in this group — it is inexpensive but not free
 
 **Ollama (local)**
 - `ollama/qwen2.5-coder:7b`, `:14b`, `:32b`
@@ -478,7 +533,10 @@ codico/
 │   ├── openRouterClient.ts          # OpenRouter SSE streaming client + system prompt
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
-│   ├── toolParser.ts                # Parses all tool call block types from model output
+│   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
+│   ├── streamCompletion.ts          # Stream cutoff detection and resume helpers
+│   ├── testOrchestrator.ts          # Test-command detection and the /test fix loop prompt
+│   ├── indexPersistence.ts          # Workspace index storage (vectors + hashes, no raw source)
 │   ├── fileManager.ts               # File write with path-traversal guard + permission dialog
 │   ├── codeLensProvider.ts          # Explain / Fix CodeLens above function definitions
 │   ├── coverageProvider.ts          # LCOV / Istanbul JSON parser, coverage prompt builder
@@ -495,6 +553,8 @@ codico/
 │   ├── editProposalManager.ts       # Edits Mode diff queue
 │   ├── symbolProvider.ts            # LSP symbol context builder
 │   └── ignoreRules.ts               # .copilotignore watcher
+├── tests/                           # node:test regression suite (runs against out/)
+├── .github/workflows/ci.yml         # CI: compile + tests on Linux, Windows, macOS
 ├── media/
 │   ├── chat.html                    # Self-contained webview UI (vanilla JS, no bundler)
 │   ├── models.json                  # Model list for the dropdown (free / premium / direct / local)
