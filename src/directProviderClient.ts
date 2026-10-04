@@ -1,5 +1,6 @@
 import * as https from 'https';
 import { ChatMessage, MessageContentPart, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
+import { StreamCompletionGuard } from './streamCompletion';
 
 // ── Provider registry ─────────────────────────────────────────────────────────
 
@@ -182,6 +183,7 @@ function _streamOpenAICompat(
                 return;
             }
             let buf = '';
+            const completion = new StreamCompletionGuard();
             const processChunk = makeThinkParser(push as (v: StreamChunk) => void);
             res.on('data', (chunk: Buffer) => {
                 buf += chunk.toString();
@@ -190,26 +192,48 @@ function _streamOpenAICompat(
                     const t = line.trim();
                     if (!t.startsWith('data:')) { continue; }
                     const raw = t.slice(5).trim();
-                    if (raw === '[DONE]') { push(null); return; }
+                    if (raw === '[DONE]') {
+                        completion.markTerminal();
+                        push(null);
+                        return;
+                    }
                     try {
                         const json = JSON.parse(raw);
-                        if (json.error) { push({ type: 'stream_error', message: json.error?.message ?? String(json.error) }); push(null); return; }
+                        if (json.error) {
+                            completion.markTerminal();
+                            push({ type: 'stream_error', message: json.error?.message ?? String(json.error) });
+                            push(null);
+                            return;
+                        }
                         const delta = json.choices?.[0]?.delta as { content?: string; reasoning?: string } | undefined;
                         // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
                         // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
                         if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
                         if (typeof delta?.content === 'string' && delta.content) { processChunk(delta.content); }
                         const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
-                        if (finishReason && finishReason !== 'stop') { push({ type: 'finish', reason: finishReason }); }
+                        if (finishReason) {
+                            completion.markTerminal();
+                            if (finishReason !== 'stop') { push({ type: 'finish', reason: finishReason }); }
+                        }
                         const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
                         if (u != null && u.total_tokens != null) { push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens }); }
                     } catch { /* malformed SSE */ }
                 }
             });
-            res.on('end', () => push(null));
+            res.on('end', () => {
+                if (!signal?.aborted) {
+                    const interrupted = completion.unexpectedEofMessage(apiBase);
+                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                }
+                push(null);
+            });
             res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                else { push(e); push(null); }
+                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                    push(null);
+                } else {
+                    push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
+                    push(null);
+                }
             });
         }
     );
@@ -268,6 +292,7 @@ function _streamAnthropic(
             }
             let buf = '';
             let lastEvent = '';
+            const completion = new StreamCompletionGuard();
             let inputTokens = 0;
             let outputTokens = 0;
 
@@ -293,8 +318,12 @@ function _streamAnthropic(
                         } else if (type === 'message_delta') {
                             outputTokens = json.usage?.output_tokens ?? outputTokens;
                             const stop = json.delta?.stop_reason;
-                            if (stop && stop !== 'end_turn') { push({ type: 'finish', reason: stop }); }
+                            if (stop) {
+                                completion.markTerminal();
+                                if (stop !== 'end_turn') { push({ type: 'finish', reason: stop }); }
+                            }
                         } else if (type === 'message_stop') {
+                            completion.markTerminal();
                             const total = inputTokens + outputTokens;
                             if (total > 0) { push({ type: 'usage', promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total }); }
                             push(null);
@@ -303,10 +332,20 @@ function _streamAnthropic(
                 }
             });
             // push(null) here is deduplicated by the done-guard in streamDirect (message_stop already sent null)
-            res.on('end', () => push(null));
+            res.on('end', () => {
+                if (!signal?.aborted) {
+                    const interrupted = completion.unexpectedEofMessage('Anthropic');
+                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                }
+                push(null);
+            });
             res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                else { push(e); push(null); }
+                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                    push(null);
+                } else {
+                    push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
+                    push(null);
+                }
             });
         }
     );
@@ -364,6 +403,7 @@ function _streamGoogle(
                 return;
             }
             let buf = '';
+            const completion = new StreamCompletionGuard();
             res.on('data', (chunk: Buffer) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
@@ -371,7 +411,12 @@ function _streamGoogle(
                     const t = line.trim();
                     if (!t.startsWith('data:')) { continue; }
                     const raw = t.slice(5).trim();
-                    if (!raw || raw === '[DONE]') { push(null); return; }
+                    if (!raw) { continue; }
+                    if (raw === '[DONE]') {
+                        completion.markTerminal();
+                        push(null);
+                        return;
+                    }
                     try {
                         const json = JSON.parse(raw);
                         const cand = json.candidates?.[0];
@@ -379,17 +424,30 @@ function _streamGoogle(
                             for (const part of cand.content?.parts ?? []) {
                                 if (typeof part.text === 'string' && part.text) { push({ type: 'content', text: part.text }); }
                             }
-                            if (cand.finishReason && cand.finishReason !== 'STOP') { push({ type: 'finish', reason: cand.finishReason }); }
+                            if (cand.finishReason) {
+                                completion.markTerminal();
+                                if (cand.finishReason !== 'STOP') { push({ type: 'finish', reason: cand.finishReason }); }
+                            }
                         }
                         const u = json.usageMetadata;
                         if (u != null && u.totalTokenCount != null) { push({ type: 'usage', promptTokens: u.promptTokenCount ?? 0, completionTokens: u.candidatesTokenCount ?? 0, totalTokens: u.totalTokenCount }); }
                     } catch { /* malformed */ }
                 }
             });
-            res.on('end', () => push(null));
+            res.on('end', () => {
+                if (!signal?.aborted) {
+                    const interrupted = completion.unexpectedEofMessage('Google Gemini');
+                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                }
+                push(null);
+            });
             res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                else { push(e); push(null); }
+                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                    push(null);
+                } else {
+                    push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
+                    push(null);
+                }
             });
         }
     );
