@@ -12,7 +12,7 @@ import { parseToolCalls, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryToo
 import { FileManager } from './fileManager';
 import { BrowserManager } from './browserManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
-import { McpManager, loadMcpConfigs } from './mcpManager';
+import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
 import { WorkspaceIndex } from './workspaceIndex';
 import { buildSymbolContext, resolveSymbol } from './symbolProvider';
 import { buildPrContext } from './prContextProvider';
@@ -172,6 +172,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
     private _allowAllWrites = false;
     private _allowAllTerminal = false;
+    /** External/MCP side effects approved for the current user turn only. */
+    private _allowAllExternal = false;
     /** Auto-commit: when true, stage+commit all changes after each agent turn */
     private _autoCommit = false;
     /** Count of files actually written/edited during the current agent turn */
@@ -201,8 +203,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = new WorkspaceIndex(_context);
         this._editProposals.register(_context);
         this._initThreadsSync();
-        // Load persisted index from previous session (non-blocking)
-        void this._workspaceIndex.load();
         // Pre-load bundled media files async so _buildHtml and _isValidModelId
         // never need to call readFileSync on the extension host's UI thread.
         void this._preloadMediaFiles();
@@ -225,8 +225,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const media = this._extensionUri.fsPath + '/media';
         try {
             this._cachedModelsJson = await fs.promises.readFile(media + '/models.json', 'utf8');
-            const models = JSON.parse(this._cachedModelsJson) as Array<{ id?: string }>;
-            this._validModelIds = new Set(models.map(m => m.id).filter(Boolean) as string[]);
+            const groups = JSON.parse(this._cachedModelsJson) as Array<{
+                models?: Array<{ id?: string }>;
+            }>;
+            this._validModelIds = new Set(
+                groups
+                    .flatMap(group => group.models ?? [])
+                    .map(model => model.id)
+                    .filter((id): id is string => Boolean(id))
+            );
         } catch { /* models.json missing — _validModelIds stays null → skip validation */ }
         try {
             this._cachedHtml = await fs.promises.readFile(media + '/chat.html', 'utf8');
@@ -394,6 +401,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._pendingTerminalPermissions.clear();
                     this._allowAllWrites = false;
                     this._allowAllTerminal = false;
+                    this._allowAllExternal = false;
                     break;
                 case 'writePermissionResponse': {
                     const resolve = this._pendingWritePermissions.get(msg.permId);
@@ -631,12 +639,67 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _connectMcpServers(): Promise<void> {
         this._mcpReady = true;
+
+        // Codico is disabled in untrusted workspaces via package.json, but keep a
+        // runtime guard as defence-in-depth for hosts that do not enforce it.
+        if (!vscode.workspace.isTrusted) {
+            this._post({ type: 'mcpStatus', servers: [] });
+            return;
+        }
+
         const configs = await loadMcpConfigs();
         if (configs.length === 0) {
             this._post({ type: 'mcpStatus', servers: [] });
             return;
         }
-        const statuses = await this._mcp.connectAll(configs);
+
+        const approved: McpServerConfig[] = [];
+        const persisted = this._context.workspaceState.get<Record<string, true>>(
+            'codico.approvedWorkspaceMcp.v1',
+            {}
+        );
+
+        for (const cfg of configs) {
+            if (cfg.source !== 'workspace') {
+                approved.push(cfg);
+                continue;
+            }
+
+            const fingerprint = nodeCrypto
+                .createHash('sha256')
+                .update(JSON.stringify({
+                    name: cfg.name,
+                    command: cfg.command,
+                    args: cfg.args ?? [],
+                    env: cfg.env ?? {},
+                }))
+                .digest('hex');
+
+            if (persisted[fingerprint]) {
+                approved.push(cfg);
+                continue;
+            }
+
+            const choice = await vscode.window.showWarningMessage(
+                `This workspace wants Codico to start MCP server "${cfg.name}".`,
+                {
+                    modal: true,
+                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes and inherit your environment.`,
+                },
+                'Allow Once',
+                'Always Allow for Workspace'
+            );
+
+            if (choice === 'Allow Once' || choice === 'Always Allow for Workspace') {
+                approved.push(cfg);
+            }
+            if (choice === 'Always Allow for Workspace') {
+                persisted[fingerprint] = true;
+                await this._context.workspaceState.update('codico.approvedWorkspaceMcp.v1', persisted);
+            }
+        }
+
+        const statuses = await this._mcp.connectAll(approved);
         this._post({ type: 'mcpStatus', servers: statuses });
     }
 
@@ -726,6 +789,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Reset per-response allow-all flags at the start of every new user turn
         this._allowAllWrites  = false;
         this._allowAllTerminal = false;
+        this._allowAllExternal = false;
 
         // Cancel any ongoing stream
         this._abortController?.abort();
@@ -1666,15 +1730,19 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         return new Promise<string>((resolve) => {
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            const shell = process.env.SHELL || '/bin/bash';
+            const shell = process.platform === 'win32'
+                ? (process.env.ComSpec || 'cmd.exe')
+                : (process.env.SHELL || '/bin/sh');
+            const shellArgs = process.platform === 'win32'
+                ? ['/d', '/s', '/c', tool.command]
+                : ['-c', tool.command];
 
             // ── Notify the webview so it can open a live terminal block ──
             this._post({ type: 'terminalChunk', id: msgId, text: '' });
 
-            // Do NOT pass -l (login shell): loading ~/.bashrc / ~/.bash_profile on every
-            // tool call is a prompt-injection vector — a compromised repo shell profile
-            // would execute under the agent. process.env already carries the full PATH.
-            const child = cp.spawn(shell, ['-c', tool.command], {
+            // Do not launch login shells: shell startup files are outside the
+            // workspace trust boundary and should not run for every agent command.
+            const child = cp.spawn(shell, shellArgs, {
                 cwd,
                 env: process.env,
                 timeout: 60_000,
@@ -1746,105 +1814,92 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleSearchFiles(tool: SearchFilesTool, msgId: string): Promise<string> {
-        return new Promise<string>((resolve) => {
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!cwd) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
-                resolve('[search_files] ERROR: No workspace folder open');
-                return;
-            }
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
+            return '[search_files] ERROR: No workspace folder open';
+        }
 
-            // Build grep args safely (no shell injection — using execFile)
-            const args: string[] = ['-rn', '--max-count=200'];
-            if (tool.isRegex) { args.push('-E'); } else { args.push('-F'); }
-            if (tool.glob) {
-                // grep --include uses simple glob (no **), trim leading **/
-                const simpleGlob = tool.glob.replace(/^\*\*\//, '').replace(/\*\*\//g, '');
-                args.push(`--include=${simpleGlob}`);
+        let matcher: RegExp | null = null;
+        if (tool.isRegex) {
+            try {
+                matcher = new RegExp(tool.pattern);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: message });
+                return `[search_files: ${tool.pattern}] ERROR: Invalid regular expression: ${message}`;
             }
-            args.push('--', tool.pattern, '.');
+        }
 
-            cp.execFile('grep', args, { cwd, timeout: 15_000 }, (error, stdout) => {
-                const output = stdout.trim();
-                const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
-                // grep exit 0 = matches found; exit 1 = no matches (not an error); exit 2 = real error.
-                // An OS-level error (e.g. binary not found) has a string code like 'ENOENT'.
-                if (error && error.code !== 1) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label, success: false, error: error.message });
-                    resolve(`[search_files: ${label}] ERROR: ${error.message}`);
-                    return;
+        const include = tool.glob?.trim() || '**/*';
+        const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
+        const uris = await vscode.workspace.findFiles(include, exclude, 600);
+        const matches: string[] = [];
+
+        for (const uri of uris) {
+            if (matches.length >= 100) { break; }
+            try {
+                const bytes = await vscode.workspace.fs.readFile(uri);
+                if (bytes.byteLength > 1_000_000) { continue; }
+                const text = new TextDecoder().decode(bytes);
+                if (text.includes('\x00')) { continue; }
+                const rel = vscode.workspace.asRelativePath(uri);
+                const lines = text.split('\n');
+                for (let i = 0; i < lines.length && matches.length < 100; i++) {
+                    const line = lines[i];
+                    const hit = matcher ? matcher.test(line) : line.includes(tool.pattern);
+                    if (matcher) { matcher.lastIndex = 0; }
+                    if (hit) {
+                        matches.push(`${rel}:${i + 1}:${line.slice(0, 500)}`);
+                    }
                 }
-                if (!output) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label, success: true });
-                    resolve(`[search_files: ${label}] No matches found`);
-                    return;
-                }
-                const lines = output.split('\n');
-                const truncated = lines.length > 100;
-                const resultLines = lines.slice(0, 100);
-                this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${resultLines.length} matches`, success: true });
-                resolve(`[search_files: ${label}]\n${resultLines.join('\n')}${truncated ? '\n… (truncated at 100 matches)' : ''}`);
-            });
-        });
+            } catch {
+                // Skip unreadable files; continue searching the rest of the workspace.
+            }
+        }
+
+        const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
+        this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
+        return matches.length > 0
+            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}`
+            : `[search_files: ${label}] No matches found`;
     }
 
     private async _handleFindFiles(tool: FindFilesTool, msgId: string): Promise<string> {
-        return new Promise<string>((resolve) => {
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (!cwd) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
-                resolve('[find_files] ERROR: No workspace folder open');
-                return;
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
+            return '[find_files] ERROR: No workspace folder open';
+        }
+
+        let dir = (tool.dirpath ?? '').trim().replace(/\\/g, '/');
+        if (dir === '.') { dir = ''; }
+        if (dir) {
+            dir = path.posix.normalize(dir);
+            if (dir.startsWith('..') || path.isAbsolute(dir)) {
+                this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'Unsafe dirpath rejected' });
+                return '[find_files] ERROR: Unsafe dirpath rejected';
             }
+        }
 
-            // Build safe find command using execFile (no shell injection)
-            let searchRoot = cwd;
-            if (tool.dirpath) {
-                const normDir = path.posix.normalize(tool.dirpath.replace(/\\/g, '/'));
-                if (normDir.startsWith('..') || path.isAbsolute(normDir)) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'Unsafe dirpath rejected' });
-                    resolve('[find_files] ERROR: Unsafe dirpath rejected');
-                    return;
-                }
-                searchRoot = path.join(cwd, normDir);
-                // Redundant defence-in-depth: ensure the resolved path stays inside the workspace
-                if (!searchRoot.startsWith(cwd + path.sep) && searchRoot !== cwd) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'Unsafe dirpath rejected' });
-                    resolve('[find_files] ERROR: Unsafe dirpath rejected');
-                    return;
-                }
-            }
-            const pattern = tool.pattern;
+        const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
+        const include = dir
+            ? `${dir}/**/${cleanPattern}`
+            : `**/${cleanPattern}`;
+        const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
 
-            // Use find -name / -iname for glob-style patterns or plain name fragments
-            // We strip leading **/ which is common in glob syntax
-            const cleanPattern = pattern.replace(/^\*\*\//, '');
-
-            const args: string[] = [searchRoot, '-type', 'f', '-iname', cleanPattern, '-not', '-path', '*/node_modules/*', '-not', '-path', '*/.git/*'];
-
-            cp.execFile('find', args, { cwd, timeout: 15_000 }, (error, stdout) => {
-                const output = stdout.trim();
-                const label = pattern;
-                // find exits 1 when it hits permission-denied subdirs but may still have
-                // written valid matches to stdout. Treat that like grep's exit-1 (partial results).
-                // Only surface a hard error when there's no usable output.
-                if (error && !output) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label, success: false, error: error.message });
-                    resolve(`[find_files: ${pattern}] ERROR: ${error.message}`);
-                    return;
-                }
-                if (!output) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label, success: true });
-                    resolve(`[find_files: ${pattern}] No files found`);
-                    return;
-                }
-                const lines = output.split('\n').map(f => path.relative(cwd, f));
-                const truncated = lines.length > 200;
-                const result = lines.slice(0, 200);
-                this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${label} — ${result.length} file(s)`, success: true });
-                resolve(`[find_files: ${pattern}]\n${result.join('\n')}${truncated ? '\n… (truncated at 200)' : ''}`);
-            });
-        });
+        try {
+            const uris = await vscode.workspace.findFiles(include, exclude, 200);
+            const result = uris.map(uri => vscode.workspace.asRelativePath(uri));
+            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${tool.pattern} — ${result.length} file(s)`, success: true });
+            return result.length > 0
+                ? `[find_files: ${tool.pattern}]\n${result.join('\n')}${result.length >= 200 ? '\n… (truncated at 200)' : ''}`
+                : `[find_files: ${tool.pattern}] No files found`;
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: message });
+            return `[find_files: ${tool.pattern}] ERROR: ${message}`;
+        }
     }
 
     private async _handleEditFile(tool: EditFileTool, msgId: string): Promise<string> {
@@ -1952,7 +2007,30 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    private async _confirmExternalAction(action: string, detail: string): Promise<boolean> {
+        if (this._allowAllExternal) { return true; }
+
+        const choice = await vscode.window.showWarningMessage(
+            `Codico wants to ${action}.`,
+            {
+                modal: true,
+                detail: `${detail}\n\nThis action can affect systems outside the current workspace.`,
+            },
+            'Allow Once',
+            'Allow External Actions This Turn'
+        );
+
+        if (choice === 'Allow External Actions This Turn') {
+            this._allowAllExternal = true;
+            return true;
+        }
+        return choice === 'Allow Once';
+    }
+
     private async _handleBrowserNavigate(tool: BrowserNavigateTool, msgId: string): Promise<string> {
+        if (!await this._confirmExternalAction('navigate the browser', tool.url)) {
+            return `[browser_navigate: ${tool.url}] Denied by user`;
+        }
         try {
             const result = await this._browser.navigate(tool.url);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_navigate', label: result.title || tool.url, success: true });
@@ -1967,6 +2045,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleBrowserClick(tool: BrowserClickTool, msgId: string): Promise<string> {
+        if (!await this._confirmExternalAction('click in the browser', tool.selector)) {
+            return `[browser_click: ${tool.selector}] Denied by user`;
+        }
         try {
             const result = await this._browser.click(tool.selector);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_click', label: tool.selector, success: true });
@@ -1980,6 +2061,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleBrowserType(tool: BrowserTypeTool, msgId: string): Promise<string> {
+        const preview = tool.text.length > 120 ? tool.text.slice(0, 120) + '…' : tool.text;
+        if (!await this._confirmExternalAction('type into the browser', `${tool.selector} → "${preview}"`)) {
+            return `[browser_type: ${tool.selector}] Denied by user`;
+        }
         try {
             const result = await this._browser.typeText(tool.selector, tool.text, tool.submit ?? false);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_type', label: `${tool.selector} → "${tool.text}"`, success: true });
@@ -2024,6 +2109,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleFetchUrl(tool: FetchUrlTool, msgId: string, _redirectDepth = 0): Promise<string> {
         const MAX_CHARS = 24_000;
+        if (_redirectDepth === 0 && !await this._confirmExternalAction('fetch a URL', tool.url)) {
+            return `[fetch_url: ${tool.url}] Denied by user`;
+        }
         try {
             // Validate URL scheme — only http/https allowed
             let parsed: URL;
@@ -2186,6 +2274,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleMcpCall(tool: McpCallTool, msgId: string): Promise<string> {
         const label = `${tool.server}/${tool.tool}`;
+        if (!await this._confirmExternalAction('call an MCP tool', label)) {
+            return `[mcp_call: ${label}] Denied by user`;
+        }
         try {
             const result = await this._mcp.callTool(tool.server, tool.tool, tool.args);
             // Flatten content parts to a single string

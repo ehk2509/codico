@@ -264,8 +264,8 @@
         },
         "codico.autoIndex": {
           "type": "boolean",
-          "default": true,
-          "description": "Automatically build the workspace semantic index in the background when a workspace is opened for the first time. Shows a status bar spinner; does not interrupt your work."
+          "default": false,
+          "description": "Automatically build the workspace semantic index after you explicitly enable this setting. Cloud embeddings send code chunks to OpenRouter."
         },
         "codico.nextEditSuggestionsEnabled": {
           "type": "boolean",
@@ -330,12 +330,33 @@
           "description": "List of MCP (Model Context Protocol) servers to connect to. Each entry: { name, command, args?, env? }. You can also use a .mcp.json file in the workspace root.",
           "items": {
             "type": "object",
-            "required": ["name", "command"],
+            "required": [
+              "name",
+              "command"
+            ],
             "properties": {
-              "name": { "type": "string", "description": "Unique display name for this MCP server" },
-              "command": { "type": "string", "description": "Executable to run (e.g. npx, node, python)" },
-              "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments to pass to the command" },
-              "env": { "type": "object", "description": "Extra environment variables for the server process", "additionalProperties": { "type": "string" } }
+              "name": {
+                "type": "string",
+                "description": "Unique display name for this MCP server"
+              },
+              "command": {
+                "type": "string",
+                "description": "Executable to run (e.g. npx, node, python)"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments to pass to the command"
+              },
+              "env": {
+                "type": "object",
+                "description": "Extra environment variables for the server process",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
             }
           }
         }
@@ -346,7 +367,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile"
+    "pretest": "npm run compile",
+    "test": "node --test",
+    "check": "npm test"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
@@ -355,5 +378,10 @@
   },
   "dependencies": {
     "playwright-core": "^1.60.0"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false
+    }
   }
 }
