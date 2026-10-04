@@ -1,6 +1,6 @@
 # Codico
 
-An autonomous coding agent embedded directly in VS Code. Connect to **20+ AI providers directly** with your own keys — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, Cerebras — or route through **OpenRouter** for a single key, or run fully offline with **Ollama**. Your keys, direct API calls, no intermediaries.
+An autonomous coding agent embedded directly in VS Code. Connect directly to major providers with your own keys — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, and Cerebras — access many additional providers through **OpenRouter**, or run fully offline with **Ollama**.
 
 The agent reasons through problems, reads and writes files, runs terminal commands, searches code, applies targeted edits, and iterates autonomously — all from a sidebar chat panel.
 
@@ -413,7 +413,19 @@ Ctrl+Shift+P → Codico: Set Ollama Base URL
 ```
 Then select any `ollama/` model from the dropdown.
 
-### 3. Open the panel
+### 3. Optional: enable cloud semantic indexing
+
+Semantic indexing is **off by default** because embedding requests send source-code chunks to OpenRouter. You can still use Codico without it; workspace search falls back to local keyword/tool-based retrieval.
+
+To opt in:
+
+```
+Settings → Codico: Auto Index
+```
+
+You can also run **Codico: Index Workspace (Semantic Search)** manually when you want to build an index.
+
+### 4. Open the panel
 
 ```
 Ctrl+Shift+L   — focus chat directly
@@ -444,7 +456,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.symbolContextEnabled` | `boolean` | `true` | Include LSP symbol info for the symbol under cursor |
 | `codico.codeLensEnabled` | `boolean` | `true` | Show Explain / Fix CodeLens above functions |
 | `codico.embeddingModel` | `string` | `nomic-ai/nomic-embed-text` | Model used for workspace index embeddings |
-| `codico.autoIndex` | `boolean` | `true` | Auto-build workspace index in the background on first open |
+| `codico.autoIndex` | `boolean` | `false` | Opt in to automatic semantic indexing. Cloud embeddings send code chunks to OpenRouter |
 | `codico.mcpServers` | `array` | `[]` | MCP server configurations |
 | `codico.nextEditSuggestionsEnabled` | `boolean` | `true` | Show AI-predicted next edit suggestions (Tab to accept) |
 | `codico.renameSuggestionsEnabled` | `boolean` | `true` | Pre-fill the rename input (F2) with an AI-suggested name |
@@ -495,10 +507,13 @@ codico/
 ## Security
 
 - **Path traversal prevention** — all file paths are normalized and checked to stay inside the workspace root before any read or write
-- **Permission dialogs** — `write_file`, `edit_file`, and `run_terminal` each require explicit user approval before execution
+- **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Secret storage** — all API keys (OpenRouter, direct providers, GitHub token) are stored in VS Code's encrypted `SecretStorage`, never in plain `settings.json`
 - **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; no inline scripts or external resources
-- **No telemetry** — no usage data is collected; all API calls go directly from your machine to the provider
+- **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
+- **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint
+- **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text
+- **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
 ---
 
@@ -508,8 +523,13 @@ codico/
 # Watch mode — recompiles on every save
 npm run watch
 
+# Run the compile + regression suite
+npm test
+
 # Press F5 in VS Code to launch the Extension Development Host
 ```
+
+CI runs the same checks on Linux, Windows, and macOS.
 
 To package:
 
