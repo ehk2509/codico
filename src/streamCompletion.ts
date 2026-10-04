@@ -14,3 +14,7 @@ export class StreamCompletionGuard {
         return `${provider} stream interrupted: connection closed before the provider sent a completion marker.`;
     }
 }
+
+export function isRecoverableStreamInterruption(message: string): boolean {
+    return /stream interrupted: connection closed before|stream transport error:/i.test(message);
+}
