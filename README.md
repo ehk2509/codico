@@ -443,7 +443,9 @@ Or click the Codico icon in the Activity Bar.
 | `codico.ollamaBaseUrl` | `string` | `http://localhost:11434` | Ollama server URL |
 | `codico.systemPrompt` | `string` | `""` | Optional prefix prepended to the system prompt |
 | `codico.autoInjectContext` | `boolean` | `true` | Auto-include active file path as context |
-| `codico.maxIterations` | `number` | `16` | Max agentic loop iterations per message (1–50) |
+| `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |
+| `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
+| `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
 | `codico.openTabsContext` | `boolean` | `true` | Include open editor tabs as additional context |

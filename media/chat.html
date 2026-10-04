@@ -284,7 +284,7 @@ body{
 }
 .ts-role { font-size:10px; opacity:.55; margin-right:4px; }
 #messages{
-  flex:1 1 0;min-height:0;overflow-y:scroll;
+  flex:1 1 0;min-height:0;overflow-y:scroll;overflow-x:hidden;
   padding:10px 8px;
   display:flex;flex-direction:column;gap:14px;
   scroll-behavior:smooth;
@@ -311,6 +311,10 @@ body{
 .msg{display:flex;flex-direction:column;max-width:100%;min-width:0;}
 .msg.user{align-items:flex-end}
 .msg.assistant{align-items:flex-start;min-width:0;width:100%}
+/* Cards, diffs and terminal blocks must never be wider than the panel — wide
+   content scrolls inside its own block instead of the whole chat. */
+.msg > *{max-width:100%;min-width:0;box-sizing:border-box}
+.write-perm-card,.diff-block,.terminal-block{width:100%;box-sizing:border-box}
 .msg-label{
   font-size:10px;color:var(--vscode-descriptionForeground);
   margin-bottom:3px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;
@@ -701,6 +705,21 @@ body{
   white-space:nowrap;flex-shrink:0;margin-left:2px;
 }
 #stop-btn:hover{opacity:.8}
+#s-step{font-size:10px;opacity:.55;white-space:nowrap}
+#s-step:empty{display:none}
+#bg-btn{
+  display:none;
+  background:transparent;color:inherit;
+  border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));
+  border-radius:4px;padding:0 6px;
+  cursor:pointer;font-size:10px;font-family:inherit;white-space:nowrap;flex-shrink:0;
+}
+#bg-btn:hover{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
+.checkpoint-stop-btn{
+  flex-shrink:0;padding:2px 10px;border-radius:4px;cursor:pointer;
+  background:transparent;color:inherit;
+  border:1px solid currentColor;font-size:11px;font-family:inherit;white-space:nowrap;
+}
 .csel{position:relative;display:inline-block;font-size:9px;font-weight:500;letter-spacing:.03em;cursor:pointer;user-select:none}
 .csel-val{
   display:inline-block;padding:2px 14px 2px 7px;
@@ -998,6 +1017,7 @@ body{
   font-weight:600; color:var(--vscode-foreground);
 }
 .write-perm-header .perm-icon { font-size:14px; }
+.write-perm-header > span:last-child { min-width:0; overflow-wrap:anywhere; }
 .write-perm-preview {
   padding:8px 12px; font-family:var(--vscode-editor-font-family,monospace);
   font-size:11px; white-space:pre-wrap; word-break:break-all;
@@ -1006,7 +1026,7 @@ body{
   border-bottom:1px solid var(--vscode-panel-border,#333);
 }
 .write-perm-actions {
-  display:flex; gap:6px; padding:7px 12px;
+  display:flex; flex-wrap:wrap; gap:6px; padding:7px 12px;
   justify-content:flex-end;
 }
 .write-perm-btn {
@@ -1416,6 +1436,8 @@ body { overflow-x: hidden; }
 <div id="status">
   <div class="s-dot" id="s-dot"></div>
   <span id="s-text">Ready</span>
+  <span id="s-step"></span>
+  <button id="bg-btn" title="Stop background processes started by the agent"></button>
   <span id="s-tokens" style="margin-left:auto;font-size:10px;opacity:.55"></span>
   <button id="stop-btn" title="Stop generation">&#9632; Stop</button>
 </div>
@@ -1653,6 +1675,12 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
   var stopBtn  = document.getElementById('stop-btn');
   var sDot     = document.getElementById('s-dot');
   var sText    = document.getElementById('s-text');
+  var sStep    = document.getElementById('s-step');
+  var bgBtn    = document.getElementById('bg-btn');
+  bgBtn.addEventListener('click', function() {
+    bgBtn.disabled = true;
+    vscode.postMessage({ type: 'killBackgroundProcesses' });
+  });
   /** Pending follow-up: { rawInput, attachments } — sent automatically when stream ends. */
   var _queuedMsg = null;
   var _queuedBarEl = null;
@@ -2558,6 +2586,10 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     }
     sDot.className = 's-dot' + (on ? ' thinking' : '');
     sText.textContent = on ? 'Thinking\u2026' : 'Ready';
+    if (!on) {
+      sStep.textContent = '';
+      document.querySelectorAll('.checkpoint-notice').forEach(function(el) { el.remove(); });
+    }
 
     if (!on && _queuedMsg) {
       var queued = _queuedMsg;
@@ -2839,6 +2871,8 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     if (!_mdRafPending) {
       _mdRafPending = true;
       requestAnimationFrame(function () {
+        // Skip if the segment was finalized meanwhile (tool start / message end)
+        if (!_mdRafPending) { return; }
         _mdRafPending = false;
         if (!curAoEl) { return; }
         curAoEl.innerHTML = renderMd(curSegRaw.replace(CLARIFY_RE, '')) + '<span class="stream-cursor-inline"></span>';
@@ -3292,8 +3326,13 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     var wrap = document.getElementById('msg-' + msgId);
     if (!wrap) { return null; }
 
-    // Find the run_terminal pending pill to get the command label
-    var pill = wrap.querySelector('.step-pill[data-pill-tool="run_terminal"]');
+    // The running command's pill: the last pending run_terminal pill (earlier ones are finished)
+    var pills = wrap.querySelectorAll('.step-pill[data-pill-tool="run_terminal"]');
+    var pill = null;
+    for (var pi = pills.length - 1; pi >= 0; pi--) {
+      if (pills[pi].querySelector('.step-pill-spinner')) { pill = pills[pi]; break; }
+    }
+    if (!pill && pills.length) { pill = pills[pills.length - 1]; }
     var cmd = pill ? (pill.dataset.pillLabel || '') : '';
 
     var block = document.createElement('div');
@@ -3326,9 +3365,12 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     block.appendChild(hdr);
     block.appendChild(body);
 
-    // Insert before copy button or append
+    // Place the output directly under its command's pill. Appending at the end would put
+    // it below the text the model writes next (even after the final conclusion).
     var copyBtn = document.getElementById('copy-' + msgId);
-    if (copyBtn) { wrap.insertBefore(block, copyBtn); } else { wrap.appendChild(block); }
+    if (pill && pill.parentNode === wrap) { wrap.insertBefore(block, pill.nextSibling); }
+    else if (copyBtn) { wrap.insertBefore(block, copyBtn); }
+    else { wrap.appendChild(block); }
 
     var state = { block: block, body: body, hdr: hdr, statusSpan: statusSpan, cmdSpan: cmdSpan, autoScroll: true };
     _termBlocks[msgId] = state;
@@ -3442,6 +3484,8 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     var pills = wrap.querySelectorAll('.step-pill[data-pill-tool="write_file"]');
     for (var c = 0; c < pills.length; c++) {
       var p = pills[c];
+      // Only pending pills: two writes to the same file must each resolve their own pill
+      if (!p.querySelector('.step-pill-spinner')) { continue; }
       if (p.dataset.pillLabel === filepath || filepath.endsWith(p.dataset.pillLabel) || p.dataset.pillLabel.endsWith(filepath.split('/').pop())) {
         var spinner = p.querySelector('.step-pill-spinner');
         if (spinner) {
@@ -3527,6 +3571,8 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     var pills = wrap.querySelectorAll('.step-pill[data-pill-tool]');
     for (var i = 0; i < pills.length; i++) {
       var p = pills[i];
+      // Only pending pills: repeated calls on the same target must each resolve their own pill
+      if (!p.querySelector('.step-pill-spinner')) { continue; }
       if (p.dataset.pillTool === tool && (p.dataset.pillLabel === label || label.startsWith(p.dataset.pillLabel) || p.dataset.pillLabel.startsWith(label))) {
         var spinner = p.querySelector('.step-pill-spinner');
         if (spinner) {
@@ -4042,7 +4088,7 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
   }
 
   // ── Lightweight markdown renderer ───────────────────────────────────────
-  var TOOL_FENCE_RE = /```(?:write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol)[\s\S]*/g;
+  var TOOL_FENCE_RE = /`{3,}(?:write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo)[\s\S]*/g;
 
   function renderMd(raw) {
     if (!raw) { return ''; }
@@ -4142,8 +4188,19 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
   }
 
   // ── Message handler ─────────────────────────────────────────────────────
-  window.addEventListener('message', function (event) {
-    var data = event.data;
+  window.addEventListener('message', function (event) { handleExtMessage(event.data); });
+
+  // Rebuilds a stored assistant reply by replaying the events it streamed through
+  // the normal handlers, so a reopened thread looks exactly like the live one.
+  var _replaySeq = 0;
+  function _replayAssistant(events) {
+    var rid = 'replay-' + (++_replaySeq);
+    handleExtMessage({ type: 'startMessage', id: rid });
+    events.forEach(function(ev) { handleExtMessage(Object.assign({}, ev, { id: rid })); });
+    handleExtMessage({ type: 'endMessage', id: rid });
+  }
+
+  function handleExtMessage(data) {
     switch (data.type) {
       case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
@@ -4263,6 +4320,52 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
           ilTarget.appendChild(ilEl);
           scrollBottom();
         }
+        break;
+      }
+      case 'stepProgress':
+        if (data.id === curId) { sStep.textContent = '\u00b7 step ' + data.step; }
+        break;
+      case 'activity':
+        if (streaming) {
+          sText.textContent = data.text || 'Thinking\u2026';
+          sDot.className = 's-dot ' + (data.text ? 'writing' : 'thinking');
+        }
+        break;
+      case 'checkpoint': {
+        var cpWrap = document.getElementById('msg-' + data.id);
+        if (!cpWrap) { break; }
+        var cpEl = document.createElement('div');
+        cpEl.className = 'stream-stop-notice warn checkpoint-notice';
+        var cpTxt = document.createElement('span');
+        cpTxt.textContent = '\u23F8 ' + data.steps + ' steps so far. Keep going?';
+        var cpGo = document.createElement('button');
+        cpGo.className = 'continue-btn';
+        cpGo.textContent = '\u25B6 Continue';
+        var cpStop = document.createElement('button');
+        cpStop.className = 'checkpoint-stop-btn';
+        cpStop.textContent = 'Stop here';
+        var cpAnswer = function(keepGoing) {
+          vscode.postMessage({ type: 'checkpointResponse', continue: keepGoing });
+          cpEl.remove();
+        };
+        cpGo.addEventListener('click', function() { cpAnswer(true); });
+        cpStop.addEventListener('click', function() { cpAnswer(false); });
+        cpEl.appendChild(cpTxt);
+        cpEl.appendChild(cpGo);
+        cpEl.appendChild(cpStop);
+        var cpCopy = document.getElementById('copy-' + data.id);
+        if (cpCopy) { cpWrap.insertBefore(cpEl, cpCopy); } else { cpWrap.appendChild(cpEl); }
+        sText.textContent = 'Waiting for you\u2026';
+        sDot.className = 's-dot';
+        scrollBottom();
+        break;
+      }
+      case 'backgroundProcesses': {
+        var procs = data.processes || [];
+        bgBtn.disabled = false;
+        bgBtn.style.display = procs.length ? 'inline-block' : 'none';
+        bgBtn.textContent = '\u2699 ' + procs.length + ' background ' + (procs.length === 1 ? 'process' : 'processes') + ' \u2715';
+        bgBtn.title = 'Click to stop:\n' + procs.map(function(p) { return p.command.slice(0, 120); }).join('\n');
         break;
       }
       case 'contextSnippet':
@@ -4385,6 +4488,8 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
           data.displayMessages.forEach(function(m) {
             if (m.role === 'user') {
               appendUserMsg(m.text, [], []);
+            } else if (m.events && m.events.length > 0) {
+              _replayAssistant(m.events);
             } else {
               var d = document.createElement('div');
               d.className = 'msg assistant';
@@ -4405,7 +4510,7 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
         scrollBottom();
         break;
     }
-  });
+  }
 
 })();
 </script>

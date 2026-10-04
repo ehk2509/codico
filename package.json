@@ -230,10 +230,21 @@
         },
         "codico.maxIterations": {
           "type": "number",
-          "default": 16,
-          "minimum": 1,
-          "maximum": 50,
-          "description": "Maximum number of agentic loop iterations before stopping"
+          "default": 0,
+          "minimum": 0,
+          "description": "Maximum number of agentic loop iterations before stopping (0 = no limit)"
+        },
+        "codico.checkpointSteps": {
+          "type": "number",
+          "default": 50,
+          "minimum": 0,
+          "description": "Pause and ask whether to continue every N agent steps (0 = never pause)"
+        },
+        "codico.terminalTimeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 10,
+          "description": "Kill a run_terminal command (and everything it started) after this many seconds"
         },
         "codico.inlineCompletionsEnabled": {
           "type": "boolean",
