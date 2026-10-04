@@ -1,6 +1,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { SYSTEM_PROMPT, StreamChunk, ChatMessage } from './openRouterClient';
+import { StreamCompletionGuard } from './streamCompletion';
 
 /**
  * Parse a base URL string into host, port, and path prefix.
@@ -129,6 +130,14 @@ export function streamOllama(
                         }
 
                         let buffer = '';
+                        const completion = new StreamCompletionGuard();
+                        let streamEnded = false;
+                        const pushEnd = (): void => {
+                            if (!streamEnded) {
+                                streamEnded = true;
+                                push(null);
+                            }
+                        };
 
                         function flushBuffer(): void {
                             if (!buffer) { return; }
@@ -138,7 +147,8 @@ export function streamOllama(
                                 const trimmed = line.trim();
                                 if (!trimmed) { continue; }
                                 if (trimmed === 'data: [DONE]') {
-                                    push(null);
+                                    completion.markTerminal();
+                                    pushEnd();
                                     continue;
                                 }
                                 if (trimmed.startsWith('data: ')) {
@@ -147,8 +157,9 @@ export function streamOllama(
 
                                         if (json.error) {
                                             const msg: string = json.error?.message ?? JSON.stringify(json.error);
+                                            completion.markTerminal();
                                             push({ type: 'stream_error', message: msg });
-                                            push(null);
+                                            pushEnd();
                                             continue;
                                         }
 
@@ -161,8 +172,11 @@ export function streamOllama(
                                         }
 
                                         const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
-                                        if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
-                                            push({ type: 'finish', reason: finishReason });
+                                        if (finishReason) {
+                                            completion.markTerminal();
+                                            if (finishReason !== 'stop' && finishReason !== 'tool_calls') {
+                                                push({ type: 'finish', reason: finishReason });
+                                            }
                                         }
 
                                         const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
@@ -190,7 +204,8 @@ export function streamOllama(
                                 const trimmed = line.trim();
                                 if (!trimmed) { continue; }
                                 if (trimmed === 'data: [DONE]') {
-                                    push(null);
+                                    completion.markTerminal();
+                                    pushEnd();
                                     return;
                                 }
                                 if (trimmed.startsWith('data: ')) {
@@ -199,8 +214,9 @@ export function streamOllama(
 
                                         if (json.error) {
                                             const msg: string = json.error?.message ?? JSON.stringify(json.error);
+                                            completion.markTerminal();
                                             push({ type: 'stream_error', message: msg });
-                                            push(null);
+                                            pushEnd();
                                             return;
                                         }
 
@@ -213,8 +229,11 @@ export function streamOllama(
                                         }
 
                                         const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
-                                        if (finishReason && finishReason !== 'stop' && finishReason !== 'tool_calls') {
-                                            push({ type: 'finish', reason: finishReason });
+                                        if (finishReason) {
+                                            completion.markTerminal();
+                                            if (finishReason !== 'stop' && finishReason !== 'tool_calls') {
+                                                push({ type: 'finish', reason: finishReason });
+                                            }
                                         }
 
                                         const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
@@ -235,11 +254,21 @@ export function streamOllama(
 
                         res.on('end', () => {
                             flushBuffer();
-                            push(null);
+                            if (!signal?.aborted) {
+                                const interrupted = completion.unexpectedEofMessage('Ollama');
+                                if (interrupted) {
+                                    push({ type: 'stream_error', message: interrupted });
+                                }
+                            }
+                            pushEnd();
                         });
                         res.on('error', (err: Error) => {
-                            if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR') { push(null); }
-                            else { push(err); }
+                            if ((err as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                                pushEnd();
+                            } else {
+                                push({ type: 'stream_error', message: `Ollama stream transport error: ${err.message}` });
+                                pushEnd();
+                            }
                         });
                     }
                 );
