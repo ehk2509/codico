@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import * as https from 'https';
 import * as path from 'path';
-import * as crypto from 'crypto';
 import { ignoreRules } from './ignoreRules';
+import { canReusePersistedVector, hashIndexText, PersistedIndexChunk } from './indexPersistence';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -53,9 +53,6 @@ const IGNORE_EXTS = new Set([
 const STORAGE_KEY = 'codico.workspaceIndex.v2';
 const LEGACY_STORAGE_KEY = 'codico.workspaceIndex.v1';
 
-function hashIndexText(text: string): string {
-    return crypto.createHash('sha256').update(text, 'utf8').digest('hex');
-}
 
 // ── Cosine similarity ─────────────────────────────────────────────────────────
 
@@ -193,13 +190,7 @@ export class WorkspaceIndex {
      * stale vectors can never be paired with changed source code.
      */
     async load(): Promise<boolean> {
-        type PersistedChunk = {
-            file: string;
-            startLine: number;
-            vector?: number[];
-            textHash?: string;
-        };
-        type PersistedIndex = { chunks: PersistedChunk[]; indexedAt: number };
+        type PersistedIndex = { chunks: PersistedIndexChunk[]; indexedAt: number };
 
         const saved =
             this._context.workspaceState.get<PersistedIndex>(STORAGE_KEY) ??
@@ -220,13 +211,8 @@ export class WorkspaceIndex {
             const currentChunks = await this._chunkFile(vscode.Uri.joinPath(root, file));
             for (const chunk of currentChunks) {
                 const persisted = persistedByKey.get(`${chunk.file}:${chunk.startLine}`);
-                if (
-                    persisted?.vector &&
-                    persisted.vector.length > 0 &&
-                    persisted.textHash &&
-                    persisted.textHash === hashIndexText(chunk.text)
-                ) {
-                    chunk.vector = persisted.vector;
+                if (canReusePersistedVector(chunk.text, persisted)) {
+                    chunk.vector = persisted!.vector;
                 }
                 hydrated.push(chunk);
             }
