@@ -21,6 +21,7 @@ test('action phase is strong guidance layered on the normal tool contract', () =
 
 test('post-edit phase keeps mutation local and requires behavioral evidence', () => {
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /Local invariant audit/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /semantic-completion candidates as explicit proof obligations/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal, cancellation/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /behavior-level test-like command/i);
