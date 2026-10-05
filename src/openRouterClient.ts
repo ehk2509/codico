@@ -2,6 +2,7 @@ import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
+import { toOpenAIMessages } from './providerConversation';
 
 export type StreamChunk =
     | { type: 'thinking'; text: string }
@@ -15,10 +16,18 @@ export type MessageContentPart =
     | { type: 'text'; text: string }
     | { type: 'image_url'; image_url: { url: string } };
 
-export type ChatMessage = {
-    role: 'system' | 'user' | 'assistant';
-    content: string | MessageContentPart[];
-};
+export type ChatMessage =
+    | {
+        role: 'system' | 'user' | 'assistant';
+        content: string | MessageContentPart[];
+        nativeToolCalls?: NativeToolCall[];
+      }
+    | {
+        role: 'tool';
+        content: string;
+        toolCallId: string;
+        toolName: string;
+      };
 
 export interface OpenRouterEndpoint {
     protocol?: 'http:' | 'https:';
@@ -259,10 +268,10 @@ export function streamOpenRouter(
             let nativeFallbackUsed = false;
 
             function buildBody(): string {
-                const messages: ChatMessage[] = [
+                const messages = toOpenAIMessages([
                     { role: 'system', content: systemPrompt(useNativeTools) },
                     ...history,
-                ];
+                ], useNativeTools);
                 return JSON.stringify({
                     model,
                     messages,
