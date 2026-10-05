@@ -7,14 +7,16 @@ const {
   systemPromptForAgentPhase,
 } = require('../out/agentPhasePrompt.js');
 
-test('action phase prefers implementation without closing discovery', () => {
-  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /prefer action, preserve correctness/i);
-  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /Discovery remains available/i);
-  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /abstraction that owns the behavior/i);
-  assert.doesNotMatch(ACTION_PHASE_SYSTEM_PROMPT, /Discovery is closed/i);
+test('action phase is strong guidance layered on the normal tool contract', () => {
+  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /act on the evidence/i);
+  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /next response should make the smallest evidence-backed code change/i);
+  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /Discovery tools remain available/i);
 
   const prompt = systemPromptForAgentPhase(false, true, false);
-  assert.equal(prompt, ACTION_PHASE_SYSTEM_PROMPT);
+  assert.match(prompt, /Invoke tools using these exact fenced-code-block formats/i);
+  assert.match(prompt, /act on the evidence/i);
+  assert.match(prompt, /read_file/);
+  assert.match(prompt, /edit_file/);
 });
 
 test('post-edit phase verifies acceptance while allowing targeted dependencies', () => {
@@ -23,10 +25,10 @@ test('post-edit phase verifies acceptance while allowing targeted dependencies',
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /callers, consumers, shared abstractions, sibling implementations/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /Discovery remains available/i);
 
-  const prompt = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts');
+  const prompt = systemPromptForAgentPhase(false, true, true, 'src/openRouterClient.ts');
   assert.match(prompt, /satisfy the acceptance contract/i);
+  assert.doesNotMatch(prompt, /act on the evidence/i);
   assert.match(prompt, /src\/openRouterClient\.ts/);
-  assert.doesNotMatch(prompt, /read budget is exhausted/i);
 });
 
 test('Ask mode remains read-only even when autonomous phase flags are set', () => {
