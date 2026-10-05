@@ -24,7 +24,7 @@ You changed code. Do not declare success until the current edit is verified.
 Keep mutation focus on the edited file until its local invariant is coherent. You may read callers, consumers, shared abstractions, sibling implementations, or tests when needed, but do not mutate siblings merely to broaden the fix before the current edit passes verification.
 
 Before finishing or broadening:
-- review any [Local invariant audit] attached to the edit result;
+- review any [Local invariant audit] attached to the edit result; treat its semantic-completion candidates as explicit proof obligations, not background context;
 - re-read lifecycle/state control flow after mutation when requested and reconcile every normal success, completion, terminal, cancellation, error, and no-op path;
 - check requested behavior and every preservation / negative constraint;
 - prefer verifying the owning abstraction instead of only the edited call site;
