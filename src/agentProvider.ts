@@ -24,6 +24,7 @@ import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
+import { EvaluationRunMetrics } from './evaluationMetrics';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -81,6 +82,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _autoCompact = true;
     /** Prompt token count from the most recent API response; used for auto-compact threshold. */
     private _lastPromptTokens = 0;
+    /** Test-only autonomous coding benchmark mode. Never enabled in production extension mode. */
+    private readonly _evaluationMode: boolean;
+    private _evalSteps = 0;
+    private _evalToolCalls = 0;
+    private _evalPromptTokens = 0;
+    private _evalCompletionTokens = 0;
 
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
@@ -88,8 +95,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        private readonly _context: vscode.ExtensionContext
+        private readonly _context: vscode.ExtensionContext,
+        evaluationMode = false,
     ) {
+        this._evaluationMode = evaluationMode;
+        this._external.setEvaluationMode(evaluationMode);
         this._workspaceIndex = new WorkspaceIndex(_context);
         this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
@@ -598,6 +608,29 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._handleUserMessage(text);
     }
 
+    /**
+     * Test-only entrypoint used by the frozen coding-task benchmark.
+     * Production activation never enables evaluation mode.
+     */
+    public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
+        if (!this._evaluationMode) {
+            throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
+        }
+        const startedAt = Date.now();
+        await vscode.commands.executeCommand('workbench.view.extension.codico-container');
+        await this._handleUserMessage(text);
+        return {
+            durationMs: Date.now() - startedAt,
+            steps: this._evalSteps,
+            toolCalls: this._evalToolCalls,
+            filesWritten: this._filesWrittenThisTurn,
+            promptTokens: this._evalPromptTokens,
+            completionTokens: this._evalCompletionTokens,
+            totalTokens: this._evalPromptTokens + this._evalCompletionTokens,
+            historyMessages: this._history.length,
+        };
+    }
+
     // ── Session resume detection ──────────────────────────────────────────────
 
     private _isSessionInterrupted(): boolean {
@@ -647,6 +680,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._busy = true;
         const _taskStartMs = Date.now();
         this._filesWrittenThisTurn = 0;
+        this._evalSteps = 0;
+        this._evalToolCalls = 0;
+        this._evalPromptTokens = 0;
+        this._evalCompletionTokens = 0;
         // Dismiss any pending proactive offer now that the user is sending a message
         this._post({ type: 'proactiveOffer', filename: '', errorCount: 0, warningCount: 0 });
         try {
@@ -671,8 +708,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Reset per-response allow-all flags at the start of every new user turn
-        this._allowAllWrites  = false;
-        this._allowAllTerminal = false;
+        this._allowAllWrites  = this._evaluationMode;
+        this._allowAllTerminal = this._evaluationMode;
         this._external.resetTurnPermissions();
 
         // Cancel any ongoing stream
@@ -840,6 +877,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
                 if (signal.aborted) { break; }
+                this._evalSteps = Math.max(this._evalSteps, i + 1);
                 this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
 
                 let fullContent = '';
@@ -881,6 +919,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
+                    this._evalToolCalls++;
                     await this._dispatchTool(tool, msgId, signal);
                     const result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
@@ -1001,6 +1040,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         nativeToolExecutions.push({ call, result: dispatched.result });
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
+                        this._evalPromptTokens += chunk.promptTokens;
+                        this._evalCompletionTokens += chunk.completionTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
