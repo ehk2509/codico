@@ -72,3 +72,25 @@ test('controller resets after mutation and does not constrain Ask mode', () => {
     assert.equal(check.block, undefined);
   }
 });
+
+
+test('post-edit verification allows one local reread then forces revision or verification', () => {
+  const controller = new ExplorationController(
+    'Fix premature EOF handling. Keep normal completed streams unchanged.'
+  );
+  controller.after({ type: 'edit_file', filepath: 'src/openRouterClient.ts', oldStr: 'a', newStr: 'b' });
+
+  assert.equal(controller.verificationReadAllowed, true);
+  const first = controller.before({ type: 'read_file', filepath: 'src/openRouterClient.ts' }, false);
+  assert.equal(first.block, undefined);
+  assert.match(first.guidance, /one post-edit audit read/i);
+  assert.match(first.guidance, /preservation\/negative constraint/i);
+  assert.equal(controller.verificationReadAllowed, false);
+
+  const second = controller.before({ type: 'read_file', filepath: 'src/openRouterClient.ts' }, false);
+  assert.match(second.block, /read budget is exhausted/i);
+
+  const prompt = controller.systemPrompt(false);
+  assert.match(prompt, /Keep normal completed streams unchanged/);
+  assert.match(prompt, /read budget is exhausted/i);
+});
