@@ -250,76 +250,45 @@ export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition
     return ALL_TOOLS.filter(tool => !readOnly || READ_ONLY.has(tool.name));
 }
 
-const ACTION_AFTER_EXPLORATION = new Set<ToolCall['type']>([
-    'write_file',
-    'edit_file',
-    'run_terminal',
-    'get_diagnostics',
-    'update_todo',
-]);
-
 /**
- * Once an autonomous coding turn has enough source evidence, stop advertising
- * more discovery capabilities to native-tool models. Mutation and verification
- * remain available; a successful edit resets the lock in AgentProvider.
+ * Phase policies are advisory. Fixed exploration/read counts must not remove
+ * capabilities that may be required for correctness.
  */
 export function restrictNativeToolsForAction(
     tools: NativeToolDefinition[]
 ): NativeToolDefinition[] {
-    return tools
-        .filter(tool => ACTION_AFTER_EXPLORATION.has(tool.name))
-        .map(tool => tool.name === 'run_terminal'
-            ? {
-                ...tool,
-                description: 'Run tests, builds, or other verification commands. Source-inspection shell commands are blocked until you make an edit.',
-            }
-            : tool);
+    return tools.map(tool => tool.name === 'run_terminal'
+        ? {
+            ...tool,
+            description: 'Run a shell command in the workspace. Prefer tests/builds once enough evidence exists; source inspection remains available when it closes a concrete gap.',
+        }
+        : tool);
 }
 
-const LOCAL_VERIFICATION_TOOLS = new Set<ToolCall['type']>([
-    'read_file',
-    'write_file',
-    'edit_file',
-    'run_terminal',
-    'get_diagnostics',
-    'update_todo',
-]);
-
-function constrainFilepath(tool: NativeToolDefinition, filepath?: string): NativeToolDefinition {
-    if (!filepath || !['read_file', 'write_file', 'edit_file'].includes(tool.name)) { return tool; }
-    const properties = (tool.inputSchema.properties ?? {}) as Record<string, unknown>;
-    const filepathSchema = (properties.filepath ?? { type: 'string' }) as Record<string, unknown>;
-    return {
-        ...tool,
-        description: tool.name === 'read_file'
-            ? `Re-read the edited file ${filepath} to audit local invariants before broadening.`
-            : `${tool.description} During local verification, keep changes in ${filepath}.`,
-        inputSchema: {
-            ...tool.inputSchema,
-            properties: {
-                ...properties,
-                filepath: { ...filepathSchema, enum: [filepath] },
-            },
-        },
-    };
-}
-
-/** Keep post-edit verification local until the edited component is audited and tested. */
 export function restrictNativeToolsForVerification(
     tools: NativeToolDefinition[],
     filepath?: string,
-    readAllowed = true,
+    _readAllowed = true,
 ): NativeToolDefinition[] {
-    return tools
-        .filter(tool => LOCAL_VERIFICATION_TOOLS.has(tool.name))
-        .filter(tool => readAllowed || tool.name !== 'read_file')
-        .map(tool => constrainFilepath(tool, filepath))
-        .map(tool => tool.name === 'run_terminal'
-            ? {
+    return tools.map(tool => {
+        if (tool.name === 'read_file') {
+            return {
                 ...tool,
-                description: 'Run only tests, builds, linting, or diagnostics. Source-inspection shell commands are blocked during local verification.',
-            }
-            : tool);
+                description: filepath
+                    ? `Read a workspace file. Start with edited file ${filepath}; inspect callers/consumers/siblings when needed to verify the acceptance contract.`
+                    : 'Read a workspace file to close a concrete verification gap.',
+            };
+        }
+
+        if (tool.name === 'run_terminal') {
+            return {
+                ...tool,
+                description: 'Run tests, builds, linting, diagnostics, or targeted source-inspection commands needed to verify the acceptance contract.',
+            };
+        }
+
+        return tool;
+    });
 }
 
 export function nativeToolsForAgentPhase(
@@ -329,10 +298,11 @@ export function nativeToolsForAgentPhase(
     verificationFile?: string,
     verificationReadAllowed = true,
 ): NativeToolDefinition[] {
-    if (explorationLocked) { return restrictNativeToolsForAction(tools); }
     if (verificationPending) {
         return restrictNativeToolsForVerification(tools, verificationFile, verificationReadAllowed);
     }
+
+    if (explorationLocked) { return restrictNativeToolsForAction(tools); }
     return tools;
 }
 
