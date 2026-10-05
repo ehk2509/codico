@@ -46,7 +46,7 @@ test('ambiguous exact edits are rejected', () => {
 
 test('ambiguous whitespace-tolerant edits are rejected', () => {
   const source = [
-    'if (ready) { finish(); }',
+    'if  (ready) {  finish(); }',
     'if   (ready)   {   finish();   }',
   ].join('\n');
   const result = resolveEditMatch(source, 'if (ready) { finish(); }');
