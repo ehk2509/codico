@@ -34,3 +34,15 @@ test('Ask mode remains read-only even when autonomous phase flags are set', () =
   assert.match(prompt, /read-only Ask mode/i);
   assert.doesNotMatch(prompt, /```edit_file/);
 });
+
+
+test('verification prompt carries the original acceptance contract and enforces the read budget', () => {
+  const contract = '## Task acceptance contract\nKeep normal completed streams unchanged.';
+  const first = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, true);
+  assert.match(first, /Keep normal completed streams unchanged/);
+  assert.match(first, /re-read the edited file once/i);
+
+  const exhausted = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, false);
+  assert.match(exhausted, /read budget is exhausted/i);
+  assert.match(exhausted, /test\/build\/diagnostics/i);
+});
