@@ -12,6 +12,8 @@ test('coding holdout v1 is frozen, non-trivial, and internally consistent', () =
   assert.equal(suite.frozen, true);
   assert.ok(Array.isArray(suite.tasks));
   assert.ok(suite.tasks.length >= 25, 'frozen suite must contain at least 25 tasks');
+  assert.ok(suite.maxTotalTokens >= 100000 && suite.maxTotalTokens <= 500000);
+  assert.ok(suite.maxTaskMinutes >= 5 && suite.maxTaskMinutes <= 15);
 
   const ids = new Set();
   for (const task of suite.tasks) {
@@ -21,15 +23,20 @@ test('coding holdout v1 is frozen, non-trivial, and internally consistent', () =
 
     assert.match(task.baseCommit, /^[0-9a-f]{40}$/);
     assert.ok(task.prompt.length >= 80, `task prompt is too weak: ${task.id}`);
-    assert.ok(task.maxIterations >= 10 && task.maxIterations <= 60);
+    assert.ok(task.maxIterations >= 8 && task.maxIterations <= 16);
+    assert.match(task.verifierCommit, /^[0-9a-f]{40}$/);
 
-    const verifier = path.join(root, 'tests', task.verifierFile);
-    assert.equal(fs.existsSync(verifier), true, `missing verifier: ${task.verifierFile}`);
-    const verifierText = fs.readFileSync(verifier, 'utf8');
-    assert.ok(
-      verifierText.includes(task.testNamePattern),
-      `verifier pattern not found for ${task.id}: ${task.testNamePattern}`
-    );
+    if (task.verifierPath) {
+      const verifier = path.join(root, task.verifierPath);
+      assert.equal(fs.existsSync(verifier), true, `missing verifier: ${task.verifierPath}`);
+      const verifierText = fs.readFileSync(verifier, 'utf8');
+      assert.ok(
+        verifierText.includes(task.testNamePattern),
+        `verifier pattern not found for ${task.id}: ${task.testNamePattern}`
+      );
+    } else {
+      assert.match(task.verifierFile, /\.test\.js$/);
+    }
 
     // The task prompt must not reveal the hidden test name.
     assert.equal(
