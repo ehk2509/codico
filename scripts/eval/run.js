@@ -2,6 +2,7 @@ const cp = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { missingVerifierOutModules } = require('./verifierPreflight');
 
 const root = path.resolve(__dirname, '../..');
 
@@ -42,6 +43,38 @@ function median(values) {
   const xs = [...values].sort((a,b) => a-b);
   const mid = Math.floor(xs.length / 2);
   return xs.length % 2 ? xs[mid] : (xs[mid - 1] + xs[mid]) / 2;
+}
+
+function loadVerifier(task) {
+  if (task.verifierPath) {
+    return {
+      source: fs.readFileSync(path.join(root, task.verifierPath), 'utf8'),
+      label: task.verifierPath,
+    };
+  }
+
+  if (!task.verifierCommit) {
+    throw new Error(`Task ${task.id} is missing verifierCommit`);
+  }
+
+  const historical = run('git', ['show', `${task.verifierCommit}:tests/${task.verifierFile}`]);
+  if (historical.status !== 0) {
+    throw new Error(`Cannot load historical verifier for ${task.id}: ${historical.stderr}`);
+  }
+
+  return {
+    source: historical.stdout,
+    label: `${task.verifierCommit}:tests/${task.verifierFile}`,
+  };
+}
+
+function cleanupEvaluationProcesses(instanceDir) {
+  if (!instanceDir || process.platform === 'win32') { return; }
+
+  // Every Electron child carries --user-data-dir under this unique directory.
+  // Match only that directory; never kill arbitrary VS Code processes.
+  run('pkill', ['-TERM', '-f', instanceDir]);
+  run('pkill', ['-KILL', '-f', instanceDir]);
 }
 
 async function main() {
@@ -107,7 +140,11 @@ async function main() {
         changedFiles: [],
         diffStat: '',
         verifier: {},
+        invalidVerifier: false,
       };
+
+      let instanceDir = '';
+      let verifierSource = '';
 
       try {
         const add = run('git', ['worktree', 'add', '--detach', workspace, task.baseCommit]);
@@ -119,7 +156,23 @@ async function main() {
         if (install.status !== 0) {
           throw new Error(`npm ci failed in task workspace:\n${tail(install.stderr)}`);
         }
+        const loadedVerifier = loadVerifier(task);
+        verifierSource = loadedVerifier.source;
+        record.verifierSource = loadedVerifier.label;
+
+        const missingModules = missingVerifierOutModules(verifierSource, workspace);
+        if (missingModules.length > 0) {
+          record.invalidVerifier = true;
+          record.verifier = {
+            status: null,
+            stderr: `Verifier incompatible with historical base; missing modules: ${missingModules.join(', ')}`,
+          };
+          throw new Error(record.verifier.stderr);
+        }
+
         record.setupOk = true;
+        instanceDir = path.join(worktreeParent, 'vscode-instance');
+        fs.mkdirSync(instanceDir, { recursive: true });
 
         const env = {
           ...process.env,
@@ -130,6 +183,7 @@ async function main() {
           CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations || 16),
           CODICO_EVAL_MAX_TOTAL_TOKENS: String(maxTotalTokens),
           CODICO_EVAL_OUTPUT: rawAgentOutput,
+          CODICO_EVAL_INSTANCE_DIR: instanceDir,
         };
         const agent = run(
           process.execPath,
@@ -137,6 +191,8 @@ async function main() {
           { env, timeout: timeoutMinutes * 60_000, inherit: true }
         );
         record.agentOk = agent.status === 0;
+        record.agentTimedOut = /ETIMEDOUT/i.test(agent.error);
+        cleanupEvaluationProcesses(instanceDir);
 
         if (fs.existsSync(rawAgentOutput)) {
           const agentJson = JSON.parse(fs.readFileSync(rawAgentOutput, 'utf8'));
@@ -165,25 +221,9 @@ async function main() {
         const verifierDest = path.join(workspace, 'tests', verifierName);
         fs.mkdirSync(path.dirname(verifierDest), { recursive: true });
 
-        // Verifier is deliberately injected only after the agent has stopped.
-        // Behavior-level verifiers live in eval/verifiers. Otherwise use the exact
-        // regression test from the historical commit that originally fixed the bug,
-        // never the current test suite (which may depend on later architecture).
-        if (task.verifierPath) {
-          const verifierSource = path.join(root, task.verifierPath);
-          fs.copyFileSync(verifierSource, verifierDest);
-        } else {
-          if (!task.verifierCommit) {
-            throw new Error(`Task ${task.id} is missing verifierCommit`);
-          }
-          const historical = run('git', ['show', `${task.verifierCommit}:tests/${task.verifierFile}`]);
-          if (historical.status !== 0) {
-            throw new Error(`Cannot load historical verifier for ${task.id}: ${historical.stderr}`);
-          }
-          fs.writeFileSync(verifierDest, historical.stdout);
-        }
-
-        record.verifierSource = task.verifierPath || `${task.verifierCommit}:tests/${task.verifierFile}`;
+        // Inject only after the agent stops. The same verifier was preflighted
+        // before model invocation without ever entering the task workspace.
+        fs.writeFileSync(verifierDest, verifierSource);
 
         // The hidden verifier executes only after the agent has stopped.
         const verify = run(
@@ -203,6 +243,7 @@ async function main() {
       } catch (error) {
         record.error = error instanceof Error ? error.stack || error.message : String(error);
       } finally {
+        cleanupEvaluationProcesses(instanceDir);
         const file = path.join(resultDir, `${safeName(runId)}.json`);
         fs.writeFileSync(file, JSON.stringify(record, null, 2));
         results.push(record);
@@ -216,15 +257,19 @@ async function main() {
     }
   }
 
-  const passed = results.filter(r => r.success);
+  const invalid = results.filter(r => r.invalidVerifier);
+  const valid = results.filter(r => !r.invalidVerifier);
+  const passed = valid.filter(r => r.success);
   const summary = {
     suiteVersion: suite.suiteVersion,
     frozen: suite.frozen,
     model,
     taskCount: results.length,
+    validTaskCount: valid.length,
+    invalid: invalid.length,
     passed: passed.length,
-    failed: results.length - passed.length,
-    successRate: results.length ? passed.length / results.length : 0,
+    failed: valid.length - passed.length,
+    successRate: valid.length ? passed.length / valid.length : 0,
     medianTokensSuccessful: median(passed.map(r => r.metrics?.totalTokens || 0).filter(Boolean)),
     medianStepsSuccessful: median(passed.map(r => r.metrics?.steps || 0).filter(Boolean)),
     medianToolCallsSuccessful: median(passed.map(r => r.metrics?.toolCalls || 0).filter(Boolean)),
@@ -235,13 +280,14 @@ async function main() {
 
   fs.writeFileSync(path.join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2));
   const rows = results.map(r =>
-    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.success ? 'PASS' : 'FAIL'} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
+    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.invalidVerifier ? 'INVALID' : (r.success ? 'PASS' : 'FAIL')} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
   );
   const markdown = [
     `# Codico coding holdout — ${suite.suiteVersion}`,
     '',
     `Model: **${model}**`,
-    `Success: **${passed.length}/${results.length} (${(summary.successRate * 100).toFixed(1)}%)**`,
+    `Success: **${passed.length}/${valid.length} valid tasks (${(summary.successRate * 100).toFixed(1)}%)**`,
+    `Invalid verifier tasks skipped before model invocation: **${invalid.length}**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,
     '',
     '| Task | Category | Result | Steps | Tool calls | Tokens | Context chars omitted | Files changed |',
@@ -253,7 +299,7 @@ async function main() {
   console.log('\n' + markdown);
   console.log(`Results: ${resultDir}`);
 
-  if (passed.length !== results.length) { process.exitCode = 1; }
+  if (invalid.length > 0 || passed.length !== valid.length) { process.exitCode = 1; }
 }
 
 main().catch(error => {
