@@ -249,7 +249,14 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Maximum number of agentic loop iterations before stopping (0 = no limit)"
+          "description": "Maximum normal agentic loop iterations before stopping (0 = no limit). An unverified code edit may use the separate verification grace budget."
+        },
+        "codico.verificationGraceIterations": {
+          "type": "number",
+          "default": 4,
+          "minimum": 0,
+          "maximum": 12,
+          "description": "Extra iterations allowed only when maxIterations is reached while a code edit is still awaiting acceptance verification. Pure exploration never receives this grace."
         },
         "codico.checkpointSteps": {
           "type": "number",
