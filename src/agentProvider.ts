@@ -1,8 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as cp from 'child_process';
-import * as http from 'http';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
@@ -21,29 +19,9 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-
-/**
- * Returns true if the URL's hostname resolves to a private, loopback, or
- * cloud-metadata address that should never be reachable via fetch_url.
- */
-function _isBlockedHost(parsed: URL): boolean {
-    const host = parsed.hostname.toLowerCase().replace(/^\[|]$/g, ''); // strip IPv6 brackets
-    // Loopback
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost')) { return true; }
-    // Link-local / cloud metadata
-    if (host.startsWith('169.254.')) { return true; }
-    if (host === 'metadata.google.internal' || host === 'metadata.google' || host === 'metadata.aws.internal') { return true; }
-    // RFC-1918 private ranges
-    if (host.startsWith('10.')) { return true; }
-    if (host.startsWith('192.168.')) { return true; }
-    if (host.startsWith('172.')) {
-        const second = parseInt(host.split('.')[1] ?? '0', 10);
-        if (second >= 16 && second <= 31) { return true; }
-    }
-    // IPv6 ULA / link-local
-    if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80')) { return true; }
-    return false;
-}
+import { fetchPublicText } from './urlFetcher';
+import { getNativeToolDefinitions, nativeToolCallToToolCall } from './nativeTools';
+import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
@@ -720,7 +698,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 `This workspace wants Codico to start MCP server "${cfg.name}".`,
                 {
                     modal: true,
-                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes and inherit your environment.`,
+                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes with a minimal runtime environment plus any variables explicitly configured for this server.`,
                 },
                 'Allow Once',
                 'Always Allow for Workspace'
@@ -880,6 +858,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const maxIterations = config.get<number>('maxIterations', 0);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
+        const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
@@ -977,6 +956,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         let recoveryStatusShown = false;
         const MAX_ACTION_NUDGES = 2;
         let actionNudges = 0;
+        const nativeTools = !isOllama && nativeToolCalling
+            ? getNativeToolDefinitions(this._chatMode)
+            : [];
 
 
         // Circuit breaker: track how many times each unique tool call has been issued
@@ -994,6 +976,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
                 let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
                 const inlineToolResults: string[] = [];
+                const nativeToolHistory: string[] = [];
                 let recoverableStreamInterruption: string | null = null;
                 let recoverableFinishReason: string | null = null;
 
@@ -1015,6 +998,26 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
                 };
 
+                const dispatchToolCall = async (tool: ToolCall): Promise<boolean> => {
+                    const fp = toolFingerprint(tool);
+                    const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
+                    _toolCallCounts.set(fp, callCount);
+
+                    if (callCount > MAX_IDENTICAL_CALLS) {
+                        const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
+                        inlineToolResults.push(nudge);
+                        this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
+                        return false;
+                    }
+
+                    await this._dispatchTool(tool, msgId, signal);
+                    if (this._lastInlineResult !== undefined) {
+                        inlineToolResults.push(this._lastInlineResult);
+                        this._lastInlineResult = undefined;
+                    }
+                    return true;
+                };
+
                 // Dispatch every newly complete tool fence, sending the text before each first.
                 // `final` accepts a closing line that is the last thing in the stream.
                 const dispatchFences = async (final: boolean): Promise<void> => {
@@ -1034,25 +1037,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         // and create a new one after the pill
                         const tools = parseToolBody(fence.type, fence.body);
                         if (tools.length > 0) {
-                            const tool = tools[0];
-                            const fp = toolFingerprint(tool);
-                            const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
-                            _toolCallCounts.set(fp, callCount);
-
-                            if (callCount > MAX_IDENTICAL_CALLS) {
-                                // Model is stuck in a loop — inject a hard nudge and
-                                // break out of the stream without dispatching again.
-                                const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
-                                inlineToolResults.push(nudge);
-                                this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
-                                return;
-                            }
-
-                            await this._dispatchTool(tool, msgId, signal);
-                            if (this._lastInlineResult !== undefined) {
-                                inlineToolResults.push(this._lastInlineResult);
-                                this._lastInlineResult = undefined;
-                            }
+                            const keepGoing = await dispatchToolCall(tools[0]);
+                            if (!keepGoing) { return; }
                         }
                     }
                 };
@@ -1105,8 +1091,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, this._history, ollamaModel, effectivePrefix, signal, chatModeOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, this._history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride)
-                        : streamOpenRouter(apiKey, this._history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride)) {
+                        ? streamDirect(directApiKey, this._history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)
+                        : streamOpenRouter(apiKey, this._history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1126,6 +1112,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             resumeBuffer = '';
                         }
                         if (text) { await processContent(text); }
+                    } else if (chunk.type === 'native_tool') {
+                        const tool = nativeToolCallToToolCall(chunk.call);
+                        if (!tool) {
+                            this._post({
+                                type: 'streamError',
+                                id: msgId,
+                                message: `Provider returned invalid arguments for native tool ${chunk.call.name}.`,
+                            });
+                            continue;
+                        }
+                        nativeToolHistory.push(tool.type);
+                        await dispatchToolCall(tool);
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
@@ -1186,17 +1184,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         lastSentPos = fullContent.length;
                         dispatchedUpTo = fullContent.length;
-                        const tool = tools[0];
-                        const fp = toolFingerprint(tool);
-                        const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
-                        _toolCallCounts.set(fp, callCount);
-                        if (callCount <= MAX_IDENTICAL_CALLS) {
-                            await this._dispatchTool(tool, msgId, signal);
-                            if (this._lastInlineResult !== undefined) {
-                                inlineToolResults.push(this._lastInlineResult);
-                                this._lastInlineResult = undefined;
-                            }
-                        }
+                        await dispatchToolCall(tools[0]);
                     }
                 }
 
@@ -1215,9 +1203,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     break;
                 }
 
+                const assistantHistoryContent = fullContent ||
+                    (nativeToolHistory.length > 0
+                        ? `[Native tool calls executed: ${nativeToolHistory.join(', ')}]`
+                        : recoverableStreamInterruption
+                            ? '[Stream interrupted before content]'
+                            : '[Assistant turn completed without text]');
                 this._history.push({
                     role: 'assistant',
-                    content: fullContent || (recoverableStreamInterruption ? '[Stream interrupted before content]' : ''),
+                    content: assistantHistoryContent,
                 });
 
                 // Unexpected transport EOFs are recoverable: preserve the partial
@@ -1967,7 +1961,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (this._allowAllTerminal) {
             granted = true;
         } else {
-            // Request permission inline in the chat (no VS Code modal)
             const permId = nodeCrypto.randomBytes(8).toString('hex');
             granted = await new Promise<boolean>((resolve) => {
                 this._pendingTerminalPermissions.set(permId, resolve);
@@ -1980,122 +1973,49 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return `[run_terminal] Denied by user:\n${tool.command}`;
         }
 
-        return new Promise<string>((resolve) => {
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            const shell = process.platform === 'win32'
-                ? (process.env.ComSpec || 'cmd.exe')
-                : (process.env.SHELL || '/bin/sh');
-            const shellArgs = process.platform === 'win32'
-                ? ['/d', '/s', '/c', tool.command]
-                : ['-c', tool.command];
+        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const timeoutSec = Math.max(
+            10,
+            vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300)
+        );
 
-            // ── Notify the webview so it can open a live terminal block ──
-            this._post({ type: 'terminalChunk', id: msgId, text: '' });
-
-            // Do not launch login shells: shell startup files are outside the
-            // workspace trust boundary and should not run for every agent command.
-            // On POSIX the shell leads its own process group so a timeout or Stop can
-            // kill everything it started, including background jobs (`server &`).
-            const useProcessGroup = process.platform !== 'win32';
-            const child = cp.spawn(shell, shellArgs, {
-                cwd,
-                env: process.env,
-                detached: useProcessGroup,
-            });
-
-            const timeoutSec = Math.max(10, vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300));
-            const TIMEOUT_MS = timeoutSec * 1000;
-            const killTree = (sig: NodeJS.Signals) => {
-                try {
-                    if (useProcessGroup && child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); }
-                } catch { /* already exited */ }
-            };
-
-            let timedOut = false;
-            let killTimer: ReturnType<typeof setTimeout> | undefined;
-            let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
-            let exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
-            const terminate = () => {
-                killTree('SIGTERM');
-                killTimer = setTimeout(() => killTree('SIGKILL'), 3_000);
-                // Settle even if something still holds the output pipes open
-                forceSettleTimer = setTimeout(() => finish(null, 'SIGKILL'), 5_000);
-            };
-            const timeoutTimer = setTimeout(() => { timedOut = true; terminate(); }, TIMEOUT_MS);
-
-            // Kill the command and everything it started when the user clicks Stop
-            const onAbort = () => terminate();
-            signal.addEventListener('abort', onAbort, { once: true });
-
-            const outputChunks: string[] = [];
-
-            const onData = (chunk: Buffer) => {
-                const text = chunk.toString('utf8');
-                outputChunks.push(text);
-                this._post({ type: 'terminalChunk', id: msgId, text });
-            };
-
-            child.stdout.on('data', onData);
-            child.stderr.on('data', onData);
-
-            // Guard against both 'error' and 'close' firing (e.g. ENOENT spawn failure)
-            let settled = false;
-            const settle = (result: string, success: boolean, errorMsg?: string) => {
-                if (settled) { return; }
-                settled = true;
-                clearTimeout(timeoutTimer);
-                clearTimeout(killTimer);
-                clearTimeout(forceSettleTimer);
-                clearTimeout(exitGraceTimer);
-                signal.removeEventListener('abort', onAbort);
-                // Stop reading: a background job may keep the pipes open indefinitely
-                child.stdout.destroy();
-                child.stderr.destroy();
-                this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success, error: errorMsg });
-                resolve(result);
-            };
-
-            const finish = (code: number | null, sig: NodeJS.Signals | null, note = '') => {
-                const output = outputChunks.join('') + note;
-                if (signal.aborted) {
-                    settle(`[run_terminal: ${tool.command}] Stopped by user.\n${output.slice(0, 4000)}`, false);
-                    return;
-                }
-                if (timedOut) {
-                    settle(
-                        `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. ` +
-                        `Long-running processes such as servers must not be started with run_terminal.)\n${output.slice(0, 4000)}`,
-                        false,
-                        `Timed out after ${timeoutSec}s`
-                    );
-                    return;
-                }
-                const exitCode = code ?? (sig ? 1 : 0);
-                const bgNote = useProcessGroup && child.pid && this._trackBackgroundGroup(child.pid, tool.command)
-                    ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
-                    : '';
-                settle(
-                    `[run_terminal: ${tool.command}]\nExit: ${exitCode}\n${output.slice(0, 4000)}${bgNote}`,
-                    exitCode === 0
-                );
-            };
-
-            // 'close' waits for every holder of the output pipes, which never happens when
-            // the command leaves a background job running. Once the shell itself exits,
-            // allow a moment for trailing output and then report the result.
-            child.on('exit', (code, sig) => {
-                exitGraceTimer = setTimeout(() => finish(code, sig), 1_000);
-            });
-            child.on('close', (code, sig) => finish(code, sig));
-
-            child.on('error', (err) => {
-                if (signal.aborted) {
-                    settle(`[run_terminal: ${tool.command}] Stopped by user.`, false);
-                    return;
-                }
-                settle(`[run_terminal: ${tool.command}] ERROR: ${err.message}`, false, err.message);
-            });
+        this._post({ type: 'terminalChunk', id: msgId, text: '' });
+        const result = await runTerminalProcess({
+            command: tool.command,
+            cwd,
+            timeoutMs: timeoutSec * 1000,
+            signal,
+            onChunk: (text) => this._post({ type: 'terminalChunk', id: msgId, text }),
         });
+
+        if (result.stopped) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false });
+            return `[run_terminal: ${tool.command}] Stopped by user.\n${result.output.slice(0, 4000)}`;
+        }
+        if (result.timedOut) {
+            const message = `Timed out after ${timeoutSec}s`;
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
+            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${result.output.slice(0, 4000)}`;
+        }
+        if (result.error) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: result.error });
+            return `[run_terminal: ${tool.command}] ERROR: ${result.error}`;
+        }
+
+        const bgNote = result.backgroundProcessGroup &&
+            this._trackBackgroundGroup(result.backgroundProcessGroup, tool.command)
+            ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
+            : '';
+        const success = result.exitCode === 0;
+        this._post({
+            type: 'toolResult',
+            id: msgId,
+            tool: 'run_terminal',
+            label: shortCmd,
+            success,
+            error: success ? undefined : `Exit ${result.exitCode}`,
+        });
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${result.output.slice(0, 4000)}${bgNote}`;
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */
@@ -2110,7 +2030,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private static _groupAlive(pgid: number): boolean {
-        try { process.kill(-pgid, 0); return true; } catch { return false; }
+        return processGroupAlive(pgid);
     }
 
     private _pruneBackgroundProcesses(): void {
@@ -2127,8 +2047,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private _killBackgroundProcesses(): void {
         for (const pgid of this._bgProcesses.keys()) {
-            try { process.kill(-pgid, 'SIGTERM'); } catch { /* already gone */ }
-            setTimeout(() => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* exited */ } }, 3_000);
+            killProcessGroup(pgid, 'SIGTERM');
+            setTimeout(() => killProcessGroup(pgid, 'SIGKILL'), 3_000);
         }
         this._bgProcesses.clear();
         if (this._bgPollTimer) { clearInterval(this._bgPollTimer); this._bgPollTimer = undefined; }
@@ -2436,121 +2356,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._post({ type: 'browserScreenshot', id: msgId, dataUrl, url: this._browser.currentUrl });
     }
 
-    private async _handleFetchUrl(tool: FetchUrlTool, msgId: string, _redirectDepth = 0): Promise<string> {
-        const MAX_CHARS = 24_000;
-        if (_redirectDepth === 0 && !await this._confirmExternalAction('fetch a URL', tool.url)) {
+    private async _handleFetchUrl(tool: FetchUrlTool, msgId: string): Promise<string> {
+        if (!await this._confirmExternalAction('fetch a URL', tool.url)) {
             return `[fetch_url: ${tool.url}] Denied by user`;
         }
+
         try {
-            // Validate URL scheme — only http/https allowed
-            let parsed: URL;
-            try { parsed = new URL(tool.url); } catch {
-                return `[fetch_url: ${tool.url}] ERROR: Invalid URL`;
-            }
-            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-                return `[fetch_url: ${tool.url}] ERROR: Only http/https URLs are allowed`;
-            }
-            if (_isBlockedHost(parsed)) {
-                return `[fetch_url: ${tool.url}] ERROR: Requests to private/loopback/metadata addresses are blocked`;
-            }
-
-            const rawHtml = await new Promise<string>((resolve, reject) => {
-                // Guard against double-settle: req.destroy() can emit 'error' after
-                // the redirect recursive call already resolved/rejected the promise.
-                let settled = false;
-                const once = {
-                    resolve: (v: string)  => { if (!settled) { settled = true; resolve(v); } },
-                    reject:  (e: unknown) => { if (!settled) { settled = true; reject(e);  } },
-                };
-                const mod = parsed.protocol === 'https:' ? https : http;
-                const req = mod.get(tool.url, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (compatible; Codico/1.0)',
-                        'Accept': 'text/html,application/xhtml+xml,*/*',
-                    },
-                    timeout: 15_000,
-                }, (res: http.IncomingMessage) => {
-                    // Follow redirects (up to 5)
-                    if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308)
-                        && res.headers.location) {
-                        req.destroy();
-                        if (_redirectDepth >= 5) {
-                            once.reject(new Error('Too many redirects'));
-                            return;
-                        }
-                        // Validate redirect URL scheme before following
-                        let redirectUrl: URL;
-                        // Resolve against the original URL so relative redirects (e.g. /new-path)
-                        // are handled correctly — new URL('/path') alone would throw.
-                        try { redirectUrl = new URL(res.headers.location, tool.url); } catch {
-                            once.reject(new Error(`Invalid redirect URL: ${res.headers.location}`));
-                            return;
-                        }
-                        if (redirectUrl.protocol !== 'https:' && redirectUrl.protocol !== 'http:') {
-                            once.reject(new Error(`Redirect to non-http/https scheme rejected: ${redirectUrl.protocol}`));
-                            return;
-                        }
-                        if (_isBlockedHost(redirectUrl)) {
-                            once.reject(new Error(`Redirect to private/loopback/metadata address blocked: ${redirectUrl.hostname}`));
-                            return;
-                        }
-                        this._handleFetchUrl({ ...tool, url: redirectUrl.href }, msgId, _redirectDepth + 1)
-                            .then(once.resolve).catch(once.reject);
-                        return;
-                    }
-                    if (res.statusCode && res.statusCode >= 400) {
-                        req.destroy();
-                        once.reject(new Error(`HTTP ${res.statusCode}`));
-                        return;
-                    }
-                    const chunks: Buffer[] = [];
-                    let totalBytes = 0;
-                    res.on('data', (d: Buffer) => {
-                        totalBytes += d.length;
-                        if (totalBytes > 5 * 1024 * 1024) {
-                            // Destroy the response (not just req) to stop data events immediately
-                            // and prevent chunks from growing further in memory after the cap.
-                            res.destroy();
-                            once.resolve(Buffer.concat([...chunks, d]).toString('utf8'));
-                            return;
-                        }
-                        chunks.push(d);
-                    });
-                    res.on('end', () => once.resolve(Buffer.concat(chunks).toString('utf8')));
-                    res.on('error', once.reject);
-                });
-                req.on('error', once.reject);
-                req.on('timeout', () => { req.destroy(); once.reject(new Error('Request timed out')); });
-            });
-
-            // Strip HTML tags, collapse whitespace — keep readable text
-            const text = rawHtml
-                .replace(/<script[\s\S]*?<\/script>/gi, '')
-                .replace(/<style[\s\S]*?<\/style>/gi, '')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/&nbsp;/gi, ' ')
-                .replace(/&amp;/gi, '&')
-                .replace(/&lt;/gi, '<')
-                .replace(/&gt;/gi, '>')
-                .replace(/&quot;/gi, '"')
-                .replace(/&#39;/gi, "'")
-                .replace(/[ \t]+/g, ' ')
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
-
-            const truncated = text.length > MAX_CHARS
-                ? text.slice(0, MAX_CHARS) + `\n… (truncated at ${MAX_CHARS} chars)`
-                : text;
-
-            if (_redirectDepth === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
-            }
-            return `[fetch_url: ${tool.url}]\n${truncated}`;
+            const text = await fetchPublicText(tool.url);
+            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
+            return `[fetch_url: ${tool.url}]\n${text}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            if (_redirectDepth === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
-            }
+            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
             return `[fetch_url: ${tool.url}] ERROR: ${message}`;
         }
     }
@@ -2582,7 +2399,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 const relPath = vscode.workspace.asRelativePath(uri);
                 for (const d of diags) {
                     if (count >= 50) { lines.push('… (truncated at 50)'); break; }
-                    const sev = ['\u{1F534} ERROR', '\u26A0\uFE0F WARN', '\u2139\uFE0F INFO', '\uD83D\uDCA1 HINT'][d.severity] ?? 'DIAG';
+                    const sev = ['🔴 ERROR', '⚠️ WARN', 'ℹ️ INFO', '💡 HINT'][d.severity] ?? 'DIAG';
                     lines.push(`${relPath}:${d.range.start.line + 1}:${d.range.start.character + 1}: ${sev}: ${d.message}`);
                     count++;
                 }
@@ -3393,6 +3210,10 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
         // in safeModelsJson corrupting the HTML (e.g. a model name containing "$&").
         const safeModelsJson = rawModelsJson.replace(/<\/script>/gi, '<\\/script>');
         html = html.replace('{{MODELS_JSON}}', () => safeModelsJson);
+        const markdownUri = _webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
+        ).toString();
+        html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
         return html;
     }
 

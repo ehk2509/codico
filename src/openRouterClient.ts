@@ -1,11 +1,14 @@
+import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard } from './streamCompletion';
+import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 
 export type StreamChunk =
     | { type: 'thinking'; text: string }
     | { type: 'content'; text: string }
     | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number }
     | { type: 'finish'; reason: string }       // non-'stop' finish_reason from the model
+    | { type: 'native_tool'; call: NativeToolCall }
     | { type: 'stream_error'; message: string }; // error object inside an SSE event
 
 export type MessageContentPart =
@@ -16,6 +19,13 @@ export type ChatMessage = {
     role: 'system' | 'user' | 'assistant';
     content: string | MessageContentPart[];
 };
+
+export interface OpenRouterEndpoint {
+    protocol?: 'http:' | 'https:';
+    hostname: string;
+    port?: number;
+    path?: string;
+}
 
 export const CHAT_SYSTEM_PROMPT = `You are Codico, a helpful coding assistant inside Visual Studio Code.
 
@@ -173,12 +183,18 @@ export function streamOpenRouter(
     customSystemPromptPrefix?: string,
     signal?: AbortSignal,
     thinkingEffort: 'high' | 'medium' | 'low' = 'high',
-    overrideSystemPrompt?: string
+    overrideSystemPrompt?: string,
+    nativeTools: NativeToolDefinition[] = [],
+    endpoint: OpenRouterEndpoint = { protocol: 'https:', hostname: 'openrouter.ai', path: '/api/v1/chat/completions' }
 ): AsyncIterable<StreamChunk> {
     const basePrompt = overrideSystemPrompt ?? SYSTEM_PROMPT;
-    const effectiveSystemPrompt = customSystemPromptPrefix
-        ? `${basePrompt}\n\n${customSystemPromptPrefix}`
-        : basePrompt;
+
+    function systemPrompt(useNativeTools: boolean): string {
+        const toolPrompt = useNativeTools ? `${basePrompt}\n\n${NATIVE_TOOL_PROMPT}` : basePrompt;
+        return customSystemPromptPrefix
+            ? `${toolPrompt}\n\n${customSystemPromptPrefix}`
+            : toolPrompt;
+    }
 
     return {
         [Symbol.asyncIterator]() {
@@ -239,20 +255,35 @@ export function streamOpenRouter(
             }
 
             // ── Build request ─────────────────────────────────────────────
-            const messages: ChatMessage[] = [
-                { role: 'system', content: effectiveSystemPrompt },
-                ...history,
-            ];
+            let useNativeTools = nativeTools.length > 0;
+            let nativeFallbackUsed = false;
 
-            const body = JSON.stringify({
-                model,
-                messages,
-                stream: true,
-                max_tokens: 131072,   // 128K — large enough for long responses while staying within most models' context windows
-                include_reasoning: true,
-                reasoning: { effort: thinkingEffort },
-                stream_options: { include_usage: true },
-            });
+            function buildBody(): string {
+                const messages: ChatMessage[] = [
+                    { role: 'system', content: systemPrompt(useNativeTools) },
+                    ...history,
+                ];
+                return JSON.stringify({
+                    model,
+                    messages,
+                    stream: true,
+                    max_tokens: 131072,
+                    include_reasoning: true,
+                    reasoning: { effort: thinkingEffort },
+                    stream_options: { include_usage: true },
+                    ...(useNativeTools ? {
+                        tools: nativeTools.map(tool => ({
+                            type: 'function',
+                            function: {
+                                name: tool.name,
+                                description: tool.description,
+                                parameters: tool.inputSchema,
+                            },
+                        })),
+                        tool_choice: 'auto',
+                    } : {}),
+                });
+            }
 
             let attempt = 0;
             const MAX_RETRIES = 3;
@@ -261,10 +292,13 @@ export function streamOpenRouter(
             function doRequest(): void {
                 if (signal?.aborted) { push(null); return; }
                 attempt++;
-                const req = https.request(
+                const body = buildBody();
+                const transport = endpoint.protocol === 'http:' ? http : https;
+                const req = transport.request(
                 {
-                    hostname: 'openrouter.ai',
-                    path: '/api/v1/chat/completions',
+                    hostname: endpoint.hostname,
+                    port: endpoint.port,
+                    path: endpoint.path ?? '/api/v1/chat/completions',
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -274,7 +308,7 @@ export function streamOpenRouter(
                         'Content-Length': Buffer.byteLength(body),
                     },
                     signal: signal as AbortSignal,
-                } as https.RequestOptions,
+                } as http.RequestOptions,
                 (res) => {
                     // Retry on 429 with exponential backoff
                     if (res.statusCode === 429 && attempt <= MAX_RETRIES) {
@@ -293,11 +327,23 @@ export function streamOpenRouter(
                         return;
                     }
 
-                    // Surface other HTTP-level errors (4xx / 5xx)
+                    // If this model/provider rejects structured tools, retry once
+                    // with the compatibility fenced protocol instead of failing the turn.
                     if (res.statusCode && res.statusCode >= 400) {
                         let errBody = '';
                         res.on('data', (d: Buffer) => { errBody += d.toString(); });
                         res.on('end', () => {
+                            const toolCapabilityError = /tool|function|unsupported|not supported/i.test(errBody);
+                            if (useNativeTools && !nativeFallbackUsed && toolCapabilityError && !signal?.aborted) {
+                                nativeFallbackUsed = true;
+                                useNativeTools = false;
+                                push({
+                                    type: 'thinking',
+                                    text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n',
+                                });
+                                doRequest();
+                                return;
+                            }
                             push(new Error(
                                 `OpenRouter HTTP ${res.statusCode}: ${errBody.slice(0, 300)}`
                             ));
@@ -307,6 +353,19 @@ export function streamOpenRouter(
 
                     let buffer = '';
                     const completion = new StreamCompletionGuard();
+                    const nativeCalls = new OpenAIToolCallAccumulator();
+
+                    function emitReadyNativeTools(final = false): void {
+                        for (const call of nativeCalls.flushReady()) {
+                            push({ type: 'native_tool', call });
+                        }
+                        if (final && nativeCalls.hasPending) {
+                            push({
+                                type: 'stream_error',
+                                message: `OpenRouter returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
+                            });
+                        }
+                    }
                     // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
                     let streamEnded = false;
                     function pushEnd(): void { if (!streamEnded) { streamEnded = true; push(null); } }
@@ -315,6 +374,7 @@ export function streamOpenRouter(
                         if (!trimmed) { return; }
                         if (trimmed === 'data: [DONE]') {
                             completion.markTerminal();
+                            emitReadyNativeTools(true);
                             pushEnd();
                             return;
                         }
@@ -329,13 +389,25 @@ export function streamOpenRouter(
                                 return;
                             }
                             const delta = json.choices?.[0]?.delta as
-                                | { reasoning?: string; content?: string }
+                                | {
+                                    reasoning?: string;
+                                    content?: string;
+                                    tool_calls?: Array<{
+                                        index?: number;
+                                        id?: string;
+                                        function?: { name?: string; arguments?: string };
+                                    }>;
+                                }
                                 | undefined;
                             if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
                             if (typeof delta?.content === 'string') { processContentChunk(delta.content); }
+                            for (const toolCall of delta?.tool_calls ?? []) {
+                                nativeCalls.add(toolCall);
+                            }
                             const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
                             if (finishReason) {
                                 completion.markTerminal();
+                                emitReadyNativeTools(true);
                                 if (finishReason !== 'stop' && finishReason !== 'tool_calls') {
                                     push({ type: 'finish', reason: finishReason });
                                 }

@@ -1,8 +1,12 @@
 node_modules/.cache/**
 node_modules/@types/**
 src/**
+tests/**
+.github/**
 .vscode/**
 .claude/**
 .gitignore
 tsconfig.json
+*.vsix
+coverage/**
 **/*.map

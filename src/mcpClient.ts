@@ -1,6 +1,7 @@
 import * as cp from 'child_process';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
+import { buildMcpEnvironment } from './mcpEnvironment';
 
 export interface McpToolSchema {
     type: string;
@@ -65,7 +66,7 @@ export class McpClient {
     get connected(): boolean { return this._connected; }
 
     async connect(): Promise<void> {
-        const env: NodeJS.ProcessEnv = { ...process.env, ...(this._env ?? {}) };
+        const env = buildMcpEnvironment(this._env ?? {});
 
         this._proc = cp.spawn(this._command, this._args, {
             env,

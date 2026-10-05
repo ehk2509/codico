@@ -1,0 +1,60 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  getNativeToolDefinitions,
+  nativeToolCallToToolCall,
+  OpenAIToolCallAccumulator,
+} = require('../out/nativeTools.js');
+
+test('Ask mode exposes only read-only native tools', () => {
+  const names = new Set(getNativeToolDefinitions(true).map(t => t.name));
+  assert.equal(names.has('read_file'), true);
+  assert.equal(names.has('search_files'), true);
+  assert.equal(names.has('fetch_url'), true);
+  assert.equal(names.has('write_file'), false);
+  assert.equal(names.has('edit_file'), false);
+  assert.equal(names.has('run_terminal'), false);
+  assert.equal(names.has('mcp_call'), false);
+});
+
+test('native calls map onto the same internal ToolCall contract', () => {
+  assert.deepEqual(
+    nativeToolCallToToolCall({
+      name: 'edit_file',
+      arguments: { filepath: 'src/a.ts', old_str: 'a', new_str: 'b' },
+    }),
+    { type: 'edit_file', filepath: 'src/a.ts', oldStr: 'a', newStr: 'b' },
+  );
+
+  assert.deepEqual(
+    nativeToolCallToToolCall({
+      name: 'mcp_call',
+      arguments: { server: 'docs', tool: 'search', args: { q: 'streaming' } },
+    }),
+    { type: 'mcp_call', server: 'docs', tool: 'search', args: { q: 'streaming' } },
+  );
+});
+
+test('OpenAI tool-call fragments survive arbitrary SSE chunking', () => {
+  const acc = new OpenAIToolCallAccumulator();
+  acc.add({ index: 0, id: 'call_1', function: { name: 'edit_' } });
+  acc.add({ index: 0, function: { name: 'file', arguments: '{"filepath":"src/a.ts",' } });
+  assert.deepEqual(acc.flushReady(), []);
+  acc.add({ index: 0, function: { arguments: '"old_str":"a","new_str":"b"}' } });
+
+  assert.deepEqual(acc.flushReady(), [{
+    id: 'call_1',
+    name: 'edit_file',
+    arguments: { filepath: 'src/a.ts', old_str: 'a', new_str: 'b' },
+  }]);
+  assert.deepEqual(acc.flushReady(), [], 'a completed call must be emitted only once');
+});
+
+test('malformed native arguments remain pending instead of executing', () => {
+  const acc = new OpenAIToolCallAccumulator();
+  acc.add({ index: 0, function: { name: 'run_terminal', arguments: '{"command":' } });
+  assert.equal(acc.hasPending, true);
+  assert.deepEqual(acc.flushReady(), []);
+  assert.deepEqual(acc.pendingNames(), ['run_terminal']);
+});

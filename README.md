@@ -42,6 +42,7 @@ After each response the agent executes any tool calls, feeds the results back to
 - **Loop detection** — a tool call repeated with identical arguments more than 3 times is blocked and the model is told to try a different approach.
 - **Automatic recovery** — if a response is cut off (output-token limit or dropped connection), the agent resumes in the same message: half-written tool calls are re-issued, repeated text is trimmed, and up to 5 retries are made with backoff. The status bar shows *Reconnecting…* meanwhile.
 - **Stalled turns** — if the model announces an action ("I'll read the file…") but emits no tool call, or forgets to close its last tool call, the agent recovers instead of stopping.
+- **Native tool calling** — OpenRouter and supported direct providers use their structured function/tool API by default. Fenced tool blocks remain available as a compatibility fallback (and are still used for Ollama). Set `codico.nativeToolCalling=false` to force compatibility mode.
 
 ### Live Thinking Visualization
 For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-thought is shown in a collapsible "Reasoning trace" panel above each response, streamed in real time.
@@ -60,7 +61,7 @@ For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-th
 | `find_files` | Locate files by name/glob pattern |
 | `run_terminal` | Execute a shell command — output streams live in the chat |
 | `get_diagnostics` | Fetch TypeScript/ESLint/etc. errors from VS Code |
-| `fetch_url` | Download and read any URL |
+| `fetch_url` | Fetch readable text from a public HTTP(S) URL (private/loopback destinations are blocked) |
 | `lsp_symbol` | Look up symbol definitions/references via the language server |
 | `browser_*` | Full browser automation (navigate, click, type, screenshot, get text) via Playwright |
 | `mcp_call` | Call any tool exposed by a connected MCP server |
@@ -501,6 +502,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |
 | `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
 | `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
+| `codico.nativeToolCalling` | `boolean` | `true` | Prefer provider-native structured tools; disable to force fenced compatibility mode |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
 | `codico.openTabsContext` | `boolean` | `true` | Include open editor tabs as additional context |
@@ -534,7 +536,12 @@ codico/
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
 │   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
+│   ├── nativeTools.ts               # Provider-neutral JSON schemas + native tool-call decoding
 │   ├── streamCompletion.ts          # Stream cutoff detection and resume helpers
+│   ├── networkSecurity.ts           # Public-address/DNS validation and pinned lookups
+│   ├── urlFetcher.ts                # Secure public URL fetch + redirect/text handling
+│   ├── terminalProcess.ts           # Cross-platform command/process-tree lifecycle
+│   ├── mcpEnvironment.ts            # Minimal environment policy for MCP child processes
 │   ├── testOrchestrator.ts          # Test-command detection and the /test fix loop prompt
 │   ├── indexPersistence.ts          # Workspace index storage (vectors + hashes, no raw source)
 │   ├── fileManager.ts               # File write with path-traversal guard + permission dialog
@@ -554,9 +561,11 @@ codico/
 │   ├── symbolProvider.ts            # LSP symbol context builder
 │   └── ignoreRules.ts               # .copilotignore watcher
 ├── tests/                           # node:test regression suite (runs against out/)
-├── .github/workflows/ci.yml         # CI: compile + tests on Linux, Windows, macOS
+├── .github/workflows/ci.yml         # CI: compile/tests on 3 OSes + VSIX packaging gate
+├── .github/workflows/release.yml    # Tag/manual GitHub/Marketplace/Open VSX release workflow
 ├── media/
-│   ├── chat.html                    # Self-contained webview UI (vanilla JS, no bundler)
+│   ├── chat.html                    # Main vanilla-JS webview UI
+│   ├── markdown.js                  # Extracted Markdown/tool-fence renderer
 │   ├── models.json                  # Model list for the dropdown (free / premium / direct / local)
 │   └── icon.svg                     # Activity bar icon
 ├── out/                             # Compiled JS (git-ignored)
@@ -571,9 +580,10 @@ codico/
 - **Path traversal prevention** — all file paths are normalized and checked to stay inside the workspace root before any read or write
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Secret storage** — all API keys (OpenRouter, direct providers, GitHub token) are stored in VS Code's encrypted `SecretStorage`, never in plain `settings.json`
-- **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; no inline scripts or external resources
+- **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; the extracted webview module is loaded only through a VS Code `asWebviewUri` resource
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
-- **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint
+- **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
+- **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers, pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text
 - **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
@@ -591,11 +601,16 @@ npm test
 # Press F5 in VS Code to launch the Extension Development Host
 ```
 
-CI runs the same checks on Linux, Windows, and macOS.
+CI runs compile/regression tests on Linux, Windows, and macOS, then packages a VSIX as a separate gate. The packaged VSIX is uploaded as a workflow artifact.
 
-To package:
+To package locally:
 
 ```bash
-npm install -g @vscode/vsce
-vsce package
+npx @vscode/vsce package --out codico.vsix
 ```
+
+### Releases
+
+- Push a tag matching the package version (for example `v0.1.0`) to run the release workflow, rebuild/test the extension, create `codico.vsix`, and attach it to a GitHub Release.
+- Manual workflow dispatch can also publish the validated VSIX to the Visual Studio Marketplace (`VSCE_PAT`) and/or Open VSX (`OVSX_PAT`).
+- Tag releases fail if the Git tag does not exactly match `package.json#version`.
