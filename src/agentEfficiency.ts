@@ -88,3 +88,13 @@ const EXPLORATORY_TERMINAL_RE = /^\s*(?:(?:git\s+(?:grep|show|log|status|diff))|
 export function isExploratoryTerminalCommand(command: string): boolean {
     return EXPLORATORY_TERMINAL_RE.test(command);
 }
+
+const BEHAVIORAL_VERIFICATION_RE = /(?:\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|\bnode\s+--test\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|tap|go\s+test|cargo\s+test|dotnet\s+test|mvn\s+test|gradle\s+test|rspec|phpunit)\b)/i;
+
+/**
+ * Stateful/lifecycle edits need evidence that exercises behavior. Compilation,
+ * linting and diagnostics are useful but cannot prove terminal-state semantics.
+ */
+export function isBehavioralVerificationCommand(command: string): boolean {
+    return BEHAVIORAL_VERIFICATION_RE.test(command);
+}
