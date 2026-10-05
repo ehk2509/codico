@@ -883,14 +883,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // so any restarted sentence is dropped and the seam stays invisible.
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
-        const MAX_ACTION_NUDGES = 2;
-        let actionNudges = 0;
-        const MAX_VERIFICATION_NUDGES = 2;
-        let verificationNudges = 0;
+        const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
+        const MAX_VERIFICATION_NUDGES = 2; let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
             : [];
-
 
         // Circuit breaker: track how many times each unique tool call has been issued
         // across all iterations. If the same call fires 3 times the model is looping —
@@ -898,7 +895,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
         const exploration = new ExplorationController(rawText);
-
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
                 if (signal.aborted) { break; }
@@ -1012,7 +1008,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     const followThrough = exploration.after(tool, result);
                     if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
                     if (followThrough) { result += `\n\n${followThrough}`; }
-
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
                 };
@@ -1287,16 +1282,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 streamRecoveryAttempts = 0;
-
                 if (inlineToolResults.length === 0) {
                     const verificationGuidance = exploration.completionGuidance();
-                    if (verificationGuidance && verificationNudges < MAX_VERIFICATION_NUDGES) {
-                        verificationNudges++;
+                    if (verificationGuidance && verificationNudges++ < MAX_VERIFICATION_NUDGES) {
                         this._history.push({ role: 'user', content: verificationGuidance });
-                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' });
-                        continue;
+                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
-
                     // Some models announce an action ("I'll locate the file.") and end the
                     // turn without emitting the tool fence. Ask them to issue it rather than
                     // treating the announcement as the final answer. Bounded per request.
