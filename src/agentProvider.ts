@@ -31,6 +31,7 @@ import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
+import { applyEditMatch, resolveEditMatch } from './editMatcher';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -2205,34 +2206,32 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const hasCRLF = rawContent.includes('\r\n');
             const content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
 
-            const occurrences = content.split(tool.oldStr).length - 1;
-            if (occurrences === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: 'old_str not found' });
-                return `[edit_file: ${tool.filepath}] ERROR: old_str not found in file`;
+            const resolved = resolveEditMatch(content, tool.oldStr);
+            if (!resolved.match) {
+                const err = resolved.error === 'ambiguous'
+                    ? `old_str matches ${resolved.candidates}+ locations after safe normalization — provide more context`
+                    : 'old_str not found, including safe whitespace-tolerant matching';
+                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
+                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
             }
-            if (occurrences > 1) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: `old_str found ${occurrences} times — must be unique` });
-                return `[edit_file: ${tool.filepath}] ERROR: old_str matches ${occurrences} locations — must be unique. Provide more context.`;
-            }
+            const editMatch = resolved.match;
 
-            // Use replacer function to avoid $& / $` / $' / $n pattern interpretation in newStr.
-            // Restore original line endings after replacement so the file's style is preserved.
-            const applyEdit = (src: string): string => {
-                const replaced = src.replace(tool.oldStr, () => tool.newStr);
-                // Use a negative lookbehind so existing \r\n pairs in newStr are not
+            const applyEdit = (replacement: string): string => {
+                const replaced = applyEditMatch(content, editMatch, replacement);
+                // Use a negative lookbehind so existing \r\n pairs in replacement are not
                 // double-converted to \r\r\n when restoring the file's original line endings.
                 return hasCRLF ? replaced.replace(/(?<!\r)\n/g, '\r\n') : replaced;
             };
 
             // ── Edits Mode: queue proposal instead of writing immediately ──────
             if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, originalContent: bytes, proposedContent: applyEdit(content), label: `edit ${tool.filepath}` });
+                this._editProposals.queue({ filepath: tool.filepath, originalContent: bytes, proposedContent: applyEdit(tool.newStr), label: `edit ${tool.filepath}` });
                 this._post({ type: 'proposalQueued', filepath: tool.filepath });
                 return `[edit_file: ${tool.filepath}] Queued as edit proposal`;
             }
 
             // Full-file diff gives the reviewer complete context (before → proposed file)
-            const proposedLF = content.replace(tool.oldStr, () => tool.newStr);
+            const proposedLF = applyEditMatch(content, editMatch, tool.newStr);
             const editDiff = this._computeLineDiff(content, proposedLF);
 
             let editResult: { granted: boolean; editedContent?: string };
@@ -2251,7 +2250,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
 
             const effectiveNewStr = editResult.editedContent ?? tool.newStr;
-            const newContentLF = content.replace(tool.oldStr, () => effectiveNewStr);
+            const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr);
             const finalEditDiff = editResult.editedContent ? this._computeLineDiff(content, newContentLF) : editDiff;
             const newContent = hasCRLF ? newContentLF.replace(/(?<!\r)\n/g, '\r\n') : newContentLF;
             const before = new TextEncoder().encode(rawContent);
@@ -2273,14 +2272,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             // confirm the result without issuing a follow-up read_file call.
             const editedLines = newContentLF.split('\n');
             const insertedLines = effectiveNewStr.split('\n');
-            const insertStart = newContentLF.indexOf(effectiveNewStr);
-            const linesBefore = newContentLF.slice(0, insertStart).split('\n').length - 1;
+            const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
             const CONTEXT = 3;
             const from = Math.max(0, linesBefore - CONTEXT);
             const to   = Math.min(editedLines.length, linesBefore + insertedLines.length + CONTEXT);
             const snippet = editedLines.slice(from, to).join('\n');
             const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr);
-            return `[edit_file: ${tool.filepath}] Edit applied successfully.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\`${invariantAudit}`;
+            const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
+            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\`${invariantAudit}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });
