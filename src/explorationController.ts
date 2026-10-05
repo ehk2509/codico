@@ -4,7 +4,6 @@ import {
     explorationTarget,
     isExplorationTool,
     isExploratoryTerminalCommand,
-    isMutationTool,
 } from './agentEfficiency';
 
 export interface ExplorationCheck {
@@ -95,7 +94,7 @@ export class ExplorationController {
     }
 
     public after(tool: ToolCall, result = ''): string | undefined {
-        if (isMutationTool(tool)) {
+        if (tool.type === 'write_file' || tool.type === 'edit_file') {
             this.streak = 0;
             this._locked = false;
             this._verificationPending = true;
