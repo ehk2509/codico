@@ -20,6 +20,7 @@ test('core orchestration and webview shell stay decomposed', () => {
     'src/externalToolRuntime.ts',
     'src/chatProtocol.ts',
     'src/webviewAssets.ts',
+    'src/explorationController.ts',
     'media/chat.css',
     'media/chat.js',
   ]) {

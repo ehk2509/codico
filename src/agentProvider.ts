@@ -27,7 +27,7 @@ import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DI
 import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
-import { explorationDecision, explorationTarget, isExplorationTool, isMutationTool, isExploratoryTerminalCommand } from './agentEfficiency';
+import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -894,9 +894,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
-        let explorationCallsSinceEdit = 0;
-        let explorationLocked = false;
-        const explorationTargetVisits = new Map<string, number>();
+        const exploration = new ExplorationController();
 
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -953,30 +951,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
-                    if (isExplorationTool(tool) && !this._chatMode) {
-                        const target = explorationTarget(tool);
-                        const targetVisits = target
-                            ? (explorationTargetVisits.get(target) ?? 0) + 1
-                            : 1;
-                        const nextStreak = explorationCallsSinceEdit + 1;
-                        const decision = explorationDecision(nextStreak, targetVisits);
-
-                        if (decision.block) {
-                            if (decision.lock) { explorationLocked = true; }
-                            if (this._evaluationMode) {
-                                this._evalTrace.push({
-                                    step: this._evalSteps,
-                                    tool: 'exploration_block',
-                                    target: evaluationToolTarget(tool),
-                                });
-                            }
-                            inlineToolResults.push(decision.block);
-                            return { keepGoing: true, result: decision.block };
+                    const explorationCheck = exploration.before(tool, this._chatMode);
+                    if (explorationCheck.block) {
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: 'exploration_block',
+                                target: evaluationToolTarget(tool),
+                            });
                         }
+                        inlineToolResults.push(explorationCheck.block);
+                        return { keepGoing: true, result: explorationCheck.block };
+                    }
 
-                        explorationCallsSinceEdit = nextStreak;
-                        if (target) { explorationTargetVisits.set(target, targetVisits); }
-
+                    if (explorationCheck.isExploration) {
                         this._evalToolCalls++;
                         if (this._evaluationMode) {
                             this._evalTrace.push({
@@ -988,16 +976,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         await this._dispatchTool(tool, msgId, signal);
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
-                        if (decision.guidance) { result += `\n\n${decision.guidance}`; }
+                        if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
                         inlineToolResults.push(result);
                         return { keepGoing: true, result };
                     }
 
-                    if (
-                        explorationLocked &&
-                        tool.type === 'run_terminal' &&
-                        isExploratoryTerminalCommand(tool.command)
-                    ) {
+                    if (exploration.blocksTerminal(tool)) {
                         const result = '[System] Source-inspection terminal commands are disabled because the exploration budget is exhausted. ' +
                             'Use edit_file/write_file now. Terminal remains available for tests, builds, linting, and verification.';
                         if (this._evaluationMode) {
@@ -1023,11 +1007,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     const result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
 
-                    if (isMutationTool(tool)) {
-                        explorationCallsSinceEdit = 0;
-                        explorationLocked = false;
-                        explorationTargetVisits.clear();
-                    }
+                    exploration.after(tool);
 
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
@@ -1108,7 +1088,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                const iterationNativeTools = explorationLocked
+                const iterationNativeTools = exploration.locked
                     ? restrictNativeToolsForAction(nativeTools)
                     : nativeTools;
                 for await (const chunk of isOllama
