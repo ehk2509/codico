@@ -68,7 +68,7 @@ test('malformed native arguments remain pending instead of executing', () => {
 });
 
 
-test('action guidance keeps discovery capabilities available', () => {
+test('action guidance keeps discovery available but prioritizes mutation', () => {
   const { getNativeToolDefinitions, restrictNativeToolsForAction } = require('../out/nativeTools.js');
   const action = restrictNativeToolsForAction(getNativeToolDefinitions(false));
   const names = new Set(action.map(tool => tool.name));
@@ -77,7 +77,10 @@ test('action guidance keeps discovery capabilities available', () => {
     assert.equal(names.has(name), true, `expected ${name} to remain available`);
   }
 
-  assert.match(action.find(tool => tool.name === 'run_terminal').description, /source inspection remains available/i);
+  assert.equal(action[0].name, 'edit_file');
+  assert.equal(action[1].name, 'write_file');
+  assert.match(action.find(tool => tool.name === 'read_file').description, /escape hatch/i);
+  assert.match(action.find(tool => tool.name === 'edit_file').description, /preferred action-phase tool/i);
 });
 
 test('post-edit verification keeps dependency discovery available', () => {
