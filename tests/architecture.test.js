@@ -25,6 +25,7 @@ test('core orchestration and webview shell stay decomposed', () => {
     'src/taskAcceptance.ts',
     'src/localInvariantAudit.ts',
     'src/iterationBudget.ts',
+    'src/editMatcher.ts',
     'media/chat.css',
     'media/chat.js',
   ]) {
