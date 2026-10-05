@@ -1,6 +1,7 @@
 import * as https from 'https';
 import { ChatMessage, MessageContentPart, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
 import { StreamCompletionGuard } from './streamCompletion';
+import { NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 
 // ── Provider registry ─────────────────────────────────────────────────────────
 
@@ -168,10 +169,28 @@ function _streamOpenAICompat(
     history: ChatMessage[],
     system: string,
     signal: AbortSignal | undefined,
-    push: (v: StreamChunk | null | Error) => void
+    push: (v: StreamChunk | null | Error) => void,
+    nativeTools: NativeToolDefinition[]
 ): void {
     const messages = [{ role: 'system' as const, content: system }, ...history];
-    const body = JSON.stringify({ model: modelId, messages, stream: true, max_tokens: 8192, stream_options: { include_usage: true } });
+    const body = JSON.stringify({
+        model: modelId,
+        messages,
+        stream: true,
+        max_tokens: 8192,
+        stream_options: { include_usage: true },
+        ...(nativeTools.length > 0 ? {
+            tools: nativeTools.map(tool => ({
+                type: 'function',
+                function: {
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.inputSchema,
+                },
+            })),
+            tool_choice: 'auto',
+        } : {}),
+    });
 
     const req = https.request(
         { hostname: apiBase, path: '/v1/chat/completions', method: 'POST',
@@ -184,7 +203,17 @@ function _streamOpenAICompat(
             }
             let buf = '';
             const completion = new StreamCompletionGuard();
+            const nativeCalls = new OpenAIToolCallAccumulator();
             const processChunk = makeThinkParser(push as (v: StreamChunk) => void);
+            const emitNativeCalls = (final = false): void => {
+                for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
+                if (final && nativeCalls.hasPending) {
+                    push({
+                        type: 'stream_error',
+                        message: `${apiBase} returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
+                    });
+                }
+            };
             res.on('data', (chunk: Buffer) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
@@ -194,6 +223,7 @@ function _streamOpenAICompat(
                     const raw = t.slice(5).trim();
                     if (raw === '[DONE]') {
                         completion.markTerminal();
+                        emitNativeCalls(true);
                         push(null);
                         return;
                     }
@@ -205,15 +235,25 @@ function _streamOpenAICompat(
                             push(null);
                             return;
                         }
-                        const delta = json.choices?.[0]?.delta as { content?: string; reasoning?: string } | undefined;
+                        const delta = json.choices?.[0]?.delta as {
+                            content?: string;
+                            reasoning?: string;
+                            tool_calls?: Array<{
+                                index?: number;
+                                id?: string;
+                                function?: { name?: string; arguments?: string };
+                            }>;
+                        } | undefined;
                         // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
                         // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
                         if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
                         if (typeof delta?.content === 'string' && delta.content) { processChunk(delta.content); }
+                        for (const toolCall of delta?.tool_calls ?? []) { nativeCalls.add(toolCall); }
                         const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
                         if (finishReason) {
                             completion.markTerminal();
-                            if (finishReason !== 'stop') { push({ type: 'finish', reason: finishReason }); }
+                            emitNativeCalls(true);
+                            if (finishReason !== 'stop' && finishReason !== 'tool_calls') { push({ type: 'finish', reason: finishReason }); }
                         }
                         const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
                         if (u != null && u.total_tokens != null) { push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens }); }
@@ -277,13 +317,27 @@ function _streamAnthropic(
     history: ChatMessage[],
     system: string,
     signal: AbortSignal | undefined,
-    push: (v: StreamChunk | null | Error) => void
+    push: (v: StreamChunk | null | Error) => void,
+    nativeTools: NativeToolDefinition[]
 ): void {
     const messages = history
         .filter(m => m.role !== 'system')
         .map(m => ({ role: m.role as 'user' | 'assistant', content: _toAnthropicContent(m.content) }));
 
-    const body = JSON.stringify({ model: modelId, system, messages, max_tokens: 8192, stream: true });
+    const body = JSON.stringify({
+        model: modelId,
+        system,
+        messages,
+        max_tokens: 8192,
+        stream: true,
+        ...(nativeTools.length > 0 ? {
+            tools: nativeTools.map(tool => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.inputSchema,
+            })),
+        } : {}),
+    });
 
     const req = https.request(
         { hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
@@ -297,6 +351,7 @@ function _streamAnthropic(
             let buf = '';
             let lastEvent = '';
             const completion = new StreamCompletionGuard();
+            const toolBlocks = new Map<number, { id?: string; name: string; args: string }>();
             let inputTokens = 0;
             let outputTokens = 0;
 
@@ -315,16 +370,47 @@ function _streamAnthropic(
                         lastEvent = '';
                         if (type === 'message_start') {
                             inputTokens = json.message?.usage?.input_tokens ?? 0;
+                        } else if (type === 'content_block_start') {
+                            const block = json.content_block ?? {};
+                            if (block.type === 'tool_use' && block.name) {
+                                toolBlocks.set(json.index ?? 0, {
+                                    id: block.id,
+                                    name: block.name,
+                                    args: block.input && typeof block.input === 'object' && Object.keys(block.input).length > 0
+                                        ? JSON.stringify(block.input)
+                                        : '',
+                                });
+                            }
                         } else if (type === 'content_block_delta') {
                             const d = json.delta ?? {};
                             if (d.type === 'thinking_delta' && d.thinking) { push({ type: 'thinking', text: d.thinking }); }
                             else if (d.type === 'text_delta' && d.text) { push({ type: 'content', text: d.text }); }
+                            else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
+                                const block = toolBlocks.get(json.index ?? 0);
+                                if (block) { block.args += d.partial_json; }
+                            }
+                        } else if (type === 'content_block_stop') {
+                            const index = json.index ?? 0;
+                            const block = toolBlocks.get(index);
+                            if (block) {
+                                try {
+                                    const parsed = block.args.trim() ? JSON.parse(block.args) : {};
+                                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                        push({ type: 'native_tool', call: { id: block.id, name: block.name, arguments: parsed } });
+                                    } else {
+                                        push({ type: 'stream_error', message: `Anthropic returned non-object arguments for native tool ${block.name}` });
+                                    }
+                                } catch {
+                                    push({ type: 'stream_error', message: `Anthropic returned malformed native tool arguments for ${block.name}` });
+                                }
+                                toolBlocks.delete(index);
+                            }
                         } else if (type === 'message_delta') {
                             outputTokens = json.usage?.output_tokens ?? outputTokens;
                             const stop = json.delta?.stop_reason;
                             if (stop) {
                                 completion.markTerminal();
-                                if (stop !== 'end_turn') { push({ type: 'finish', reason: stop }); }
+                                if (stop !== 'end_turn' && stop !== 'tool_use') { push({ type: 'finish', reason: stop }); }
                             }
                         } else if (type === 'message_stop') {
                             completion.markTerminal();
@@ -391,12 +477,23 @@ function _streamGoogle(
     history: ChatMessage[],
     system: string,
     signal: AbortSignal | undefined,
-    push: (v: StreamChunk | null | Error) => void
+    push: (v: StreamChunk | null | Error) => void,
+    nativeTools: NativeToolDefinition[]
 ): void {
     const body = JSON.stringify({
         contents: _toGeminiMessages(history),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         generationConfig: { maxOutputTokens: 8192 },
+        ...(nativeTools.length > 0 ? {
+            tools: [{
+                functionDeclarations: nativeTools.map(tool => ({
+                    name: tool.name,
+                    description: tool.description,
+                    parameters: tool.inputSchema,
+                })),
+            }],
+            toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
+        } : {}),
     });
 
     const req = https.request(
@@ -412,6 +509,7 @@ function _streamGoogle(
             }
             let buf = '';
             const completion = new StreamCompletionGuard();
+            const emittedFunctionCalls = new Set<string>();
             res.on('data', (chunk: Buffer) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
@@ -431,6 +529,14 @@ function _streamGoogle(
                         if (cand) {
                             for (const part of cand.content?.parts ?? []) {
                                 if (typeof part.text === 'string' && part.text) { push({ type: 'content', text: part.text }); }
+                                const fn = part.functionCall;
+                                if (fn?.name && fn.args && typeof fn.args === 'object' && !Array.isArray(fn.args)) {
+                                    const key = `${fn.name}:${JSON.stringify(fn.args)}`;
+                                    if (!emittedFunctionCalls.has(key)) {
+                                        emittedFunctionCalls.add(key);
+                                        push({ type: 'native_tool', call: { name: fn.name, arguments: fn.args } });
+                                    }
+                                }
                             }
                             if (cand.finishReason) {
                                 completion.markTerminal();
@@ -481,7 +587,8 @@ export function streamDirect(
     systemPromptPrefix?: string,
     signal?: AbortSignal,
     _thinkingEffort?: 'high' | 'medium' | 'low',
-    overrideSystemPrompt?: string
+    overrideSystemPrompt?: string,
+    nativeTools: NativeToolDefinition[] = []
 ): AsyncIterable<StreamChunk> {
     const provider = getDirectProvider(providerId);
     if (!provider) {
@@ -493,7 +600,8 @@ export function streamDirect(
     }
 
     const baseSystem = overrideSystemPrompt ?? SYSTEM_PROMPT;
-    const system = systemPromptPrefix ? `${baseSystem}\n\n${systemPromptPrefix}` : baseSystem;
+    const toolSystem = nativeTools.length > 0 ? `${baseSystem}\n\n${NATIVE_TOOL_PROMPT}` : baseSystem;
+    const system = systemPromptPrefix ? `${toolSystem}\n\n${systemPromptPrefix}` : toolSystem;
     const { push: rawPush, iterable } = makeQueue<StreamChunk>();
 
     // Deduplicate terminal signals: only the first push(null) or push(Error) takes effect.
@@ -515,9 +623,9 @@ export function streamDirect(
         // object is created inside the format handler (pre-creation window).
         signal?.addEventListener('abort', () => push(null), { once: true });
         switch (provider.format) {
-            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push); break;
-            case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push);                      break;
-            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push);                         break;
+            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools); break;
+            case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push, nativeTools);                      break;
+            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools);                         break;
         }
     }
 
