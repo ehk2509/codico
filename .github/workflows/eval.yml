@@ -38,7 +38,7 @@ jobs:
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
             --model "${{ inputs.model || 'deepseek/deepseek-v4-flash' }}" \
-            --filter "stream-resume-overlap" \
+            --filter "tools-fingerprint-arguments" \
             --limit "1" \
             --repetitions "1"
 
