@@ -50,7 +50,8 @@ async function main() {
   const filterRaw = arg('--filter', '.*');
   const repetitions = Math.max(1, Number(arg('--repetitions', '1')));
   const limit = Math.max(0, Number(arg('--limit', '0')));
-  const timeoutMinutes = Math.max(1, Number(arg('--timeout-minutes', '20')));
+  const timeoutMinutes = Math.max(1, Number(arg('--timeout-minutes', String(suite.maxTaskMinutes || 10))));
+  const maxTotalTokens = Math.max(1, Number(arg('--max-total-tokens', String(suite.maxTotalTokens || 400000))));
   const filter = new RegExp(filterRaw, 'i');
 
   let tasks = suite.tasks.filter(task =>
@@ -97,6 +98,8 @@ async function main() {
         agentOk: false,
         verifierOk: false,
         metrics: null,
+        maxTotalTokens,
+        maxIterations: task.maxIterations || 16,
         changedFiles: [],
         diffStat: '',
         verifier: {},
@@ -120,7 +123,8 @@ async function main() {
           CODICO_EVAL_API_KEY: apiKey,
           CODICO_EVAL_MODEL: model,
           CODICO_EVAL_PROMPT: task.prompt,
-          CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations || 30),
+          CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations || 16),
+          CODICO_EVAL_MAX_TOTAL_TOKENS: String(maxTotalTokens),
           CODICO_EVAL_OUTPUT: rawAgentOutput,
         };
         const agent = run(
@@ -144,13 +148,31 @@ async function main() {
         const diffStat = run('git', ['diff', '--stat'], { cwd: workspace });
         record.diffStat = diffStat.stdout.trim();
 
-        const verifierSource = path.join(root, 'tests', task.verifierFile);
         const verifierName = `__codico_eval_${safeName(task.id)}.test.js`;
         const verifierDest = path.join(workspace, 'tests', verifierName);
         fs.mkdirSync(path.dirname(verifierDest), { recursive: true });
-        fs.copyFileSync(verifierSource, verifierDest);
 
         // Verifier is deliberately injected only after the agent has stopped.
+        // Behavior-level verifiers live in eval/verifiers. Otherwise use the exact
+        // regression test from the historical commit that originally fixed the bug,
+        // never the current test suite (which may depend on later architecture).
+        if (task.verifierPath) {
+          const verifierSource = path.join(root, task.verifierPath);
+          fs.copyFileSync(verifierSource, verifierDest);
+        } else {
+          if (!task.verifierCommit) {
+            throw new Error(`Task ${task.id} is missing verifierCommit`);
+          }
+          const historical = run('git', ['show', `${task.verifierCommit}:tests/${task.verifierFile}`]);
+          if (historical.status !== 0) {
+            throw new Error(`Cannot load historical verifier for ${task.id}: ${historical.stderr}`);
+          }
+          fs.writeFileSync(verifierDest, historical.stdout);
+        }
+
+        record.verifierSource = task.verifierPath || `${task.verifierCommit}:tests/${task.verifierFile}`;
+
+        // The hidden verifier executes only after the agent has stopped.
         const verify = run(
           npmCommand(),
           ['test', '--', `--test-name-pattern=${task.testNamePattern}`, `tests/${verifierName}`],
@@ -193,6 +215,8 @@ async function main() {
     medianTokensSuccessful: median(passed.map(r => r.metrics?.totalTokens || 0).filter(Boolean)),
     medianStepsSuccessful: median(passed.map(r => r.metrics?.steps || 0).filter(Boolean)),
     medianToolCallsSuccessful: median(passed.map(r => r.metrics?.toolCalls || 0).filter(Boolean)),
+    maxTotalTokens,
+    timeoutMinutes,
     generatedAt: new Date().toISOString(),
   };
 
