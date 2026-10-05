@@ -2,6 +2,34 @@ import * as cp from 'child_process';
 import * as readline from 'readline';
 import * as vscode from 'vscode';
 
+const SAFE_PARENT_ENV_KEYS = new Set([
+    'PATH', 'HOME', 'USER', 'USERNAME', 'USERPROFILE', 'SHELL',
+    'TMP', 'TEMP', 'TMPDIR', 'SystemRoot', 'WINDIR', 'COMSPEC', 'PATHEXT',
+    'APPDATA', 'LOCALAPPDATA', 'LANG', 'TERM', 'COLORTERM',
+]);
+
+/**
+ * MCP servers receive only ordinary process/runtime variables by default.
+ * Secrets inherited by VS Code (cloud tokens, CI credentials, SSH helpers, etc.)
+ * are excluded unless the user explicitly lists them in the server's `env`.
+ */
+export function buildMcpEnvironment(
+    extra: Record<string, string> = {},
+    parent: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(parent)) {
+        if (value === undefined) { continue; }
+        if (SAFE_PARENT_ENV_KEYS.has(key) || key.startsWith('LC_')) {
+            env[key] = value;
+        }
+    }
+    for (const [key, value] of Object.entries(extra)) {
+        env[key] = value;
+    }
+    return env;
+}
+
 export interface McpToolSchema {
     type: string;
     properties?: Record<string, { type?: string; description?: string; enum?: unknown[] }>;
@@ -65,7 +93,7 @@ export class McpClient {
     get connected(): boolean { return this._connected; }
 
     async connect(): Promise<void> {
-        const env: NodeJS.ProcessEnv = { ...process.env, ...(this._env ?? {}) };
+        const env = buildMcpEnvironment(this._env ?? {});
 
         this._proc = cp.spawn(this._command, this._args, {
             env,
