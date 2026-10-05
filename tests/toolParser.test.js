@@ -104,3 +104,15 @@ test('scanner waits for a complete closing line while streaming', () => {
   assert.deepEqual(scan.fences.map(f => f.body), ['filepath: a', 'filepath: b']);
   assert.equal(two.slice(scan.fences[0].start, scan.fences[0].end), '```read_file\nfilepath: a\n```');
 });
+
+
+test('read_file parses optional line ranges', () => {
+  const tools = parseToolCalls([
+    '```read_file',
+    'filepath: src/a.ts',
+    'start_line: 120',
+    'end_line: 180',
+    '```',
+  ].join('\n'));
+  assert.deepEqual(tools, [{ type: 'read_file', filepath: 'src/a.ts', startLine: 120, endLine: 180 }]);
+});

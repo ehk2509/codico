@@ -28,6 +28,7 @@ import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetr
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { explorationGuidance, isExplorationTool, isMutationTool } from './agentEfficiency';
+import { sliceFileByLines } from './fileReadWindow';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -1892,8 +1893,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const content = new TextDecoder().decode(bytes);
-            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: true });
-            return `[read_file: ${tool.filepath}]\n\`\`\`\n${content}\n\`\`\``;
+            const window = sliceFileByLines(content, tool.startLine, tool.endLine);
+            const label = window.truncated
+                ? `${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}`
+                : tool.filepath;
+            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label, success: true });
+            const continuation = window.endLine < window.totalLines
+                ? `\n… (bounded read; use start_line: ${window.endLine + 1} and end_line to continue, or search_files to target a symbol)\n`
+                : '';
+            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}]\n\`\`\`\n${window.text}\n\`\`\`${continuation}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
@@ -2090,7 +2098,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
         this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
         return matches.length > 0
-            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}`
+            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
             : `[search_files: ${label}] No matches found`;
     }
 

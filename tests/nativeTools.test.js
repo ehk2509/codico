@@ -21,6 +21,14 @@ test('Ask mode exposes only read-only native tools', () => {
 test('native calls map onto the same internal ToolCall contract', () => {
   assert.deepEqual(
     nativeToolCallToToolCall({
+      name: 'read_file',
+      arguments: { filepath: 'src/a.ts', start_line: 10, end_line: 25 },
+    }),
+    { type: 'read_file', filepath: 'src/a.ts', startLine: 10, endLine: 25 },
+  );
+
+  assert.deepEqual(
+    nativeToolCallToToolCall({
       name: 'edit_file',
       arguments: { filepath: 'src/a.ts', old_str: 'a', new_str: 'b' },
     }),

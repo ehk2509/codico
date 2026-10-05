@@ -26,10 +26,14 @@ const noArgs: JsonSchema = {
 const ALL_TOOLS: NativeToolDefinition[] = [
     {
         name: 'read_file',
-        description: 'Read a workspace file by relative path.',
+        description: 'Read a workspace file by relative path. Prefer start_line/end_line around search matches for large files.',
         inputSchema: {
             type: 'object',
-            properties: { filepath: { type: 'string', description: 'Workspace-relative file path.' } },
+            properties: {
+                filepath: { type: 'string', description: 'Workspace-relative file path.' },
+                start_line: { type: 'integer', minimum: 1, description: 'Optional 1-based first line.' },
+                end_line: { type: 'integer', minimum: 1, description: 'Optional 1-based last line. Reads are capped to a safe window.' },
+            },
             required: ['filepath'],
             additionalProperties: false,
         },
@@ -246,6 +250,11 @@ export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition
     return ALL_TOOLS.filter(tool => !readOnly || READ_ONLY.has(tool.name));
 }
 
+function positiveIntArg(args: Record<string, unknown>, key: string): number | undefined {
+    const value = args[key];
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function stringArg(args: Record<string, unknown>, key: string, allowEmpty = false): string | undefined {
     const value = args[key];
     if (typeof value !== 'string') { return undefined; }
@@ -258,7 +267,12 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
     switch (call.name) {
         case 'read_file': {
             const filepath = stringArg(args, 'filepath');
-            return filepath ? { type: 'read_file', filepath } : null;
+            return filepath ? {
+                type: 'read_file',
+                filepath,
+                startLine: positiveIntArg(args, 'start_line'),
+                endLine: positiveIntArg(args, 'end_line'),
+            } : null;
         }
         case 'list_directory': {
             const dirpath = stringArg(args, 'dirpath') ?? '.';

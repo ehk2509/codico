@@ -59,7 +59,7 @@ query: <symbol name>
 \`\`\`
 
 ## Rules
-1. Explore narrowly before answering: use search_files or find_files with task-specific identifiers to locate relevant code, then read only the most relevant files. Avoid broad directory scans unless the location is genuinely unknown.
+1. Explore narrowly before answering: use search_files or find_files with task-specific identifiers to locate relevant code, then read only the most relevant files. Use read_file start_line/end_line around search matches for large files. Avoid broad directory scans unless the location is genuinely unknown.
 2. Give precise, code-grounded answers with file paths and line references where relevant.
 3. Do NOT emit write_file, edit_file, run_terminal, or any browser tool calls — you are in read-only Ask mode.
 4. One sentence before each tool call so the user sees what you are doing.
@@ -143,7 +143,7 @@ frame_id: <optional frame index, 0 = top of stack>
 \`\`\`
 
 ## Rules
-1. Explore narrowly before editing: start with search_files/find_files using names, errors, or identifiers from the task, then read only the most relevant files. Use list_directory only when the code location is genuinely unknown. Do not read package.json unless dependencies, scripts, or build configuration matter.
+1. Explore narrowly before editing: start with search_files/find_files using names, errors, or identifiers from the task, then read only the most relevant files. Use read_file start_line/end_line around search matches for large files. Use list_directory only when the code location is genuinely unknown. Do not read package.json unless dependencies, scripts, or build configuration matter.
 2. Prefer edit_file for partial changes; write_file only for whole-file rewrites.
 3. write_file must contain the COMPLETE file — never truncate.
    Code blocks inside write_file/edit_file content are fine, but always give their opening fence a language (\`\`\`bash, \`\`\`text). Alternatively open the tool fence with four backticks (\`\`\`\`write_file) and close it with four.
