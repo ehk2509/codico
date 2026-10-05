@@ -24,7 +24,7 @@ import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
-import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
+import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
@@ -99,6 +99,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _evalBudgetExceeded = false;
     private _evalProjectedCharsOmitted = 0;
     private _evalTrace: EvaluationToolTraceEvent[] = [];
+    private _evalTaskStartedAt = 0;
 
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
@@ -630,26 +631,41 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._evaluationTokenBudget = Math.max(0, Math.floor(maxTotalTokens));
     }
 
-    public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
+    public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) {
             throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
         }
-        const startedAt = Date.now();
-        await vscode.commands.executeCommand('workbench.view.extension.codico-container');
-        await this._handleUserMessage(text);
-        return {
-            durationMs: Date.now() - startedAt,
+        return buildEvaluationRunMetrics({
+            startedAt: this._evalTaskStartedAt,
             steps: this._evalSteps,
             toolCalls: this._evalToolCalls,
             filesWritten: this._filesWrittenThisTurn,
             promptTokens: this._evalPromptTokens,
             completionTokens: this._evalCompletionTokens,
-            totalTokens: this._evalPromptTokens + this._evalCompletionTokens,
             historyMessages: this._history.length,
             budgetExceeded: this._evalBudgetExceeded,
             projectedCharsOmitted: this._evalProjectedCharsOmitted,
-            trace: [...this._evalTrace],
-        };
+            trace: this._evalTrace,
+        });
+    }
+
+    public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
+        if (!this._evaluationMode) {
+            throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
+        }
+
+        this._evalSteps = 0;
+        this._evalToolCalls = 0;
+        this._evalPromptTokens = 0;
+        this._evalCompletionTokens = 0;
+        this._evalBudgetExceeded = false;
+        this._evalProjectedCharsOmitted = 0;
+        this._evalTrace = [];
+        this._evalTaskStartedAt = Date.now();
+
+        await vscode.commands.executeCommand('workbench.view.extension.codico-container');
+        await this._handleUserMessage(text);
+        return this.getEvaluationSnapshot();
     }
 
     // ── Session resume detection ──────────────────────────────────────────────
