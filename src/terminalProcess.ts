@@ -59,14 +59,15 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         const shell = process.platform === 'win32'
             ? (process.env.ComSpec || 'cmd.exe')
             : (process.env.SHELL || '/bin/sh');
-        const shellArgs = process.platform === 'win32'
-            ? ['/d', '/s', '/c', command]
-            : ['-c', command];
         const useProcessGroup = process.platform !== 'win32';
 
-        const child = cp.spawn(shell, shellArgs, {
+        // Let Node construct the platform-specific shell invocation. In particular,
+        // this avoids cmd.exe /s /c double-quoting bugs for commands that themselves
+        // contain quotes (for example node -e "...").
+        const child = cp.spawn(command, {
             cwd,
             env,
+            shell,
             detached: useProcessGroup,
             windowsHide: true,
         });
@@ -117,7 +118,9 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         };
 
         const terminate = (): void => {
-            killTree(false);
+            // Windows has no POSIX-style graceful process-group signal; taskkill /F
+            // is the reliable way to stop the shell and descendants as one tree.
+            killTree(process.platform === 'win32');
             killTimer = setTimeout(() => killTree(true), 3_000);
             // If descendants keep stdio open or the platform never reports close,
             // settle anyway after the forced-kill window.
