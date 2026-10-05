@@ -1,28 +1,9 @@
 name: Coding Holdout
 
 on:
-  workflow_dispatch:
-    inputs:
-      model:
-        description: OpenRouter model ID used by Codico
-        required: true
-        default: deepseek/deepseek-v4-flash
-        type: string
-      filter:
-        description: Regex matched against task id or category
-        required: true
-        default: .*
-        type: string
-      limit:
-        description: Max tasks to run (0 = all frozen tasks)
-        required: true
-        default: '4'
-        type: string
-      repetitions:
-        description: Trials per selected task
-        required: true
-        default: '1'
-        type: string
+  push:
+    branches:
+      - 'eval/pr8-postfix-action-one-task'
 
 permissions:
   contents: read
@@ -30,34 +11,30 @@ permissions:
 jobs:
   coding-holdout:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-
       - uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
-
       - run: npm ci
-
-      - name: Run frozen historical coding holdout
+      - name: Run one post-fix coding holdout task
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
-
+            --model "deepseek/deepseek-v4-flash" \
+            --filter "stream-unexpected-eof" \
+            --limit "1" \
+            --repetitions "1"
       - name: Upload holdout evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-coding-holdout
+          name: codico-pr8-postfix-action-one-task
           path: eval/results/
           if-no-files-found: warn
