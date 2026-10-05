@@ -23,14 +23,38 @@ export class ExplorationController {
     private readonly targetVisits = new Map<string, number>();
     private _locked = false;
     private _verificationPending = false;
+    private _verificationFile?: string;
+    private _verificationAuditSeen = false;
 
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
+    public get verificationFile(): string | undefined { return this._verificationFile; }
 
     public before(tool: ToolCall, readOnlyMode: boolean): ExplorationCheck {
-        if (readOnlyMode || !isExplorationTool(tool)) {
-            return { isExploration: false };
+        if (readOnlyMode) { return { isExploration: false }; }
+
+        if (this._verificationPending && isExplorationTool(tool)) {
+            if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
+            if (tool.type === 'read_file' &&
+                (!this._verificationFile || tool.filepath === this._verificationFile)) {
+                this._verificationAuditSeen = true;
+                return {
+                    isExploration: true,
+                    guidance: '[System Verification] Audit the edited component locally before broadening: ' +
+                        'identify the new failure/guard condition and every existing normal success, completion, or terminal path. ' +
+                        'Confirm the new state cannot fire on those normal paths; if it can, revise the same file before moving on.',
+                };
+            }
+            return {
+                isExploration: true,
+                block: '[System] Post-edit local verification is active. Do not broaden into sibling source files yet. ' +
+                    (this._verificationFile
+                        ? `Re-read ${this._verificationFile}, audit its failure and normal success/terminal paths, then run a narrow verification command.`
+                        : 'Re-read the edited component, audit failure and normal success/terminal paths, then run a narrow verification command.'),
+            };
         }
+
+        if (!isExplorationTool(tool)) { return { isExploration: false }; }
 
         if (this._locked) {
             // Diagnostics are verification, not additional source discovery.
@@ -65,20 +89,37 @@ export class ExplorationController {
     }
 
     public blocksTerminal(tool: ToolCall): boolean {
-        return this._locked &&
+        return (this._locked || this._verificationPending) &&
             tool.type === 'run_terminal' &&
             isExploratoryTerminalCommand(tool.command);
     }
 
-    public after(tool: ToolCall): string | undefined {
-        if (!isMutationTool(tool)) { return undefined; }
-        this.streak = 0;
-        this._locked = false;
-        this._verificationPending = true;
-        this.targetVisits.clear();
-        return '[System Follow-through] Code changed. Before declaring the task complete, verify the affected behavior. ' +
-            'If this edit changes an emitted error, event, return value, status, callback result, or protocol field, ' +
-            'trace at least one downstream consumer/caller and confirm it handles the changed signal. ' +
-            'Otherwise run the narrowest relevant test or diagnostics check. Do not restart broad exploration.';
+    public after(tool: ToolCall, result = ''): string | undefined {
+        if (isMutationTool(tool)) {
+            this.streak = 0;
+            this._locked = false;
+            this._verificationPending = true;
+            this._verificationFile = tool.filepath;
+            this._verificationAuditSeen = false;
+            this.targetVisits.clear();
+            return '[System Follow-through] Code changed. Verify locally before broadening. Re-read the edited file and audit ' +
+                'both the new failure/guard path and every existing normal success, completion, or terminal path. ' +
+                'Then run the narrowest relevant test, build, lint, or diagnostics check. Do not inspect sibling implementations first.';
+        }
+
+        if (this._verificationPending && tool.type === 'run_terminal' &&
+            !isExploratoryTerminalCommand(tool.command) && /\bExit:\s*0\b/.test(result)) {
+            if (!this._verificationAuditSeen) {
+                return '[System Verification] The verification command passed, but local invariant review is still pending. ' +
+                    'Re-read the edited file and confirm the new guard/state cannot trigger on normal success or terminal paths before broadening.';
+            }
+            this._verificationPending = false;
+            this._verificationFile = undefined;
+            this._verificationAuditSeen = false;
+            return '[System Verification] Local invariant audit and verification command completed. ' +
+                'Broader follow-through is available again if the task still requires it.';
+        }
+
+        return undefined;
     }
 }

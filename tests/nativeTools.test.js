@@ -81,3 +81,28 @@ test('action-only native schema withdraws exploration tools after evidence budge
   assert.equal(names.has('list_directory'), false);
   assert.match(action.find(tool => tool.name === 'run_terminal').description, /verification/i);
 });
+
+
+test('post-edit native schema keeps verification local to the edited file', () => {
+  const { nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const verification = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+  );
+  const names = new Set(verification.map(tool => tool.name));
+  assert.equal(names.has('read_file'), true);
+  assert.equal(names.has('edit_file'), true);
+  assert.equal(names.has('write_file'), true);
+  assert.equal(names.has('run_terminal'), true);
+  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('list_directory'), false);
+  assert.equal(names.has('fetch_url'), false);
+
+  for (const name of ['read_file', 'edit_file', 'write_file']) {
+    const tool = verification.find(candidate => candidate.name === name);
+    assert.deepEqual(tool.inputSchema.properties.filepath.enum, ['src/a.ts']);
+  }
+  assert.match(verification.find(tool => tool.name === 'run_terminal').description, /source-inspection shell commands are blocked/i);
+});

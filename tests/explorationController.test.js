@@ -42,8 +42,24 @@ test('controller resets after mutation and does not constrain Ask mode', () => {
   const followThrough = controller.after({ type: 'edit_file', filepath: 'a.ts', oldStr: 'x', newStr: 'y' });
   assert.equal(controller.locked, false);
   assert.equal(controller.verificationPending, true);
-  assert.match(followThrough, /downstream consumer\/caller/i);
-  assert.match(followThrough, /narrowest relevant test/i);
+  assert.equal(controller.verificationFile, 'a.ts');
+  assert.match(followThrough, /re-read the edited file/i);
+  assert.match(followThrough, /normal success, completion, or terminal path/i);
+
+  const sibling = controller.before({ type: 'read_file', filepath: 'b.ts' }, false);
+  assert.match(sibling.block, /local verification is active/i);
+  const local = controller.before({ type: 'read_file', filepath: 'a.ts' }, false);
+  assert.equal(local.block, undefined);
+  assert.match(local.guidance, /normal success, completion, or terminal path/i);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat a.ts' }), true);
+
+  const verified = controller.after(
+    { type: 'run_terminal', command: 'npm test' },
+    '[run_terminal: npm test]\nExit: 0\nall good',
+  );
+  assert.equal(controller.verificationPending, false);
+  assert.equal(controller.verificationFile, undefined);
+  assert.match(verified, /broader follow-through is available/i);
 
   const ask = new ExplorationController();
   for (let i = 0; i < 20; i++) {

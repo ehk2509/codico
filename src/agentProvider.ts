@@ -17,7 +17,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall, restrictNativeToolsForAction } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall, nativeToolsForAgentPhase } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -983,8 +983,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
 
                     if (exploration.blocksTerminal(tool)) {
-                        const result = '[System] Source-inspection terminal commands are disabled because the exploration budget is exhausted. ' +
-                            'Use edit_file/write_file now. Terminal remains available for tests, builds, linting, and verification.';
+                        const result = '[System] Source-inspection terminal commands are disabled in the current focused phase. ' +
+                            'Use the edited-file read tool, edit/write tools, or tests/builds/diagnostics for verification.';
                         if (this._evaluationMode) {
                             this._evalTrace.push({
                                 step: this._evalSteps,
@@ -1007,7 +1007,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     await this._dispatchTool(tool, msgId, signal);
                     let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
-                    const followThrough = exploration.after(tool);
+                    const followThrough = exploration.after(tool, result);
                     if (followThrough) { result += `\n\n${followThrough}`; }
 
                     inlineToolResults.push(result);
@@ -1085,15 +1085,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 };
 
                 const systemPromptOverride = systemPromptForAgentPhase(
-                    this._chatMode, exploration.locked, exploration.verificationPending
+                    this._chatMode, exploration.locked, exploration.verificationPending, exploration.verificationFile
                 );
                 const projectedHistory = projectHistoryForModel(this._history);
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                const iterationNativeTools = exploration.locked
-                    ? restrictNativeToolsForAction(nativeTools)
-                    : nativeTools;
+                const iterationNativeTools = nativeToolsForAgentPhase(
+                    nativeTools, exploration.locked, exploration.verificationPending, exploration.verificationFile
+                );
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed

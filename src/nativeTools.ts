@@ -276,6 +276,61 @@ export function restrictNativeToolsForAction(
             : tool);
 }
 
+const LOCAL_VERIFICATION_TOOLS = new Set<ToolCall['type']>([
+    'read_file',
+    'write_file',
+    'edit_file',
+    'run_terminal',
+    'get_diagnostics',
+    'update_todo',
+]);
+
+function constrainFilepath(tool: NativeToolDefinition, filepath?: string): NativeToolDefinition {
+    if (!filepath || !['read_file', 'write_file', 'edit_file'].includes(tool.name)) { return tool; }
+    const properties = (tool.inputSchema.properties ?? {}) as Record<string, unknown>;
+    const filepathSchema = (properties.filepath ?? { type: 'string' }) as Record<string, unknown>;
+    return {
+        ...tool,
+        description: tool.name === 'read_file'
+            ? `Re-read the edited file ${filepath} to audit local invariants before broadening.`
+            : `${tool.description} During local verification, keep changes in ${filepath}.`,
+        inputSchema: {
+            ...tool.inputSchema,
+            properties: {
+                ...properties,
+                filepath: { ...filepathSchema, enum: [filepath] },
+            },
+        },
+    };
+}
+
+/** Keep post-edit verification local until the edited component is audited and tested. */
+export function restrictNativeToolsForVerification(
+    tools: NativeToolDefinition[],
+    filepath?: string,
+): NativeToolDefinition[] {
+    return tools
+        .filter(tool => LOCAL_VERIFICATION_TOOLS.has(tool.name))
+        .map(tool => constrainFilepath(tool, filepath))
+        .map(tool => tool.name === 'run_terminal'
+            ? {
+                ...tool,
+                description: 'Run only tests, builds, linting, or diagnostics. Source-inspection shell commands are blocked during local verification.',
+            }
+            : tool);
+}
+
+export function nativeToolsForAgentPhase(
+    tools: NativeToolDefinition[],
+    explorationLocked: boolean,
+    verificationPending: boolean,
+    verificationFile?: string,
+): NativeToolDefinition[] {
+    if (explorationLocked) { return restrictNativeToolsForAction(tools); }
+    if (verificationPending) { return restrictNativeToolsForVerification(tools, verificationFile); }
+    return tools;
+}
+
 function positiveIntArg(args: Record<string, unknown>, key: string): number | undefined {
     const value = args[key];
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;

@@ -49,23 +49,29 @@ filepath: <relative path, or omit for workspace>
 5. If the edit changes an emitted error, event, return value, status, or protocol field, confirm a downstream consumer or caller handles that signal correctly once discovery reopens.
 6. Emit one tool call at a time and continue autonomously after each result.`;
 
-export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — verify the change
+export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — verify the local invariant
 
-You have changed code in this turn. Do not assume the local edit is sufficient.
+You have changed code in this turn. Do not broaden to sibling implementations yet.
 
 Before declaring the task complete:
-- run the narrowest relevant test, build, lint, or diagnostics check;
-- if the edit changes an emitted error, event, return value, status, callback result, or protocol field, trace at least one downstream consumer/caller and confirm it handles the changed signal as intended;
-- use read/search tools only for that direct follow-through, not to restart broad exploration;
-- if verification exposes a gap, make the smallest additional edit and verify again.`;
+- re-read the edited component and identify the exact new failure/guard condition;
+- enumerate every pre-existing normal success, completion, terminal, cancellation, or no-op path in that component;
+- verify the new state/guard cannot fire on those normal paths and does not conflate two different lifecycle states;
+- only then run the narrowest relevant test, build, lint, or diagnostics check;
+- if local verification exposes a gap, revise the same component first and verify again;
+- broaden to downstream consumers or additional files only after this local invariant check succeeds.`;
 
 export function systemPromptForAgentPhase(
     chatMode: boolean,
     explorationLocked: boolean,
     verificationPending: boolean,
+    verificationFile?: string,
 ): string | undefined {
     if (chatMode) { return CHAT_SYSTEM_PROMPT; }
     if (explorationLocked) { return ACTION_PHASE_SYSTEM_PROMPT; }
-    if (verificationPending) { return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}`; }
+    if (verificationPending) {
+        const target = verificationFile ? `\nEdited file: \`${verificationFile}\`. Re-read this file first.` : '';
+        return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}`;
+    }
     return undefined;
 }

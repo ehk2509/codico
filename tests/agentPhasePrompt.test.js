@@ -19,13 +19,13 @@ test('action phase stops advertising discovery tools to fenced-tool fallbacks', 
   assert.equal(prompt, ACTION_PHASE_SYSTEM_PROMPT);
 });
 
-test('post-edit phase requires verification and downstream consumer follow-through', () => {
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /narrowest relevant test/i);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /downstream consumer\/caller/i);
-  const prompt = systemPromptForAgentPhase(false, false, true);
-  assert.match(prompt, /read_file/);
-  assert.match(prompt, /verify the change/i);
-  assert.match(prompt, /downstream consumer\/caller/i);
+test('post-edit phase requires a local invariant audit before broadening', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal/i);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /does not conflate two different lifecycle states/i);
+  const prompt = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts');
+  assert.match(prompt, /verify the local invariant/i);
+  assert.match(prompt, /src\/openRouterClient\.ts/);
+  assert.match(prompt, /re-read this file first/i);
 });
 
 test('Ask mode remains read-only even when autonomous phase flags are set', () => {
