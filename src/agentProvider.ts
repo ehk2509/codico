@@ -30,6 +30,7 @@ import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
 import { systemPromptForAgentPhase } from './agentPhasePrompt';
+import { buildLocalInvariantAudit } from './localInvariantAudit';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -2280,7 +2281,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const from = Math.max(0, linesBefore - CONTEXT);
             const to   = Math.min(editedLines.length, linesBefore + insertedLines.length + CONTEXT);
             const snippet = editedLines.slice(from, to).join('\n');
-            return `[edit_file: ${tool.filepath}] Edit applied successfully.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\``;
+            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr);
+            return `[edit_file: ${tool.filepath}] Edit applied successfully.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\`${invariantAudit}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });

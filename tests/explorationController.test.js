@@ -39,18 +39,22 @@ test('controller resets after mutation and does not constrain Ask mode', () => {
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: "grep -rn foo src/" }), true);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
 
-  const followThrough = controller.after({ type: 'edit_file', filepath: 'a.ts', oldStr: 'x', newStr: 'y' });
+  const followThrough = controller.after(
+    { type: 'edit_file', filepath: 'a.ts', oldStr: 'x', newStr: 'y' },
+    '[edit_file: a.ts] Edit applied successfully.\n\n[Local invariant audit]\n- L1: finishReason',
+  );
   assert.equal(controller.locked, false);
   assert.equal(controller.verificationPending, true);
   assert.equal(controller.verificationFile, 'a.ts');
-  assert.match(followThrough, /re-read the edited file/i);
-  assert.match(followThrough, /normal success, completion, or terminal path/i);
+  assert.match(followThrough, /attached Local invariant audit/i);
 
   const sibling = controller.before({ type: 'read_file', filepath: 'b.ts' }, false);
   assert.match(sibling.block, /local verification is active/i);
   const local = controller.before({ type: 'read_file', filepath: 'a.ts' }, false);
   assert.equal(local.block, undefined);
   assert.match(local.guidance, /normal success, completion, or terminal path/i);
+  assert.equal(controller.before({ type: 'read_file', filepath: 'a.ts' }, false).block, undefined);
+  assert.match(controller.before({ type: 'read_file', filepath: 'a.ts' }, false).block, /already re-read/i);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat a.ts' }), true);
 
   const verified = controller.after(

@@ -24,6 +24,7 @@ export class ExplorationController {
     private _verificationPending = false;
     private _verificationFile?: string;
     private _verificationAuditSeen = false;
+    private _verificationReads = 0;
 
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
@@ -36,6 +37,14 @@ export class ExplorationController {
             if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
             if (tool.type === 'read_file' &&
                 (!this._verificationFile || tool.filepath === this._verificationFile)) {
+                if (this._verificationReads >= 2) {
+                    return {
+                        isExploration: true,
+                        block: '[System] You already re-read the edited file twice during local verification. ' +
+                            'Use the invariant evidence you have: revise the same file or run the narrowest test/build/diagnostics now.',
+                    };
+                }
+                this._verificationReads++;
                 this._verificationAuditSeen = true;
                 return {
                     isExploration: true,
@@ -99,11 +108,14 @@ export class ExplorationController {
             this._locked = false;
             this._verificationPending = true;
             this._verificationFile = tool.filepath;
-            this._verificationAuditSeen = false;
+            this._verificationAuditSeen = result.includes('[Local invariant audit]');
+            this._verificationReads = 0;
             this.targetVisits.clear();
-            return '[System Follow-through] Code changed. Verify locally before broadening. Re-read the edited file and audit ' +
-                'both the new failure/guard path and every existing normal success, completion, or terminal path. ' +
-                'Then run the narrowest relevant test, build, lint, or diagnostics check. Do not inspect sibling implementations first.';
+            return this._verificationAuditSeen
+                ? '[System Follow-through] Code changed. Review the attached Local invariant audit first: check every listed normal ' +
+                    'success/completion/terminal path against your new guard, revise this same file if needed, then run the narrowest verification command.'
+                : '[System Follow-through] Code changed. Verify locally before broadening. Re-read the edited file and audit both the new ' +
+                    'failure/guard path and every existing normal success, completion, or terminal path. Then run the narrowest verification command.';
         }
 
         if (this._verificationPending && tool.type === 'run_terminal' &&
@@ -115,6 +127,7 @@ export class ExplorationController {
             this._verificationPending = false;
             this._verificationFile = undefined;
             this._verificationAuditSeen = false;
+            this._verificationReads = 0;
             return '[System Verification] Local invariant audit and verification command completed. ' +
                 'Broader follow-through is available again if the task still requires it.';
         }

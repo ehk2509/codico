@@ -20,6 +20,7 @@ test('action phase stops advertising discovery tools to fenced-tool fallbacks', 
 });
 
 test('post-edit phase requires a local invariant audit before broadening', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Local invariant audit/);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /does not conflate two different lifecycle states/i);
   const prompt = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts');

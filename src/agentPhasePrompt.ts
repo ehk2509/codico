@@ -54,7 +54,8 @@ export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — verify the lo
 You have changed code in this turn. Do not broaden to sibling implementations yet.
 
 Before declaring the task complete:
-- re-read the edited component and identify the exact new failure/guard condition;
+- review any [Local invariant audit] attached to the edit result; it is deterministic evidence extracted from the edited file;
+- if no audit was attached, re-read the edited component and identify the exact new failure/guard condition;
 - enumerate every pre-existing normal success, completion, terminal, cancellation, or no-op path in that component;
 - verify the new state/guard cannot fire on those normal paths and does not conflate two different lifecycle states;
 - only then run the narrowest relevant test, build, lint, or diagnostics check;
