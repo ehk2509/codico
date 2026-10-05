@@ -308,9 +308,11 @@ function constrainFilepath(tool: NativeToolDefinition, filepath?: string): Nativ
 export function restrictNativeToolsForVerification(
     tools: NativeToolDefinition[],
     filepath?: string,
+    readAllowed = true,
 ): NativeToolDefinition[] {
     return tools
         .filter(tool => LOCAL_VERIFICATION_TOOLS.has(tool.name))
+        .filter(tool => readAllowed || tool.name !== 'read_file')
         .map(tool => constrainFilepath(tool, filepath))
         .map(tool => tool.name === 'run_terminal'
             ? {
@@ -325,9 +327,12 @@ export function nativeToolsForAgentPhase(
     explorationLocked: boolean,
     verificationPending: boolean,
     verificationFile?: string,
+    verificationReadAllowed = true,
 ): NativeToolDefinition[] {
     if (explorationLocked) { return restrictNativeToolsForAction(tools); }
-    if (verificationPending) { return restrictNativeToolsForVerification(tools, verificationFile); }
+    if (verificationPending) {
+        return restrictNativeToolsForVerification(tools, verificationFile, verificationReadAllowed);
+    }
     return tools;
 }
 
