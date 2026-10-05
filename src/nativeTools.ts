@@ -323,27 +323,61 @@ export function restrictNativeToolsForAction(
 export function restrictNativeToolsForVerification(
     tools: NativeToolDefinition[],
     filepath?: string,
-    _readAllowed = true,
+    readNeeded = true,
 ): NativeToolDefinition[] {
-    return tools.map(tool => {
-        if (tool.name === 'read_file') {
-            return {
-                ...tool,
-                description: filepath
-                    ? `Read a workspace file. Start with edited file ${filepath}; inspect callers/consumers/siblings when needed to verify the acceptance contract.`
-                    : 'Read a workspace file to close a concrete verification gap.',
-            };
-        }
+    const priority: ToolCall['type'][] = readNeeded
+        ? ['read_file', 'edit_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
+        : ['run_terminal', 'edit_file', 'read_file', 'get_diagnostics', 'search_files', 'find_files', 'list_directory'];
+    const rank = new Map(priority.map((name, index) => [name, index]));
 
-        if (tool.name === 'run_terminal') {
-            return {
-                ...tool,
-                description: 'Run tests, builds, linting, diagnostics, or targeted source-inspection commands needed to verify the acceptance contract.',
-            };
-        }
+    return tools
+        .map(tool => {
+            if (tool.name === 'read_file') {
+                return {
+                    ...tool,
+                    description: readNeeded
+                        ? filepath
+                            ? `Verification priority: re-read edited file ${filepath} and reconcile its changed control flow with normal success/completion/terminal/cancellation paths. Dependency reads remain available when needed.`
+                            : 'Verification priority: re-read the edited control flow and reconcile its invariants.'
+                        : 'Verification discovery: read only a concrete unresolved range/dependency. The edited control-flow audit is already complete.',
+                };
+            }
 
-        return tool;
-    });
+            if (tool.name === 'edit_file') {
+                return {
+                    ...tool,
+                    description: filepath
+                        ? `Verification mutation: revise ${filepath} first if its acceptance or preservation invariant is wrong. Avoid mutating sibling files until this edit is verified.`
+                        : 'Verification mutation: revise the current edited component before broadening.',
+                };
+            }
+
+            if (tool.name === 'write_file') {
+                return {
+                    ...tool,
+                    description: 'Verification mutation for a necessary complete-file rewrite. Keep focus on the current edited component until verified.',
+                };
+            }
+
+            if (tool.name === 'run_terminal') {
+                return {
+                    ...tool,
+                    description: readNeeded
+                        ? 'Verification command. For lifecycle/state edits, first audit the edited control flow; then run the narrowest behavior-level test. Static builds alone do not prove terminal semantics.'
+                        : 'Preferred verification tool. Run the narrowest behavior-level test for lifecycle/state edits; diagnostics/build/lint are static evidence only.',
+                };
+            }
+
+            if (tool.name === 'get_diagnostics') {
+                return {
+                    ...tool,
+                    description: 'Static verification only. Useful for compile/type errors, but it does not prove runtime lifecycle or terminal-state behavior.',
+                };
+            }
+
+            return tool;
+        })
+        .sort((a, b) => (rank.get(a.name) ?? 100) - (rank.get(b.name) ?? 100));
 }
 
 export function nativeToolsForAgentPhase(
