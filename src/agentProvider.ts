@@ -88,6 +88,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _evalToolCalls = 0;
     private _evalPromptTokens = 0;
     private _evalCompletionTokens = 0;
+    private _evaluationTokenBudget = 0;
+    private _evalBudgetExceeded = false;
 
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
@@ -612,6 +614,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
      * Test-only entrypoint used by the frozen coding-task benchmark.
      * Production activation never enables evaluation mode.
      */
+    public setEvaluationTokenBudget(maxTotalTokens: number): void {
+        if (!this._evaluationMode) {
+            throw new Error('Evaluation token budgets are test-only.');
+        }
+        this._evaluationTokenBudget = Math.max(0, Math.floor(maxTotalTokens));
+    }
+
     public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
         if (!this._evaluationMode) {
             throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
@@ -628,6 +637,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             completionTokens: this._evalCompletionTokens,
             totalTokens: this._evalPromptTokens + this._evalCompletionTokens,
             historyMessages: this._history.length,
+            budgetExceeded: this._evalBudgetExceeded,
         };
     }
 
@@ -684,6 +694,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._evalToolCalls = 0;
         this._evalPromptTokens = 0;
         this._evalCompletionTokens = 0;
+        this._evalBudgetExceeded = false;
         // Dismiss any pending proactive offer now that the user is sending a message
         this._post({ type: 'proactiveOffer', filename: '', errorCount: 0, warningCount: 0 });
         try {
@@ -877,6 +888,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
                 if (signal.aborted) { break; }
+                if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
+                    this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) {
+                    this._evalBudgetExceeded = true;
+                    this._post({
+                        type: 'appendContent',
+                        id: msgId,
+                        text: `\n\n⚠ Evaluation token budget reached (${this._evaluationTokenBudget.toLocaleString()} cumulative tokens).\n`,
+                    });
+                    break;
+                }
                 this._evalSteps = Math.max(this._evalSteps, i + 1);
                 this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
 
