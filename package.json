@@ -405,5 +405,13 @@
       "supported": false
     }
   },
-  "icon": "media/logo-128.png"
+  "icon": "media/logo-128.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ehk2509/codico.git"
+  },
+  "homepage": "https://github.com/ehk2509/codico#readme",
+  "bugs": {
+    "url": "https://github.com/ehk2509/codico/issues"
+  }
 }
