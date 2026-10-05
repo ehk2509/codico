@@ -632,37 +632,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     public getEvaluationSnapshot(): EvaluationRunMetrics {
-        if (!this._evaluationMode) {
-            throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
-        }
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         return buildEvaluationRunMetrics({
-            startedAt: this._evalTaskStartedAt,
-            steps: this._evalSteps,
-            toolCalls: this._evalToolCalls,
-            filesWritten: this._filesWrittenThisTurn,
-            promptTokens: this._evalPromptTokens,
-            completionTokens: this._evalCompletionTokens,
-            historyMessages: this._history.length,
-            budgetExceeded: this._evalBudgetExceeded,
-            projectedCharsOmitted: this._evalProjectedCharsOmitted,
+            startedAt: this._evalTaskStartedAt, steps: this._evalSteps, toolCalls: this._evalToolCalls,
+            filesWritten: this._filesWrittenThisTurn, promptTokens: this._evalPromptTokens,
+            completionTokens: this._evalCompletionTokens, historyMessages: this._history.length,
+            budgetExceeded: this._evalBudgetExceeded, projectedCharsOmitted: this._evalProjectedCharsOmitted,
             trace: this._evalTrace,
         });
     }
 
     public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
-        if (!this._evaluationMode) {
-            throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.');
-        }
-
-        this._evalSteps = 0;
-        this._evalToolCalls = 0;
-        this._evalPromptTokens = 0;
-        this._evalCompletionTokens = 0;
-        this._evalBudgetExceeded = false;
-        this._evalProjectedCharsOmitted = 0;
-        this._evalTrace = [];
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
+        this._evalSteps = this._evalToolCalls = this._evalPromptTokens = this._evalCompletionTokens = 0;
+        this._evalBudgetExceeded = false; this._evalProjectedCharsOmitted = 0; this._evalTrace = [];
         this._evalTaskStartedAt = Date.now();
-
         await vscode.commands.executeCommand('workbench.view.extension.codico-container');
         await this._handleUserMessage(text);
         return this.getEvaluationSnapshot();
