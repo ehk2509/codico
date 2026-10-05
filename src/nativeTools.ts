@@ -254,15 +254,70 @@ export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition
  * Phase policies are advisory. Fixed exploration/read counts must not remove
  * capabilities that may be required for correctness.
  */
+const ACTION_PRIORITY: ToolCall['type'][] = [
+    'edit_file',
+    'write_file',
+    'run_terminal',
+    'get_diagnostics',
+    'read_file',
+    'search_files',
+    'find_files',
+    'list_directory',
+];
+
+const ACTION_DISCOVERY = new Set<ToolCall['type']>([
+    'read_file',
+    'search_files',
+    'find_files',
+    'list_directory',
+    'fetch_url',
+    'lsp_symbol',
+    'browser_get_text',
+]);
+
+/**
+ * Action phase keeps every capability but makes the native-tool surface reflect
+ * the phase: mutation/verification tools come first, while discovery tools are
+ * explicitly described as a narrow escape hatch for one missing fact.
+ */
 export function restrictNativeToolsForAction(
     tools: NativeToolDefinition[]
 ): NativeToolDefinition[] {
-    return tools.map(tool => tool.name === 'run_terminal'
-        ? {
-            ...tool,
-            description: 'Run a shell command in the workspace. Prefer tests/builds once enough evidence exists; source inspection remains available when it closes a concrete gap.',
-        }
-        : tool);
+    const rank = new Map(ACTION_PRIORITY.map((name, index) => [name, index]));
+
+    return tools
+        .map(tool => {
+            if (ACTION_DISCOVERY.has(tool.name)) {
+                return {
+                    ...tool,
+                    description: `Action phase escape hatch: use ${tool.name} only when one concrete missing fact prevents a safe edit. Do not repeat evidence already inspected; close that fact, then edit immediately. ${tool.description}`,
+                };
+            }
+
+            if (tool.name === 'edit_file') {
+                return {
+                    ...tool,
+                    description: 'Preferred action-phase tool. Make the smallest exact code change supported by the evidence already gathered.',
+                };
+            }
+
+            if (tool.name === 'write_file') {
+                return {
+                    ...tool,
+                    description: 'Action-phase mutation tool for complete-file rewrites when a precise edit_file replacement is not appropriate.',
+                };
+            }
+
+            if (tool.name === 'run_terminal') {
+                return {
+                    ...tool,
+                    description: 'Run the narrowest test/build/diagnostics command after a code change. Before editing, use terminal inspection only for one concrete missing fact.',
+                };
+            }
+
+            return tool;
+        })
+        .sort((a, b) => (rank.get(a.name) ?? 100) - (rank.get(b.name) ?? 100));
 }
 
 export function restrictNativeToolsForVerification(
