@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
@@ -23,11 +22,8 @@ import { killProcessGroup, processGroupAlive, runTerminalProcess } from './termi
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
+import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
-
-function getNonce(): string {
-    return nodeCrypto.randomBytes(24).toString('base64url');
-}
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -45,6 +41,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private readonly _fileManager = new FileManager();
     private readonly _mcp = new McpManager();
     private readonly _external = new ExternalToolRuntime(this._mcp, msg => this._post(msg));
+    private readonly _webviewAssets: WebviewAssets;
     private readonly _undoRedo = new UndoRedoStack();
     private readonly _editProposals = new EditProposalManager();
     private _editsMode = false;
@@ -85,13 +82,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Prompt token count from the most recent API response; used for auto-compact threshold. */
     private _lastPromptTokens = 0;
 
-    /** Allowlist of valid model IDs sourced from models.json at build time. */
-    private _validModelIds: Set<string> | null = null;
-    /** Raw models.json content cached for injection into the webview HTML. */
-    private _cachedModelsJson: string | null = null;
-    /** Rendered chat.html template cached so _buildHtml never blocks the UI thread. */
-    private _cachedHtml: string | null = null;
-
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
     private readonly _sessionAbort = new AbortController();
@@ -101,11 +91,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         private readonly _context: vscode.ExtensionContext
     ) {
         this._workspaceIndex = new WorkspaceIndex(_context);
+        this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
         this._initThreadsSync();
-        // Pre-load bundled media files async so _buildHtml and _isValidModelId
-        // never need to call readFileSync on the extension host's UI thread.
-        void this._preloadMediaFiles();
+        // Pre-load webview assets so first render does not block the extension host.
+        void this._webviewAssets.preload();
         // Abort in-flight requests when the extension deactivates.
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
@@ -120,25 +110,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
         }, undefined, _context.subscriptions);
-    }
-
-    private async _preloadMediaFiles(): Promise<void> {
-        const media = this._extensionUri.fsPath + '/media';
-        try {
-            this._cachedModelsJson = await fs.promises.readFile(media + '/models.json', 'utf8');
-            const groups = JSON.parse(this._cachedModelsJson) as Array<{
-                models?: Array<{ id?: string }>;
-            }>;
-            this._validModelIds = new Set(
-                groups
-                    .flatMap(group => group.models ?? [])
-                    .map(model => model.id)
-                    .filter((id): id is string => Boolean(id))
-            );
-        } catch { /* models.json missing — _validModelIds stays null → skip validation */ }
-        try {
-            this._cachedHtml = await fs.promises.readFile(media + '/chat.html', 'utf8');
-        } catch { /* chat.html missing — _buildHtml falls back to sync read */ }
     }
 
     // ── History / thread persistence helpers ─────────────────────────────────
@@ -171,7 +142,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri],
         };
 
-        webviewView.webview.html = this._buildHtml(webviewView.webview);
+        webviewView.webview.html = this._webviewAssets.buildHtml(webviewView.webview);
 
         // Inform the webview of the currently configured model
         const currentModel = vscode.workspace
@@ -360,7 +331,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 case 'changeModel': {
                     // Validate against known model IDs before persisting
-                    if (!this._isValidModelId(msg.model)) {
+                    if (!this._webviewAssets.isValidModelId(msg.model)) {
                         this._post({ type: 'error', message: `Unknown model ID rejected: "${msg.model}"` });
                         break;
                     }
@@ -2774,43 +2745,7 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
 
     // ─── HTML ────────────────────────────────────────────────────────────────
 
-    private _isValidModelId(id: string): boolean {
-        // _validModelIds is populated async by _preloadMediaFiles at construction time.
-        // If the async load hasn't completed yet (very early first call) or if models.json
-        // was unavailable, _validModelIds is null — allow all models rather than blocking.
-        if (!this._validModelIds || this._validModelIds.size === 0) { return true; }
-        return this._validModelIds.has(id);
-    }
 
-    private _buildHtml(_webview: vscode.Webview): string {
-        const nonce = getNonce();
-        const media = this._extensionUri.fsPath + '/media';
-        // Use async-preloaded cache. Fall back to sync only if resolveWebviewView fires
-        // before _preloadMediaFiles completes (extremely rare on normal activation paths).
-        const rawHtml       = this._cachedHtml      ?? fs.readFileSync(media + '/chat.html',   'utf8');
-        const rawModelsJson = this._cachedModelsJson ?? fs.readFileSync(media + '/models.json', 'utf8');
-        // Replace all nonce placeholders
-        let html = rawHtml.split('{{NONCE}}').join(nonce);
-        // Inject models data — escape </script> sequences to prevent breakout.
-        // Use a replacer function to avoid $& / $' / $` special replacement patterns
-        // in safeModelsJson corrupting the HTML (e.g. a model name containing "$&").
-        const safeModelsJson = rawModelsJson.replace(/<\/script>/gi, '<\\/script>');
-        html = html.replace('{{MODELS_JSON}}', () => safeModelsJson);
-        html = html.replace('{{CSP_SOURCE}}', _webview.cspSource);
-        const chatCssUri = _webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.css')
-        ).toString();
-        html = html.replace('{{CHAT_CSS_URI}}', chatCssUri);
-        const markdownUri = _webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
-        ).toString();
-        html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
-        const streamNoticesUri = _webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'streamNotices.js')
-        ).toString();
-        html = html.replace('{{STREAM_NOTICES_JS_URI}}', streamNoticesUri);
-        return html;
-    }
 
 }
 
