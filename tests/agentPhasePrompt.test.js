@@ -26,7 +26,7 @@ test('post-edit phase requires a local invariant audit before broadening', () =>
   const prompt = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts');
   assert.match(prompt, /verify the local invariant/i);
   assert.match(prompt, /src\/openRouterClient\.ts/);
-  assert.match(prompt, /re-read this file first/i);
+  assert.match(prompt, /re-read the edited file once/i);
 });
 
 test('Ask mode remains read-only even when autonomous phase flags are set', () => {
