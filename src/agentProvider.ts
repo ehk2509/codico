@@ -17,7 +17,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall, nativeToolsForAgentPhase } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -29,7 +29,6 @@ import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
-import { systemPromptForAgentPhase } from './agentPhasePrompt';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -896,7 +895,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
-        const exploration = new ExplorationController();
+        const exploration = new ExplorationController(rawText);
 
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -1085,16 +1084,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const systemPromptOverride = systemPromptForAgentPhase(
-                    this._chatMode, exploration.locked, exploration.verificationPending, exploration.verificationFile
-                );
+                const systemPromptOverride = exploration.systemPrompt(this._chatMode);
                 const projectedHistory = projectHistoryForModel(this._history);
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                const iterationNativeTools = nativeToolsForAgentPhase(
-                    nativeTools, exploration.locked, exploration.verificationPending, exploration.verificationFile
-                );
+                const iterationNativeTools = exploration.nativeTools(nativeTools);
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
