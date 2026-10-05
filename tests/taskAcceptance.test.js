@@ -1,19 +1,20 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-
 const { buildTaskAcceptanceContract } = require('../out/taskAcceptance.js');
 
-test('task acceptance contract preserves explicit invariants from the original request', () => {
+test('task acceptance contract preserves outcomes and implementation discipline', () => {
   const contract = buildTaskAcceptanceContract(
-    'Fix premature EOF handling. Keep normal completed streams unchanged. Do not report aborts as interruptions.'
+    'Improve repeated-tool loop detection so fingerprints include tool arguments. Keep normal calls unchanged. Do not collapse different paths.'
   );
-  assert.match(contract, /Fix premature EOF handling/);
-  assert.match(contract, /Keep normal completed streams unchanged/);
-  assert.match(contract, /Do not report aborts as interruptions/);
-  assert.match(contract, /preservation \/ negative constraints/i);
+
+  assert.match(contract, /fingerprints include tool arguments/);
+  assert.match(contract, /Keep normal calls unchanged/);
+  assert.match(contract, /Do not collapse different paths/);
+  assert.match(contract, /Acceptance checklist derived from the request/);
+  assert.match(contract, /abstraction or API boundary that owns the behavior/i);
+  assert.match(contract, /do not optimize for guessed hidden tests/i);
 });
 
 test('task acceptance contract stays bounded for enormous prompts', () => {
-  const contract = buildTaskAcceptanceContract('Fix this. Keep behavior unchanged. ' + 'x'.repeat(10000));
-  assert.ok(contract.length < 5000);
+  assert.ok(buildTaskAcceptanceContract('Fix this. Keep behavior unchanged. ' + 'x'.repeat(10000)).length < 6500);
 });
