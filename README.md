@@ -602,6 +602,14 @@ codico/
 
 ---
 
+## Validation
+
+Every pull request runs the regression suite on **Ubuntu, Windows, and macOS**, activates Codico inside a real VS Code Extension Host, packages a VSIX, and smoke-installs that packaged extension into a clean VS Code profile.
+
+For autonomous coding quality, Codico also ships a frozen **26-task historical coding holdout**. The current agent is run against exact pre-fix Codico commits and the relevant regression test is injected only after the agent finishes, so the verifier is hidden during the task. The holdout records success, duration, agent steps, tool calls, changed files, and provider token usage.
+
+The coding holdout is intentionally **manual-only** and never consumes model credits on ordinary pushes or pull requests. See [eval/README.md](eval/README.md) for the frozen-v1 methodology and reproduction commands.
+
 ## Development
 
 ```bash
