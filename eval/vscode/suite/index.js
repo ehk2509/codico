@@ -21,7 +21,7 @@ async function run() {
     await extension.activate();
 
     const commands = new Set(await vscode.commands.getCommands(true));
-    for (const command of ['codico.__evalConfigure', 'codico.__evalRunTask']) {
+    for (const command of ['codico.__evalConfigure', 'codico.__evalRunTask', 'codico.__evalSnapshot']) {
       if (!commands.has(command)) {
         throw new Error(`Evaluation command is not registered: ${command}`);
       }
@@ -36,14 +36,43 @@ async function run() {
     await vscode.commands.executeCommand('codico.openChat');
     await new Promise(resolve => setTimeout(resolve, 500));
 
-    const metrics = await vscode.commands.executeCommand('codico.__evalRunTask', prompt);
-    fs.writeFileSync(outputPath, JSON.stringify({ ok: true, model, metrics }, null, 2));
+    const writeJsonAtomic = (payload) => {
+      const tempPath = outputPath + '.tmp';
+      fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2));
+      fs.renameSync(tempPath, outputPath);
+    };
+
+    let checkpointBusy = false;
+    const writeCheckpoint = async () => {
+      if (checkpointBusy) { return; }
+      checkpointBusy = true;
+      try {
+        const metrics = await vscode.commands.executeCommand('codico.__evalSnapshot');
+        writeJsonAtomic({ ok: false, partial: true, model, metrics });
+      } catch {
+        // Best-effort only. The final result/error below remains authoritative.
+      } finally {
+        checkpointBusy = false;
+      }
+    };
+
+    await writeCheckpoint();
+    const checkpointTimer = setInterval(() => { void writeCheckpoint(); }, 2000);
+    try {
+      const metrics = await vscode.commands.executeCommand('codico.__evalRunTask', prompt);
+      writeJsonAtomic({ ok: true, partial: false, model, metrics });
+    } finally {
+      clearInterval(checkpointTimer);
+    }
   } catch (error) {
-    fs.writeFileSync(outputPath, JSON.stringify({
+    const tempPath = outputPath + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify({
       ok: false,
+      partial: false,
       model,
       error: error instanceof Error ? error.stack || error.message : String(error),
     }, null, 2));
+    fs.renameSync(tempPath, outputPath);
     throw error;
   }
 }
