@@ -28,6 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 openRouterApiKey: string;
                 model: string;
                 maxIterations?: number;
+                maxTotalTokens?: number;
             }) => {
                 if (!options?.openRouterApiKey?.trim()) {
                     throw new Error('Evaluation requires an OpenRouter API key.');
@@ -35,7 +36,8 @@ export function activate(context: vscode.ExtensionContext): void {
                 await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
                 const cfg = vscode.workspace.getConfiguration('codico');
                 await cfg.update('model', options.model, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('maxIterations', options.maxIterations ?? 30, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Workspace);
+                provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 400_000);
                 await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Workspace);
                 await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Workspace);
                 await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Workspace);
