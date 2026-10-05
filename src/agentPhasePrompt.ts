@@ -67,12 +67,18 @@ export function systemPromptForAgentPhase(
     explorationLocked: boolean,
     verificationPending: boolean,
     verificationFile?: string,
+    taskContract = '',
+    verificationReadAllowed = true,
 ): string | undefined {
     if (chatMode) { return CHAT_SYSTEM_PROMPT; }
-    if (explorationLocked) { return ACTION_PHASE_SYSTEM_PROMPT; }
+    const contract = taskContract ? `\n\n${taskContract}` : '';
+    if (explorationLocked) { return `${ACTION_PHASE_SYSTEM_PROMPT}${contract}`; }
     if (verificationPending) {
-        const target = verificationFile ? `\nEdited file: \`${verificationFile}\`. Re-read this file first.` : '';
-        return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}`;
+        const target = verificationFile ? `\nEdited file: \`${verificationFile}\`.` : '';
+        const readBudget = verificationReadAllowed
+            ? '\nYou may re-read the edited file once for a focused local audit. After that, verify with an edit, test/build, or diagnostics.'
+            : '\nThe local read budget is exhausted. Do not read the file again. Either revise the edit or run a focused test/build/diagnostics check now.';
+        return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${readBudget}${contract}`;
     }
     return undefined;
 }
