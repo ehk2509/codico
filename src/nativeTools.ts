@@ -63,7 +63,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
     },
     {
         name: 'edit_file',
-        description: 'Replace one exact string occurrence in a workspace file.',
+        description: 'Replace one uniquely identifiable string occurrence. Exact matching is preferred; a unique whitespace-only variation is accepted safely.',
         inputSchema: {
             type: 'object',
             properties: {
