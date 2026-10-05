@@ -1,7 +1,7 @@
 {
-  "suiteVersion": "codico-coding-holdout-v3",
+  "suiteVersion": "codico-coding-holdout-v4",
   "frozen": true,
-  "description": "Historical Codico regressions with hidden behavior-level or fix-era verifiers. v3 removes implementation-specific fingerprint scoring and preflights historical verifier compatibility before model invocation.",
+  "description": "Historical Codico regressions with hidden behavior-level or fix-era verifiers. v4 makes resume-overlap scoring implementation-name agnostic, raises wall-clock safety headroom while preserving token/iteration quality budgets, and preserves partial metrics on timeout.",
   "tasks": [
     {
       "id": "stream-unexpected-eof",
@@ -20,9 +20,10 @@
       "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
       "prompt": "When an interrupted model stream resumes, prevent text from the end of the partial response from being repeated at the seam. Add a general overlap calculation rather than hard-coded string trimming.",
       "verifierFile": "streamCompletion.test.js",
-      "testNamePattern": "drops text a resumed response repeats from before the cutoff",
+      "testNamePattern": "resume overlap calculation removes repeated seam text without trimming new content",
       "maxIterations": 16,
-      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb",
+      "verifierPath": "eval/verifiers/streamResumeOverlap.verifier.js"
     },
     {
       "id": "stream-recoverable-classification",
@@ -267,5 +268,5 @@
     }
   ],
   "maxTotalTokens": 400000,
-  "maxTaskMinutes": 10
+  "maxTaskMinutes": 15
 }
