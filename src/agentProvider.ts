@@ -2796,6 +2796,11 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
         // in safeModelsJson corrupting the HTML (e.g. a model name containing "$&").
         const safeModelsJson = rawModelsJson.replace(/<\/script>/gi, '<\\/script>');
         html = html.replace('{{MODELS_JSON}}', () => safeModelsJson);
+        html = html.replace('{{CSP_SOURCE}}', _webview.cspSource);
+        const chatCssUri = _webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.css')
+        ).toString();
+        html = html.replace('{{CHAT_CSS_URI}}', chatCssUri);
         const markdownUri = _webview.asWebviewUri(
             vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
         ).toString();
