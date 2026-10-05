@@ -12,7 +12,7 @@
       "testNamePattern": "unexpected provider EOF is surfaced as a recoverable stream interruption",
       "maxIterations": 16,
       "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281",
-      "verifierPath": "eval/verifiers/streamUnexpectedEof.test.js"
+      "verifierPath": "eval/verifiers/streamUnexpectedEof.verifier.js"
     },
     {
       "id": "stream-resume-overlap",
