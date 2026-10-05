@@ -80,6 +80,7 @@ export class ExplorationController {
         const decision = explorationDecision(nextStreak, targetVisits);
         this.streak = nextStreak;
         if (target) { this.targetVisits.set(target, targetVisits); }
+        if (decision.lock) { this._locked = true; }
         return { isExploration: true, guidance: decision.guidance };
     }
 
