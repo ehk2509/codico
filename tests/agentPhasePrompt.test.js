@@ -19,16 +19,20 @@ test('action phase is strong guidance layered on the normal tool contract', () =
   assert.match(prompt, /edit_file/);
 });
 
-test('post-edit phase verifies acceptance while allowing targeted dependencies', () => {
+test('post-edit phase keeps mutation local and requires behavioral evidence', () => {
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /Local invariant audit/);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal, cancellation/i);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /callers, consumers, shared abstractions, sibling implementations/i);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Discovery remains available/i);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings/i);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /behavior-level test-like command/i);
 
-  const prompt = systemPromptForAgentPhase(false, true, true, 'src/openRouterClient.ts');
-  assert.match(prompt, /satisfy the acceptance contract/i);
-  assert.doesNotMatch(prompt, /act on the evidence/i);
-  assert.match(prompt, /src\/openRouterClient\.ts/);
+  const first = systemPromptForAgentPhase(false, true, true, 'src/openRouterClient.ts', '', true);
+  assert.match(first, /re-read the edited control flow once/i);
+  assert.doesNotMatch(first, /act on the evidence/i);
+  assert.match(first, /src\/openRouterClient\.ts/);
+
+  const afterRead = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', '', false);
+  assert.match(afterRead, /post-edit control-flow read is complete/i);
+  assert.match(afterRead, /behavior-level test next/i);
 });
 
 test('Ask mode remains read-only even when autonomous phase flags are set', () => {
