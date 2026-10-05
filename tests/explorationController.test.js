@@ -53,8 +53,10 @@ test('controller resets after mutation and does not constrain Ask mode', () => {
   const local = controller.before({ type: 'read_file', filepath: 'a.ts' }, false);
   assert.equal(local.block, undefined);
   assert.match(local.guidance, /normal success, completion, or terminal path/i);
-  assert.equal(controller.before({ type: 'read_file', filepath: 'a.ts' }, false).block, undefined);
-  assert.match(controller.before({ type: 'read_file', filepath: 'a.ts' }, false).block, /already re-read/i);
+  assert.match(
+    controller.before({ type: 'read_file', filepath: 'a.ts' }, false).block,
+    /read budget is exhausted/i,
+  );
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat a.ts' }), true);
 
   const verified = controller.after(
