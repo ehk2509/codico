@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - 'release/publish-vscode-marketplace-0.1.0'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -37,7 +39,7 @@ jobs:
         run: xvfb-run -a node tests/vscode/runTest.js
 
       - name: Validate tag matches package version
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           node -e "const v=require('./package.json').version; const expected='v'+v; if (process.env.GITHUB_REF_NAME!==expected) { console.error('Tag '+process.env.GITHUB_REF_NAME+' must match '+expected); process.exit(1); }"
 
@@ -52,13 +54,13 @@ jobs:
           path: codico.vsix
 
       - name: Create GitHub release
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" codico.vsix --generate-notes --verify-tag
 
       - name: Publish to Visual Studio Marketplace
-        if: github.event_name == 'workflow_dispatch' && inputs.publish_marketplace
+        if: (github.event_name == 'workflow_dispatch' && inputs.publish_marketplace) || (github.event_name == 'push' && github.ref == 'refs/heads/release/publish-vscode-marketplace-0.1.0')
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
