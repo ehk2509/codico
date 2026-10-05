@@ -24,6 +24,10 @@ test('controller locks discovery after the turn exploration budget', () => {
 
   const stillLocked = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
   assert.match(stillLocked.block, /remain disabled/i);
+
+  const diagnostics = controller.before({ type: 'get_diagnostics' }, false);
+  assert.equal(diagnostics.isExploration, false);
+  assert.equal(diagnostics.block, undefined);
 });
 
 test('controller resets after mutation and does not constrain Ask mode', () => {
@@ -35,8 +39,11 @@ test('controller resets after mutation and does not constrain Ask mode', () => {
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: "grep -rn foo src/" }), true);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
 
-  controller.after({ type: 'edit_file', filepath: 'a.ts', oldStr: 'x', newStr: 'y' });
+  const followThrough = controller.after({ type: 'edit_file', filepath: 'a.ts', oldStr: 'x', newStr: 'y' });
   assert.equal(controller.locked, false);
+  assert.equal(controller.verificationPending, true);
+  assert.match(followThrough, /downstream consumer\/caller/i);
+  assert.match(followThrough, /narrowest relevant test/i);
 
   const ask = new ExplorationController();
   for (let i = 0; i < 20; i++) {

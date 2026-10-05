@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
-import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
+import { streamOpenRouter, ChatMessage, MessageContentPart } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
 import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
@@ -29,6 +29,7 @@ import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
+import { systemPromptForAgentPhase } from './agentPhasePrompt';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -1004,10 +1005,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         });
                     }
                     await this._dispatchTool(tool, msgId, signal);
-                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
-
-                    exploration.after(tool);
+                    const followThrough = exploration.after(tool);
+                    if (followThrough) { result += `\n\n${followThrough}`; }
 
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
@@ -1083,7 +1084,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const chatModeOverride = this._chatMode ? CHAT_SYSTEM_PROMPT : undefined;
+                const systemPromptOverride = systemPromptForAgentPhase(
+                    this._chatMode, exploration.locked, exploration.verificationPending
+                );
                 const projectedHistory = projectHistoryForModel(this._history);
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
@@ -1092,10 +1095,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? restrictNativeToolsForAction(nativeTools)
                     : nativeTools;
                 for await (const chunk of isOllama
-                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, chatModeOverride)
+                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, iterationNativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, iterationNativeTools)) {
+                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;

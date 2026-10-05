@@ -22,8 +22,10 @@ export class ExplorationController {
     private streak = 0;
     private readonly targetVisits = new Map<string, number>();
     private _locked = false;
+    private _verificationPending = false;
 
     public get locked(): boolean { return this._locked; }
+    public get verificationPending(): boolean { return this._verificationPending; }
 
     public before(tool: ToolCall, readOnlyMode: boolean): ExplorationCheck {
         if (readOnlyMode || !isExplorationTool(tool)) {
@@ -31,6 +33,8 @@ export class ExplorationController {
         }
 
         if (this._locked) {
+            // Diagnostics are verification, not additional source discovery.
+            if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
             return {
                 isExploration: true,
                 block: '[System] Discovery tools remain disabled until you change code. Use edit_file/write_file now, then verify the result.',
@@ -66,10 +70,15 @@ export class ExplorationController {
             isExploratoryTerminalCommand(tool.command);
     }
 
-    public after(tool: ToolCall): void {
-        if (!isMutationTool(tool)) { return; }
+    public after(tool: ToolCall): string | undefined {
+        if (!isMutationTool(tool)) { return undefined; }
         this.streak = 0;
         this._locked = false;
+        this._verificationPending = true;
         this.targetVisits.clear();
+        return '[System Follow-through] Code changed. Before declaring the task complete, verify the affected behavior. ' +
+            'If this edit changes an emitted error, event, return value, status, callback result, or protocol field, ' +
+            'trace at least one downstream consumer/caller and confirm it handles the changed signal. ' +
+            'Otherwise run the narrowest relevant test or diagnostics check. Do not restart broad exploration.';
     }
 }
