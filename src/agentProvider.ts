@@ -27,7 +27,7 @@ import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DI
 import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
-import { explorationGuidance, isExplorationTool, isMutationTool } from './agentEfficiency';
+import { explorationDecision, explorationTarget, isExplorationTool, isMutationTool } from './agentEfficiency';
 import { sliceFileByLines } from './fileReadWindow';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -895,6 +895,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
         let explorationCallsSinceEdit = 0;
+        const explorationTargetVisits = new Map<string, number>();
 
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -951,6 +952,45 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
+                    if (isExplorationTool(tool)) {
+                        const target = explorationTarget(tool);
+                        const targetVisits = target
+                            ? (explorationTargetVisits.get(target) ?? 0) + 1
+                            : 1;
+                        const nextStreak = explorationCallsSinceEdit + 1;
+                        const decision = explorationDecision(nextStreak, targetVisits);
+
+                        if (decision.block) {
+                            if (this._evaluationMode) {
+                                this._evalTrace.push({
+                                    step: this._evalSteps,
+                                    tool: 'exploration_block',
+                                    target: evaluationToolTarget(tool),
+                                });
+                            }
+                            inlineToolResults.push(decision.block);
+                            return { keepGoing: true, result: decision.block };
+                        }
+
+                        explorationCallsSinceEdit = nextStreak;
+                        if (target) { explorationTargetVisits.set(target, targetVisits); }
+
+                        this._evalToolCalls++;
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: tool.type,
+                                target: evaluationToolTarget(tool),
+                            });
+                        }
+                        await this._dispatchTool(tool, msgId, signal);
+                        let result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                        this._lastInlineResult = undefined;
+                        if (decision.guidance) { result += `\n\n${decision.guidance}`; }
+                        inlineToolResults.push(result);
+                        return { keepGoing: true, result };
+                    }
+
                     this._evalToolCalls++;
                     if (this._evaluationMode) {
                         this._evalTrace.push({
@@ -960,15 +1000,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         });
                     }
                     await this._dispatchTool(tool, msgId, signal);
-                    let result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
 
                     if (isMutationTool(tool)) {
                         explorationCallsSinceEdit = 0;
-                    } else if (isExplorationTool(tool)) {
-                        explorationCallsSinceEdit++;
-                        const guidance = explorationGuidance(explorationCallsSinceEdit);
-                        if (guidance) { result += `\n\n${guidance}`; }
+                        explorationTargetVisits.clear();
                     }
 
                     inlineToolResults.push(result);
