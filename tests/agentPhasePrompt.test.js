@@ -31,8 +31,10 @@ test('post-edit phase verifies acceptance while allowing targeted dependencies',
 
 test('Ask mode remains read-only even when autonomous phase flags are set', () => {
   const prompt = systemPromptForAgentPhase(true, true, true);
-  assert.match(prompt, /read-only Ask mode/i);
-  assert.doesNotMatch(prompt, /edit_file/);
+  assert.match(prompt, /Tools \(read-only\)/i);
+  assert.match(prompt, /Do NOT emit write_file, edit_file, run_terminal/i);
+  assert.match(prompt, /```read_file/);
+  assert.doesNotMatch(prompt, /```write_file/);
 });
 
 test('verification prompt carries the acceptance contract without arbitrary read limits', () => {
