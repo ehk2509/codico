@@ -58,3 +58,4 @@ Results are written beneath `eval/results/` and are git-ignored.
 `codico-coding-holdout-v1` and `codico-coding-holdout-v2` are burned evidence and stay reproducible. `codico-coding-holdout-v3` is active and frozen.
 
 Any semantic scoring change creates a new suite version. Harness-only fixes may land in place when they do not change what constitutes success.
+
