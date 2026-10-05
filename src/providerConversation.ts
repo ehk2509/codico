@@ -1,4 +1,5 @@
 import type { ChatMessage, MessageContentPart } from './openRouterClient';
+import type { NativeToolCall } from './nativeTools';
 
 export type PlainChatMessage = {
     role: 'system' | 'user' | 'assistant';
@@ -13,7 +14,13 @@ function textContent(content: string | MessageContentPart[]): string {
         .trim();
 }
 
-function compatibilityAssistantText(message: Extract<ChatMessage, { role: 'assistant' }>): string | MessageContentPart[] {
+type AssistantChatMessage = {
+    role: 'assistant';
+    content: string | MessageContentPart[];
+    nativeToolCalls?: NativeToolCall[];
+};
+
+function compatibilityAssistantText(message: AssistantChatMessage): string | MessageContentPart[] {
     if (!message.nativeToolCalls?.length) { return message.content; }
     const marker = `[Native tool calls executed: ${message.nativeToolCalls.map(call => call.name).join(', ')}]`;
     if (typeof message.content === 'string') {
@@ -136,7 +143,7 @@ export function toAnthropicMessages(history: ChatMessage[]): Array<{ role: 'user
             for (const call of message.nativeToolCalls) {
                 blocks.push({
                     type: 'tool_use',
-                    id: call.id,
+                    id: call.id ?? `codico_${call.name}`,
                     name: call.name,
                     input: call.arguments,
                 });
