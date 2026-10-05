@@ -2,16 +2,16 @@
 
 Codico's coding-quality evidence is measured with a frozen historical-regression suite rather than toy generation prompts.
 
-## Frozen suite v3
+## Frozen suite v4
 
-`eval/tasks.json` contains **26 tasks** derived from bugs and hardening gaps that existed in earlier Codico commits.
+`eval/tasks.json` contains **26 tasks** derived from historical Codico bugs and hardening gaps.
 
-v3 fixes two validity problems discovered while burning v2 evidence:
+v4 preserves the v3 task corpus while correcting two evidence-quality issues exposed by live runs:
 
-- `tools-fingerprint-arguments` is now scored by its observable fingerprint behavior rather than requiring one particular exported helper or file layout;
-- hidden verifiers are preflighted against the historical source tree **before model invocation**. If a verifier depends on a module that did not exist at that base commit, the task is recorded as `INVALID` and spends no model credits.
+- the resume-overlap task is scored by overlap behavior and integration use, not by requiring a helper with one exact name;
+- the wall-clock limit is a **15-minute safety ceiling** while the quality budgets remain fixed at 16 normal iterations and 400k cumulative tokens. The evaluation host writes periodic partial checkpoints so a hard timeout still preserves steps, tokens, tool calls, and trace evidence.
 
-The burned v1 and v2 suites remain archived as `eval/tasks-v1.json` and `eval/tasks-v2.json`.
+Burned v1, v2, and v3 suites remain archived as `eval/tasks-v1.json`, `eval/tasks-v2.json`, and `eval/tasks-v3.json`.
 
 ### Execution protocol
 
@@ -55,7 +55,6 @@ Results are written beneath `eval/results/` and are git-ignored.
 
 ## Freeze policy
 
-`codico-coding-holdout-v1` and `codico-coding-holdout-v2` are burned evidence and stay reproducible. `codico-coding-holdout-v3` is active and frozen.
+`codico-coding-holdout-v1`, `v2`, and `v3` are burned evidence and stay reproducible. `codico-coding-holdout-v4` is active and frozen.
 
-Any semantic scoring change creates a new suite version. Harness-only fixes may land in place when they do not change what constitutes success.
-
+Any semantic scoring or quality-budget change creates a new suite version. Harness-only diagnostics improvements may land in place when they do not change what constitutes success.
