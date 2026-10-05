@@ -35,14 +35,14 @@ export function activate(context: vscode.ExtensionContext): void {
                 }
                 await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
                 const cfg = vscode.workspace.getConfiguration('codico');
-                await cfg.update('model', options.model, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('model', options.model, vscode.ConfigurationTarget.Global);
+                await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
                 provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 400_000);
-                await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Workspace);
-                await cfg.update('autoIndex', false, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Global);
+                await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('autoIndex', false, vscode.ConfigurationTarget.Global);
             }),
             vscode.commands.registerCommand('codico.__evalRunTask', async (prompt: string) => {
                 if (!prompt?.trim()) { throw new Error('Evaluation prompt is required.'); }
