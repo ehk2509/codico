@@ -16,8 +16,38 @@ import { DIRECT_PROVIDERS, directSecretKey } from './directProviderClient';
 let _provider: AgentProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-    const provider = new AgentProvider(context.extensionUri, context);
+    const evaluationMode =
+        context.extensionMode === vscode.ExtensionMode.Test &&
+        process.env.CODICO_EVAL_MODE === '1';
+    const provider = new AgentProvider(context.extensionUri, context, evaluationMode);
     _provider = provider;
+
+    if (evaluationMode) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('codico.__evalConfigure', async (options: {
+                openRouterApiKey: string;
+                model: string;
+                maxIterations?: number;
+            }) => {
+                if (!options?.openRouterApiKey?.trim()) {
+                    throw new Error('Evaluation requires an OpenRouter API key.');
+                }
+                await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
+                const cfg = vscode.workspace.getConfiguration('codico');
+                await cfg.update('model', options.model, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('maxIterations', options.maxIterations ?? 30, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Workspace);
+                await cfg.update('autoIndex', false, vscode.ConfigurationTarget.Workspace);
+            }),
+            vscode.commands.registerCommand('codico.__evalRunTask', async (prompt: string) => {
+                if (!prompt?.trim()) { throw new Error('Evaluation prompt is required.'); }
+                return provider.runEvaluationTask(prompt);
+            }),
+        );
+    }
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
