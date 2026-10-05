@@ -199,7 +199,15 @@ function _streamOpenAICompat(
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
                 let e = ''; res.on('data', (d: Buffer) => { e += d; });
-                res.on('end', () => { push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`)); push(null); });
+                res.on('end', () => {
+                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, []);
+                        return;
+                    }
+                    push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
+                    push(null);
+                });
                 return;
             }
             let buf = '';
@@ -324,7 +332,15 @@ function _streamAnthropic(
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
                 let e = ''; res.on('data', (d: Buffer) => { e += d; });
-                res.on('end', () => { push(new Error(`Anthropic HTTP ${res.statusCode}: ${e.slice(0, 300)}`)); push(null); });
+                res.on('end', () => {
+                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                        _streamAnthropic(apiKey, modelId, history, system, signal, push, []);
+                        return;
+                    }
+                    push(new Error(`Anthropic HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
+                    push(null);
+                });
                 return;
             }
             let buf = '';
@@ -465,7 +481,15 @@ function _streamGoogle(
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
                 let e = ''; res.on('data', (d: Buffer) => { e += d; });
-                res.on('end', () => { push(new Error(`Google HTTP ${res.statusCode}: ${e.slice(0, 300)}`)); push(null); });
+                res.on('end', () => {
+                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                        _streamGoogle(apiKey, modelId, history, system, signal, push, []);
+                        return;
+                    }
+                    push(new Error(`Google HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
+                    push(null);
+                });
                 return;
             }
             let buf = '';
