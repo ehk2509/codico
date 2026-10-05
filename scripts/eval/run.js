@@ -197,9 +197,17 @@ async function main() {
         if (fs.existsSync(rawAgentOutput)) {
           const agentJson = JSON.parse(fs.readFileSync(rawAgentOutput, 'utf8'));
           record.metrics = agentJson.metrics || null;
-          if (!agentJson.ok) { record.agentError = agentJson.error || 'evaluation host reported failure'; }
+          record.agentCheckpointPartial = Boolean(agentJson.partial);
+          if (!agentJson.ok && !agentJson.partial) {
+            record.agentError = agentJson.error || 'evaluation host reported failure';
+          }
         } else {
           record.agentError = `evaluation host exited with status ${agent.status} without writing metrics`;
+        }
+        if (record.agentTimedOut) {
+          record.agentError = record.metrics
+            ? `evaluation host timed out after ${timeoutMinutes} minutes; partial metrics recovered`
+            : `evaluation host timed out after ${timeoutMinutes} minutes without a checkpoint`;
         }
 
         // Capture the agent's edits BEFORE injecting the hidden verifier.
