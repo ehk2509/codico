@@ -698,7 +698,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 `This workspace wants Codico to start MCP server "${cfg.name}".`,
                 {
                     modal: true,
-                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes and inherit your environment.`,
+                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes with a minimal runtime environment plus any variables explicitly configured for this server.`,
                 },
                 'Allow Once',
                 'Always Allow for Workspace'
