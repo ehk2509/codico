@@ -1131,11 +1131,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 if (signal.aborted) {
-                    // Avoid leaving history with a trailing 'user' message (from the previous
-                    // iteration's tool results) and no assistant reply — _isSessionInterrupted
-                    // would treat that as a resumable task on the next session load.
+                    // Preserve completed native tool calls/results even when the user stops
+                    // the turn after a tool has already finished.
                     if (fullContent.trim() || inlineToolResults.length > 0) {
-                        this._history.push({ role: 'assistant', content: fullContent || '(interrupted)' });
+                        appendAssistantIteration(
+                            this._history,
+                            fullContent,
+                            nativeToolExecutions,
+                            '(interrupted)'
+                        );
                     }
                     break;
                 }
@@ -1376,10 +1380,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         try {
             // Take last 6 turns, filtering out injected tool-result messages so the model
             // sees the actual conversation, not raw terminal/file output.
-            const recent = this._history.slice(-6).filter(m => {
+            const recent = this._history.slice(-8).filter(m => {
+                if (m.role === 'tool') { return false; }
                 if (typeof m.content !== 'string') { return true; }
                 return !m.content.startsWith('[Tool Results]');
-            });
+            }).slice(-6);
             if (recent.length === 0) { return; }
 
             const contextStr = recent.map(m => {
