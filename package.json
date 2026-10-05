@@ -1,8 +1,8 @@
 {
   "name": "codico",
   "displayName": "Codico",
-  "description": "Autonomous Coding Agent with live thinking visualization, file-write permissions, and OpenRouter streaming.",
-  "version": "0.0.1",
+  "description": "Autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, browser/MCP automation, and local Ollama.",
+  "version": "0.1.0",
   "publisher": "codico",
   "engines": {
     "vscode": "^1.85.0"
