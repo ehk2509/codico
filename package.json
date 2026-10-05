@@ -404,5 +404,6 @@
     "untrustedWorkspaces": {
       "supported": false
     }
-  }
+  },
+  "icon": "media/logo-128.png"
 }
