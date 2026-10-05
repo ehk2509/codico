@@ -61,7 +61,7 @@ For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-th
 | `find_files` | Locate files by name/glob pattern |
 | `run_terminal` | Execute a shell command — output streams live in the chat |
 | `get_diagnostics` | Fetch TypeScript/ESLint/etc. errors from VS Code |
-| `fetch_url` | Download and read any URL |
+| `fetch_url` | Fetch readable text from a public HTTP(S) URL (private/loopback destinations are blocked) |
 | `lsp_symbol` | Look up symbol definitions/references via the language server |
 | `browser_*` | Full browser automation (navigate, click, type, screenshot, get text) via Playwright |
 | `mcp_call` | Call any tool exposed by a connected MCP server |
