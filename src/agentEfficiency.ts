@@ -11,6 +11,8 @@ const EXPLORATION_TOOLS = new Set<ToolCall['type']>([
     'browser_get_text',
 ]);
 
+const ACTION_PHASE_AT = 8;
+
 export function isExplorationTool(tool: ToolCall): boolean {
     return EXPLORATION_TOOLS.has(tool.type);
 }
@@ -40,22 +42,37 @@ export interface ExplorationDecision {
 }
 
 /**
- * Read-count heuristics provide pressure, not permission boundaries.
- * Never force a blind edit merely because a counter was reached.
+ * Exploration starts permissive, then switches to a strong action-preferred
+ * phase. The phase switch changes guidance only: it never removes discovery
+ * capabilities, so a genuinely missing fact can still be inspected.
  */
 export function explorationDecision(streak: number, targetVisits: number): ExplorationDecision {
+    const actionPhase = streak >= ACTION_PHASE_AT;
+
     if (targetVisits >= 3) {
         return {
-            guidance: '[System Guidance] You have inspected this target repeatedly. Do not repeat the same read/search unless new evidence justifies it. ' +
-                'Either act, inspect a different dependency that closes a concrete gap, or verify.',
+            lock: actionPhase || undefined,
+            guidance: actionPhase
+                ? '[System Action] You have enough evidence to stop open-ended exploration and have revisited this target repeatedly. ' +
+                    'Make the smallest evidence-backed code change in your next response unless you can name one concrete missing fact required for correctness; if so, inspect only that fact and then act.'
+                : '[System Guidance] You have inspected this target repeatedly. Do not repeat the same read/search unless new evidence justifies it. ' +
+                    'Either act, inspect a different dependency that closes a concrete gap, or verify.',
         };
     }
 
-    if (streak === 6 || streak === 10 || streak === 14) {
+    if (actionPhase) {
         return {
-            guidance: '[System Guidance] You have made ' + streak +
-                ' read-only exploration calls without changing code. Prefer a small evidence-backed edit when ready, ' +
-                'but keep exploring if a specific unresolved dependency, caller, invariant, or test still blocks a safe fix.',
+            lock: true,
+            guidance: '[System Action] You have enough evidence to stop open-ended exploration. ' +
+                'Make the smallest evidence-backed code change in your next response unless one concrete missing fact is required for correctness. ' +
+                'Discovery remains available only to close that specific fact; after inspecting it, act.',
+        };
+    }
+
+    if (streak === 6) {
+        return {
+            guidance: '[System Guidance] You have made 6 read-only exploration calls without changing code. ' +
+                'Prefer a small evidence-backed edit when ready, but keep exploring if a specific unresolved dependency, caller, invariant, or test still blocks a safe fix.',
         };
     }
 
