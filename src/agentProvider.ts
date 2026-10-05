@@ -1326,7 +1326,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
-                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && i < MAX_ITERATIONS - 1) {
+                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations)) {
                     const keepGoing = await new Promise<boolean>((resolve) => {
                         this._checkpointResolver = resolve;
                         signal.addEventListener('abort', () => resolve(false), { once: true });
@@ -1337,8 +1337,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 // Warn the user when the iteration cap is about to be hit on the last loop
-                if (i === MAX_ITERATIONS - 1) {
-                    this._post({ type: 'iterationLimit', id: msgId, limit: MAX_ITERATIONS });
+                if (!shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations)) {
+                    this._post({ type: 'iterationLimit', id: msgId, limit: maxIterations });
                 }
             }
         } catch (err: unknown) {
