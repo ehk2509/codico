@@ -19,15 +19,59 @@ export function isMutationTool(tool: ToolCall): boolean {
     return tool.type === 'write_file' || tool.type === 'edit_file';
 }
 
+export function explorationTarget(tool: ToolCall): string | null {
+    switch (tool.type) {
+        case 'read_file': return `read_file:${tool.filepath}`;
+        case 'list_directory': return `list_directory:${tool.dirpath}`;
+        case 'get_diagnostics': return `get_diagnostics:${tool.filepath ?? 'workspace'}`;
+        case 'lsp_symbol': return `lsp_symbol:${tool.query}`;
+        case 'fetch_url': return `fetch_url:${tool.url}`;
+        case 'browser_get_text': return `browser_get_text:${tool.selector ?? 'page'}`;
+        case 'search_files': return `search_files:${tool.pattern}:${tool.glob ?? ''}`;
+        case 'find_files': return `find_files:${tool.pattern}:${tool.dirpath ?? ''}`;
+        default: return null;
+    }
+}
+
+export interface ExplorationDecision {
+    guidance?: string;
+    block?: string;
+}
+
 /**
- * Prevents an agent from spending a whole turn broadening its search after it
- * already has enough evidence to try a minimal fix. This is guidance, not a hard
- * stop: a genuinely blocked task may keep exploring.
+ * Exploration is useful until it stops producing decisions. After repeated
+ * read/search calls with no mutation, move the agent from diagnosis to action.
+ * The hard cap applies only to exploration tools; edit/write and terminal
+ * verification remain available, so a focused fix can still proceed safely.
  */
+export function explorationDecision(
+    streak: number,
+    targetVisits: number,
+): ExplorationDecision {
+    if (targetVisits >= 3) {
+        return {
+            block: '[System] Exploration blocked: you have already inspected this target repeatedly without changing code. ' +
+                'Use the evidence you have. Make the smallest plausible edit now, or run a verification command if that is the specific missing evidence.',
+        };
+    }
+    if (streak >= 12) {
+        return {
+            block: '[System] Exploration budget exhausted for this turn after ' + streak +
+                ' read/search calls without a code change. Stop gathering more context. Make the smallest plausible edit now and verify it, ' +
+                'or state the single concrete blocker instead of issuing another exploration tool.',
+        };
+    }
+    if (streak === 6 || streak === 9) {
+        return {
+            guidance: '[System Guidance] You have made ' + streak +
+                ' read-only exploration calls without changing code. Stop broadening the search. ' +
+                'If the current evidence supports a fix, make the smallest edit now and then verify it.',
+        };
+    }
+    return {};
+}
+
+// Backward-compatible helper used by existing callers/tests.
 export function explorationGuidance(streak: number): string | null {
-    if (streak < 6 || (streak > 6 && streak % 3 !== 0)) { return null; }
-    return '[System Guidance] You have made ' + streak +
-        ' read-only exploration calls without changing code. Stop broadening the search. ' +
-        'If the current evidence supports a fix, make the smallest edit now and then verify it. ' +
-        'Only continue exploring if one specific unanswered question blocks the edit.';
+    return explorationDecision(streak, 0).guidance ?? null;
 }
