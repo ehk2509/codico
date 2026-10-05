@@ -113,8 +113,12 @@ function anthropicContentBlocks(content: string | MessageContentPart[]): Anthrop
     return blocks;
 }
 
-export function toAnthropicMessages(history: ChatMessage[]): Array<{ role: 'user' | 'assistant'; content: AnthropicBlock[] }> {
+export function toAnthropicMessages(
+    history: ChatMessage[],
+    useNativeTools = true
+): Array<{ role: 'user' | 'assistant'; content: AnthropicBlock[] }> {
     const messages: Array<{ role: 'user' | 'assistant'; content: AnthropicBlock[] }> = [];
+    const source: ChatMessage[] = useNativeTools ? history : flattenChatHistory(history);
 
     const append = (role: 'user' | 'assistant', content: AnthropicBlock[]): void => {
         if (content.length === 0) { return; }
@@ -126,7 +130,7 @@ export function toAnthropicMessages(history: ChatMessage[]): Array<{ role: 'user
         }
     };
 
-    for (const message of history) {
+    for (const message of source) {
         if (message.role === 'system') { continue; }
 
         if (message.role === 'tool') {
@@ -180,8 +184,12 @@ function geminiContentParts(content: string | MessageContentPart[]): GeminiPart[
     return parts;
 }
 
-export function toGeminiMessages(history: ChatMessage[]): Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> {
+export function toGeminiMessages(
+    history: ChatMessage[],
+    useNativeTools = true
+): Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> {
     const messages: Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> = [];
+    const source: ChatMessage[] = useNativeTools ? history : flattenChatHistory(history);
 
     const append = (role: 'user' | 'model', parts: GeminiPart[]): void => {
         if (parts.length === 0) { return; }
@@ -193,7 +201,7 @@ export function toGeminiMessages(history: ChatMessage[]): Array<{ role: 'user' |
         }
     };
 
-    for (const message of history) {
+    for (const message of source) {
         if (message.role === 'system') { continue; }
 
         if (message.role === 'tool') {
