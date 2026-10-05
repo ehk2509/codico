@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as https from 'https';
 import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
@@ -2368,6 +2369,52 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
             return `[fetch_url: ${tool.url}] ERROR: ${message}`;
+        }
+    }
+
+    private async _handleGetDiagnostics(tool: GetDiagnosticsTool, msgId: string): Promise<string> {
+        try {
+            let pairs: [vscode.Uri, readonly vscode.Diagnostic[]][];
+
+            if (tool.filepath) {
+                const folders = vscode.workspace.workspaceFolders;
+                if (!folders || folders.length === 0) {
+                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: 'workspace', success: false, error: 'No workspace folder open' });
+                    return '[get_diagnostics] ERROR: No workspace folder open';
+                }
+                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
+                if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
+                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
+                    return `[get_diagnostics: ${tool.filepath}] ERROR: Unsafe path rejected`;
+                }
+                const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
+                pairs = [[fileUri, vscode.languages.getDiagnostics(fileUri)]];
+            } else {
+                pairs = vscode.languages.getDiagnostics();
+            }
+
+            const lines: string[] = [];
+            let count = 0;
+            for (const [uri, diags] of pairs) {
+                const relPath = vscode.workspace.asRelativePath(uri);
+                for (const d of diags) {
+                    if (count >= 50) { lines.push('… (truncated at 50)'); break; }
+                    const sev = ['🔴 ERROR', '⚠️ WARN', 'ℹ️ INFO', '💡 HINT'][d.severity] ?? 'DIAG';
+                    lines.push(`${relPath}:${d.range.start.line + 1}:${d.range.start.character + 1}: ${sev}: ${d.message}`);
+                    count++;
+                }
+                if (count >= 50) { break; }
+            }
+
+            const label = tool.filepath ?? 'workspace';
+            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label, success: true });
+            return lines.length === 0
+                ? `[get_diagnostics: ${label}] No diagnostics — workspace is clean!`
+                : `[get_diagnostics: ${label}]\n${lines.join('\n')}`;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath ?? 'workspace', success: false, error: message });
+            return `[get_diagnostics] ERROR: ${message}`;
         }
     }
 
