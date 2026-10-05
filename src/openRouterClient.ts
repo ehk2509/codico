@@ -1,3 +1,4 @@
+import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
@@ -18,6 +19,13 @@ export type ChatMessage = {
     role: 'system' | 'user' | 'assistant';
     content: string | MessageContentPart[];
 };
+
+export interface OpenRouterEndpoint {
+    protocol?: 'http:' | 'https:';
+    hostname: string;
+    port?: number;
+    path?: string;
+}
 
 export const CHAT_SYSTEM_PROMPT = `You are Codico, a helpful coding assistant inside Visual Studio Code.
 
@@ -176,7 +184,8 @@ export function streamOpenRouter(
     signal?: AbortSignal,
     thinkingEffort: 'high' | 'medium' | 'low' = 'high',
     overrideSystemPrompt?: string,
-    nativeTools: NativeToolDefinition[] = []
+    nativeTools: NativeToolDefinition[] = [],
+    endpoint: OpenRouterEndpoint = { protocol: 'https:', hostname: 'openrouter.ai', path: '/api/v1/chat/completions' }
 ): AsyncIterable<StreamChunk> {
     const basePrompt = overrideSystemPrompt ?? SYSTEM_PROMPT;
     const toolPrompt = nativeTools.length > 0 ? `${basePrompt}\n\n${NATIVE_TOOL_PROMPT}` : basePrompt;
@@ -276,10 +285,12 @@ export function streamOpenRouter(
             function doRequest(): void {
                 if (signal?.aborted) { push(null); return; }
                 attempt++;
-                const req = https.request(
+                const transport = endpoint.protocol === 'http:' ? http : https;
+                const req = transport.request(
                 {
-                    hostname: 'openrouter.ai',
-                    path: '/api/v1/chat/completions',
+                    hostname: endpoint.hostname,
+                    port: endpoint.port,
+                    path: endpoint.path ?? '/api/v1/chat/completions',
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -289,7 +300,7 @@ export function streamOpenRouter(
                         'Content-Length': Buffer.byteLength(body),
                     },
                     signal: signal as AbortSignal,
-                } as https.RequestOptions,
+                } as http.RequestOptions,
                 (res) => {
                     // Retry on 429 with exponential backoff
                     if (res.statusCode === 429 && attempt <= MAX_RETRIES) {
