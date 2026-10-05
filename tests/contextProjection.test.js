@@ -3,31 +3,36 @@ const assert = require('node:assert/strict');
 
 const { projectHistoryForModel } = require('../out/contextProjection.js');
 
-test('old large tool results are compacted without mutating canonical history', () => {
-  const large = '[read_file: src/a.ts]\n' + 'x'.repeat(8000);
+test('older large tool results are compacted while the newest evidence stays verbatim', () => {
+  const oldLarge = '[read_file: src/a.ts]\n' + 'x'.repeat(8000);
+  const newestLarge = '[read_file: src/b.ts]\n' + 'y'.repeat(8000);
   const history = [
     { role: 'user', content: 'fix it' },
     { role: 'assistant', content: '', nativeToolCalls: [{ id: 'call_1', name: 'read_file', arguments: { filepath: 'src/a.ts' } }] },
-    { role: 'tool', content: large, toolCallId: 'call_1', toolName: 'read_file' },
+    { role: 'tool', content: oldLarge, toolCallId: 'call_1', toolName: 'read_file' },
     { role: 'assistant', content: 'thinking' },
     { role: 'user', content: 'continue' },
-    { role: 'assistant', content: 'more' },
-    { role: 'user', content: 'continue' },
-    { role: 'assistant', content: 'more' },
-    { role: 'user', content: 'continue' },
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'call_2', name: 'read_file', arguments: { filepath: 'src/b.ts' } }] },
+    { role: 'tool', content: newestLarge, toolCallId: 'call_2', toolName: 'read_file' },
     { role: 'assistant', content: 'latest' },
   ];
 
-  const result = projectHistoryForModel(history, { recentMessages: 6, largeResultChars: 6000 });
+  const result = projectHistoryForModel(history, {
+    recentMessages: 4,
+    largeResultChars: 6000,
+    maxLargeResultChars: 12000,
+    preserveNewestLargeResults: 1,
+  });
+
   assert.equal(result.omittedMessages, 1);
   assert.ok(result.omittedChars >= 8000);
-  assert.equal(history[2].content, large, 'canonical history must remain lossless');
+  assert.equal(history[2].content, oldLarge, 'canonical history must remain lossless');
+  assert.equal(history[6].content, newestLarge, 'newest canonical result must remain lossless');
   assert.equal(result.history[2].role, 'tool');
   assert.equal(result.history[2].toolCallId, 'call_1');
   assert.match(result.history[2].content, /prior read_file result compacted/i);
-  assert.equal(result.history.at(-1), history.at(-1), 'recent working set should stay verbatim');
+  assert.equal(result.history[6].content, newestLarge, 'newest large evidence stays verbatim');
 });
-
 test('recent or small tool results are preserved verbatim', () => {
   const history = [
     { role: 'tool', content: 'small result', toolCallId: 'a', toolName: 'search_files' },
