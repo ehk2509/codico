@@ -21,29 +21,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-
-/**
- * Returns true if the URL's hostname resolves to a private, loopback, or
- * cloud-metadata address that should never be reachable via fetch_url.
- */
-function _isBlockedHost(parsed: URL): boolean {
-    const host = parsed.hostname.toLowerCase().replace(/^\[|]$/g, ''); // strip IPv6 brackets
-    // Loopback
-    if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host.endsWith('.localhost')) { return true; }
-    // Link-local / cloud metadata
-    if (host.startsWith('169.254.')) { return true; }
-    if (host === 'metadata.google.internal' || host === 'metadata.google' || host === 'metadata.aws.internal') { return true; }
-    // RFC-1918 private ranges
-    if (host.startsWith('10.')) { return true; }
-    if (host.startsWith('192.168.')) { return true; }
-    if (host.startsWith('172.')) {
-        const second = parseInt(host.split('.')[1] ?? '0', 10);
-        if (second >= 16 && second <= 31) { return true; }
-    }
-    // IPv6 ULA / link-local
-    if (host.startsWith('fc') || host.startsWith('fd') || host.startsWith('fe80')) { return true; }
-    return false;
-}
+import { resolvePublicHttpUrl } from './networkSecurity';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
@@ -2442,17 +2420,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return `[fetch_url: ${tool.url}] Denied by user`;
         }
         try {
-            // Validate URL scheme — only http/https allowed
-            let parsed: URL;
-            try { parsed = new URL(tool.url); } catch {
-                return `[fetch_url: ${tool.url}] ERROR: Invalid URL`;
+            // Resolve + validate DNS before connecting, then pin the request to the
+            // validated public address set to prevent DNS rebinding.
+            let resolvedUrl: Awaited<ReturnType<typeof resolvePublicHttpUrl>>;
+            try {
+                resolvedUrl = await resolvePublicHttpUrl(tool.url);
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return `[fetch_url: ${tool.url}] ERROR: ${message}`;
             }
-            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-                return `[fetch_url: ${tool.url}] ERROR: Only http/https URLs are allowed`;
-            }
-            if (_isBlockedHost(parsed)) {
-                return `[fetch_url: ${tool.url}] ERROR: Requests to private/loopback/metadata addresses are blocked`;
-            }
+            const parsed = resolvedUrl.url;
 
             const rawHtml = await new Promise<string>((resolve, reject) => {
                 // Guard against double-settle: req.destroy() can emit 'error' after
@@ -2463,12 +2440,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     reject:  (e: unknown) => { if (!settled) { settled = true; reject(e);  } },
                 };
                 const mod = parsed.protocol === 'https:' ? https : http;
-                const req = mod.get(tool.url, {
+                const req = mod.get(parsed, {
                     headers: {
                         'User-Agent': 'Mozilla/5.0 (compatible; Codico/1.0)',
                         'Accept': 'text/html,application/xhtml+xml,*/*',
                     },
                     timeout: 15_000,
+                    lookup: resolvedUrl.lookup,
                 }, (res: http.IncomingMessage) => {
                     // Follow redirects (up to 5)
                     if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308)
@@ -2478,22 +2456,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             once.reject(new Error('Too many redirects'));
                             return;
                         }
-                        // Validate redirect URL scheme before following
                         let redirectUrl: URL;
-                        // Resolve against the original URL so relative redirects (e.g. /new-path)
-                        // are handled correctly — new URL('/path') alone would throw.
-                        try { redirectUrl = new URL(res.headers.location, tool.url); } catch {
+                        // Resolve against the current URL so relative redirects are handled.
+                        try { redirectUrl = new URL(res.headers.location, parsed); } catch {
                             once.reject(new Error(`Invalid redirect URL: ${res.headers.location}`));
                             return;
                         }
-                        if (redirectUrl.protocol !== 'https:' && redirectUrl.protocol !== 'http:') {
-                            once.reject(new Error(`Redirect to non-http/https scheme rejected: ${redirectUrl.protocol}`));
-                            return;
-                        }
-                        if (_isBlockedHost(redirectUrl)) {
-                            once.reject(new Error(`Redirect to private/loopback/metadata address blocked: ${redirectUrl.hostname}`));
-                            return;
-                        }
+                        // The recursive request performs fresh DNS validation and pins its
+                        // own connection, so every redirect hop is protected too.
                         this._handleFetchUrl({ ...tool, url: redirectUrl.href }, msgId, _redirectDepth + 1)
                             .then(once.resolve).catch(once.reject);
                         return;
