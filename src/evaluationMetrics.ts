@@ -7,4 +7,5 @@ export interface EvaluationRunMetrics {
     completionTokens: number;
     totalTokens: number;
     historyMessages: number;
+    budgetExceeded: boolean;
 }
