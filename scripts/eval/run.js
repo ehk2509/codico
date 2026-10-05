@@ -147,6 +147,15 @@ async function main() {
         record.changedFiles = status.stdout.split(/\r?\n/).filter(Boolean).map(line => line.slice(3));
         const diffStat = run('git', ['diff', '--stat'], { cwd: workspace });
         record.diffStat = diffStat.stdout.trim();
+        const patch = run('git', ['diff', '--no-ext-diff'], { cwd: workspace });
+        const patchLimit = 200_000;
+        const patchText = patch.stdout.length > patchLimit
+          ? patch.stdout.slice(0, patchLimit) + '\n... (patch truncated by benchmark)\n'
+          : patch.stdout;
+        const patchName = `${safeName(runId)}.patch`;
+        fs.writeFileSync(path.join(resultDir, patchName), patchText);
+        record.patchFile = patchName;
+        record.patchTruncated = patch.stdout.length > patchLimit;
 
         const verifierName = `__codico_eval_${safeName(task.id)}.test.js`;
         const verifierDest = path.join(workspace, 'tests', verifierName);
@@ -222,7 +231,7 @@ async function main() {
 
   fs.writeFileSync(path.join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2));
   const rows = results.map(r =>
-    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.success ? 'PASS' : 'FAIL'} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.changedFiles.length} |`
+    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.success ? 'PASS' : 'FAIL'} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
   );
   const markdown = [
     `# Codico coding holdout — ${suite.suiteVersion}`,
@@ -231,8 +240,8 @@ async function main() {
     `Success: **${passed.length}/${results.length} (${(summary.successRate * 100).toFixed(1)}%)**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,
     '',
-    '| Task | Category | Result | Steps | Tool calls | Tokens | Files changed |',
-    '|---|---|---:|---:|---:|---:|---:|',
+    '| Task | Category | Result | Steps | Tool calls | Tokens | Context chars omitted | Files changed |',
+    '|---|---|---:|---:|---:|---:|---:|---:|',
     ...rows,
     '',
   ].join('\n');

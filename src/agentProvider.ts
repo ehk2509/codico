@@ -24,7 +24,9 @@ import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
-import { EvaluationRunMetrics } from './evaluationMetrics';
+import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
+import { projectHistoryForModel } from './contextProjection';
+import { evaluationToolTarget } from './evaluationTrace';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -90,6 +92,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _evalCompletionTokens = 0;
     private _evaluationTokenBudget = 0;
     private _evalBudgetExceeded = false;
+    private _evalProjectedCharsOmitted = 0;
+    private _evalTrace: EvaluationToolTraceEvent[] = [];
 
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
@@ -638,6 +642,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             totalTokens: this._evalPromptTokens + this._evalCompletionTokens,
             historyMessages: this._history.length,
             budgetExceeded: this._evalBudgetExceeded,
+            projectedCharsOmitted: this._evalProjectedCharsOmitted,
+            trace: [...this._evalTrace],
         };
     }
 
@@ -695,6 +701,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._evalPromptTokens = 0;
         this._evalCompletionTokens = 0;
         this._evalBudgetExceeded = false;
+        this._evalProjectedCharsOmitted = 0;
+        this._evalTrace = [];
         // Dismiss any pending proactive offer now that the user is sending a message
         this._post({ type: 'proactiveOffer', filename: '', errorCount: 0, warningCount: 0 });
         try {
@@ -941,6 +949,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
 
                     this._evalToolCalls++;
+                    if (this._evaluationMode) {
+                        this._evalTrace.push({
+                            step: this._evalSteps,
+                            tool: tool.type,
+                            target: evaluationToolTarget(tool),
+                        });
+                    }
                     await this._dispatchTool(tool, msgId, signal);
                     const result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
@@ -1019,11 +1034,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 };
 
                 const chatModeOverride = this._chatMode ? CHAT_SYSTEM_PROMPT : undefined;
+                const projectedHistory = projectHistoryForModel(this._history);
+                if (this._evaluationMode) {
+                    this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
+                }
                 for await (const chunk of isOllama
-                    ? streamOllama(ollamaBaseUrl, this._history, ollamaModel, effectivePrefix, signal, chatModeOverride)
+                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, chatModeOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, this._history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)
-                        : streamOpenRouter(apiKey, this._history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)) {
+                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
