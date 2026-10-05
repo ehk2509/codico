@@ -885,6 +885,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         let recoveryStatusShown = false;
         const MAX_ACTION_NUDGES = 2;
         let actionNudges = 0;
+        const MAX_VERIFICATION_NUDGES = 2;
+        let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
             : [];
@@ -1008,6 +1010,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
                     const followThrough = exploration.after(tool, result);
+                    if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
                     if (followThrough) { result += `\n\n${followThrough}`; }
 
                     inlineToolResults.push(result);
@@ -1286,6 +1289,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 streamRecoveryAttempts = 0;
 
                 if (inlineToolResults.length === 0) {
+                    const verificationGuidance = exploration.completionGuidance();
+                    if (verificationGuidance && verificationNudges < MAX_VERIFICATION_NUDGES) {
+                        verificationNudges++;
+                        this._history.push({ role: 'user', content: verificationGuidance });
+                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
+
                     // Some models announce an action ("I'll locate the file.") and end the
                     // turn without emitting the tool fence. Ask them to issue it rather than
                     // treating the announcement as the final answer. Bounded per request.
