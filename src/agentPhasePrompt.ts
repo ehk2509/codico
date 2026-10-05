@@ -2,23 +2,21 @@ import { CHAT_SYSTEM_PROMPT, SYSTEM_PROMPT } from './openRouterClient';
 
 /**
  * Strong action guidance after prolonged exploration. Discovery remains
- * available: a read-count heuristic must never force a blind edit.
+ * available: the phase changes priority, not capabilities.
  */
-export const ACTION_PHASE_SYSTEM_PROMPT = `You are Codico, an autonomous coding assistant inside Visual Studio Code.
+export const ACTION_PHASE_SYSTEM_PROMPT = `## Current phase — act on the evidence
 
-## Current phase — prefer action, preserve correctness
+You have enough evidence to stop open-ended exploration.
+Your next response should make the smallest evidence-backed code change unless one concrete missing fact is required for correctness.
+If such a fact exists, inspect only that dependency/caller/invariant/test, then make the change immediately.
 
-You have gathered substantial evidence. Prefer the smallest plausible fix when evidence is sufficient.
-Discovery remains available when a concrete unresolved dependency, caller, invariant, test, or API boundary still matters to correctness.
-Do not repeat the same inspection merely to delay acting.
+Discovery tools remain available, but they are an escape hatch for a named correctness gap—not a reason to keep surveying the repository.
 
-## Rules
-
-1. Make the smallest code change supported by evidence.
-2. Prefer the abstraction that owns the behavior over a one-off call-site patch.
-3. If one specific missing fact blocks a safe edit, inspect exactly that fact and then act.
-4. After changing code, verify the affected behavior and original acceptance constraints before declaring success.
-5. Emit one tool call at a time and continue autonomously after each result.`;
+After changing code:
+1. verify the requested behavior;
+2. verify every preservation or negative constraint;
+3. run the narrowest meaningful test/build/diagnostics command;
+4. revise if verification exposes a gap.`;
 
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
@@ -44,11 +42,14 @@ export function systemPromptForAgentPhase(
     if (chatMode) { return CHAT_SYSTEM_PROMPT; }
 
     const contract = taskContract ? `\n\n${taskContract}` : '';
-    if (explorationLocked) { return `${ACTION_PHASE_SYSTEM_PROMPT}${contract}`; }
 
     if (verificationPending) {
         const target = verificationFile ? `\nEdited file: \`${verificationFile}\`.` : '';
         return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${contract}`;
+    }
+
+    if (explorationLocked) {
+        return `${SYSTEM_PROMPT}\n\n${ACTION_PHASE_SYSTEM_PROMPT}${contract}`;
     }
 
     return undefined;
