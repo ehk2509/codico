@@ -6,6 +6,10 @@ const { evaluationToolTarget } = require('../out/evaluationTrace.js');
 test('evaluation tool labels preserve routing context without edit bodies', () => {
   assert.equal(evaluationToolTarget({ type: 'read_file', filepath: 'src/a.ts' }), 'src/a.ts');
   assert.equal(
+    evaluationToolTarget({ type: 'read_file', filepath: 'src/a.ts', startLine: 101, endLine: 180 }),
+    'src/a.ts:101-180',
+  );
+  assert.equal(
     evaluationToolTarget({ type: 'edit_file', filepath: 'src/a.ts', oldStr: 'SECRET OLD BODY', newStr: 'SECRET NEW BODY' }),
     'src/a.ts',
   );
