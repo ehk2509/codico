@@ -1,6 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
-  <!-- Shield / agent shape -->
-  <path d="M64 8l48 20v28c0 32-20 52-48 64-28-12-48-32-48-64V28L64 8z" fill="#7c3aed" opacity="0.9"/>
-  <!-- Lightning / AI symbol -->
-  <polygon points="80,36 52,64 64,64 48,92 56,64 44,64 72,36" fill="white"/>
+  <!-- Codico activity icon: C-shaped agent + terminal prompt. Uses currentColor so VS Code themes it. -->
+  <path d="M96 34C85 23 74 18 61 18C36 18 18 37 18 64C18 91 36 110 61 110C75 110 86 105 97 94"
+        stroke="currentColor" stroke-width="18" stroke-linecap="round"/>
+  <path d="M54 45C54 39 59 34 65 34H84C93 34 100 41 100 50V78C100 87 93 94 84 94H65C59 94 54 89 54 83Z"
+        fill="currentColor" opacity=".18"/>
+  <rect x="63" y="55" width="6" height="18" rx="3" fill="currentColor"/>
+  <path d="M77 55L85 64L77 73M88 74H95" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
