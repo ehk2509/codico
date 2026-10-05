@@ -5,6 +5,8 @@ const {
   isExplorationTool,
   isMutationTool,
   explorationGuidance,
+  explorationDecision,
+  explorationTarget,
 } = require('../out/agentEfficiency.js');
 
 test('focused exploration guard distinguishes reads from mutations', () => {
@@ -20,4 +22,15 @@ test('exploration guidance is bounded and repeats only periodically', () => {
   assert.equal(explorationGuidance(7), null);
   assert.equal(explorationGuidance(8), null);
   assert.match(explorationGuidance(9), /read-only exploration calls/i);
+});
+
+
+test('focused exploration guard blocks redundant revisits and runaway search streaks', () => {
+  assert.equal(explorationTarget({ type: 'read_file', filepath: 'src/a.ts', startLine: 1, endLine: 100 }), 'read_file:src/a.ts');
+  assert.equal(explorationTarget({ type: 'read_file', filepath: 'src/a.ts', startLine: 200, endLine: 300 }), 'read_file:src/a.ts');
+
+  assert.equal(explorationDecision(5, 1).block, undefined);
+  assert.match(explorationDecision(6, 1).guidance, /smallest edit now/i);
+  assert.match(explorationDecision(8, 3).block, /already inspected this target repeatedly/i);
+  assert.match(explorationDecision(12, 1).block, /exploration budget exhausted/i);
 });
