@@ -250,6 +250,32 @@ export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition
     return ALL_TOOLS.filter(tool => !readOnly || READ_ONLY.has(tool.name));
 }
 
+const ACTION_AFTER_EXPLORATION = new Set<ToolCall['type']>([
+    'write_file',
+    'edit_file',
+    'run_terminal',
+    'get_diagnostics',
+    'update_todo',
+]);
+
+/**
+ * Once an autonomous coding turn has enough source evidence, stop advertising
+ * more discovery capabilities to native-tool models. Mutation and verification
+ * remain available; a successful edit resets the lock in AgentProvider.
+ */
+export function restrictNativeToolsForAction(
+    tools: NativeToolDefinition[]
+): NativeToolDefinition[] {
+    return tools
+        .filter(tool => ACTION_AFTER_EXPLORATION.has(tool.name))
+        .map(tool => tool.name === 'run_terminal'
+            ? {
+                ...tool,
+                description: 'Run tests, builds, or other verification commands. Source-inspection shell commands are blocked until you make an edit.',
+            }
+            : tool);
+}
+
 function positiveIntArg(args: Record<string, unknown>, key: string): number | undefined {
     const value = args[key];
     return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;

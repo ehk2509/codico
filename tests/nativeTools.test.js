@@ -66,3 +66,18 @@ test('malformed native arguments remain pending instead of executing', () => {
   assert.deepEqual(acc.flushReady(), []);
   assert.deepEqual(acc.pendingNames(), ['run_terminal']);
 });
+
+
+test('action-only native schema withdraws exploration tools after evidence budget', () => {
+  const { getNativeToolDefinitions, restrictNativeToolsForAction } = require('../out/nativeTools.js');
+  const action = restrictNativeToolsForAction(getNativeToolDefinitions(false));
+  const names = new Set(action.map(tool => tool.name));
+  assert.equal(names.has('edit_file'), true);
+  assert.equal(names.has('write_file'), true);
+  assert.equal(names.has('run_terminal'), true);
+  assert.equal(names.has('get_diagnostics'), true);
+  assert.equal(names.has('read_file'), false);
+  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('list_directory'), false);
+  assert.match(action.find(tool => tool.name === 'run_terminal').description, /verification/i);
+});

@@ -36,6 +36,7 @@ export function explorationTarget(tool: ToolCall): string | null {
 export interface ExplorationDecision {
     guidance?: string;
     block?: string;
+    lock?: boolean;
 }
 
 /**
@@ -56,9 +57,10 @@ export function explorationDecision(
     }
     if (streak >= 12) {
         return {
+            lock: true,
             block: '[System] Exploration budget exhausted for this turn after ' + streak +
-                ' read/search calls without a code change. Stop gathering more context. Make the smallest plausible edit now and verify it, ' +
-                'or state the single concrete blocker instead of issuing another exploration tool.',
+                ' read/search calls without a code change. Discovery tools are now disabled until you change code. ' +
+                'Make the smallest plausible edit now, then verify it. If you truly cannot edit, state the single concrete blocker.',
         };
     }
     if (streak === 6 || streak === 9) {
@@ -74,4 +76,15 @@ export function explorationDecision(
 // Backward-compatible helper used by existing callers/tests.
 export function explorationGuidance(streak: number): string | null {
     return explorationDecision(streak, 0).guidance ?? null;
+}
+
+
+const EXPLORATORY_TERMINAL_RE = /^\s*(?:(?:git\s+(?:grep|show|log|status|diff))|(?:rg|grep|find|fd|ls|cat|head|tail|less|more|sed|awk|wc)\b)/i;
+
+/**
+ * Prevent run_terminal from becoming a backdoor source reader after native
+ * discovery tools have been withdrawn. Test/build/lint commands remain allowed.
+ */
+export function isExploratoryTerminalCommand(command: string): boolean {
+    return EXPLORATORY_TERMINAL_RE.test(command);
 }

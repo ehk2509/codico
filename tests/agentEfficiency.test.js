@@ -7,6 +7,7 @@ const {
   explorationGuidance,
   explorationDecision,
   explorationTarget,
+  isExploratoryTerminalCommand,
 } = require('../out/agentEfficiency.js');
 
 test('focused exploration guard distinguishes reads from mutations', () => {
@@ -33,4 +34,16 @@ test('focused exploration guard blocks redundant revisits and runaway search str
   assert.match(explorationDecision(6, 1).guidance, /smallest edit now/i);
   assert.match(explorationDecision(8, 3).block, /already inspected this target repeatedly/i);
   assert.match(explorationDecision(12, 1).block, /exploration budget exhausted/i);
+});
+
+
+test('global exploration exhaustion locks discovery and blocks terminal read backdoors', () => {
+  const decision = explorationDecision(12, 1);
+  assert.equal(decision.lock, true);
+  assert.match(decision.block, /discovery tools are now disabled/i);
+  assert.equal(isExploratoryTerminalCommand("grep -rn 'StreamChunk' src/"), true);
+  assert.equal(isExploratoryTerminalCommand('git grep StreamChunk -- src'), true);
+  assert.equal(isExploratoryTerminalCommand('cat src/openRouterClient.ts'), true);
+  assert.equal(isExploratoryTerminalCommand('npm test'), false);
+  assert.equal(isExploratoryTerminalCommand('npm run compile'), false);
 });

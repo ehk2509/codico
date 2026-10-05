@@ -17,7 +17,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall, restrictNativeToolsForAction } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -27,7 +27,7 @@ import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DI
 import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
-import { explorationDecision, explorationTarget, isExplorationTool, isMutationTool } from './agentEfficiency';
+import { explorationDecision, explorationTarget, isExplorationTool, isMutationTool, isExploratoryTerminalCommand } from './agentEfficiency';
 import { sliceFileByLines } from './fileReadWindow';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -895,6 +895,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
         let explorationCallsSinceEdit = 0;
+        let explorationLocked = false;
         const explorationTargetVisits = new Map<string, number>();
 
         try {
@@ -952,7 +953,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
-                    if (isExplorationTool(tool)) {
+                    if (isExplorationTool(tool) && !this._chatMode) {
                         const target = explorationTarget(tool);
                         const targetVisits = target
                             ? (explorationTargetVisits.get(target) ?? 0) + 1
@@ -961,6 +962,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         const decision = explorationDecision(nextStreak, targetVisits);
 
                         if (decision.block) {
+                            if (decision.lock) { explorationLocked = true; }
                             if (this._evaluationMode) {
                                 this._evalTrace.push({
                                     step: this._evalSteps,
@@ -991,6 +993,24 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: true, result };
                     }
 
+                    if (
+                        explorationLocked &&
+                        tool.type === 'run_terminal' &&
+                        isExploratoryTerminalCommand(tool.command)
+                    ) {
+                        const result = '[System] Source-inspection terminal commands are disabled because the exploration budget is exhausted. ' +
+                            'Use edit_file/write_file now. Terminal remains available for tests, builds, linting, and verification.';
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: 'exploration_block',
+                                target: evaluationToolTarget(tool),
+                            });
+                        }
+                        inlineToolResults.push(result);
+                        return { keepGoing: true, result };
+                    }
+
                     this._evalToolCalls++;
                     if (this._evaluationMode) {
                         this._evalTrace.push({
@@ -1005,6 +1025,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                     if (isMutationTool(tool)) {
                         explorationCallsSinceEdit = 0;
+                        explorationLocked = false;
                         explorationTargetVisits.clear();
                     }
 
@@ -1087,11 +1108,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
+                const iterationNativeTools = explorationLocked
+                    ? restrictNativeToolsForAction(nativeTools)
+                    : nativeTools;
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, chatModeOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)) {
+                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, iterationNativeTools)
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, iterationNativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
