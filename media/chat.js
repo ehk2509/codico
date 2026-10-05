@@ -2148,7 +2148,9 @@
     scrollBottom();
   }
 
-  // Stream finish/error notices live in media/streamNotices.js.\n\n  function showError(message) {
+  // Stream finish/error notices live in media/streamNotices.js.
+
+  function showError(message) {
     setStreaming(false);
     var isCtxOverflow = /context.length|maximum context|context window|token.limit|too.long|exceed/i.test(message);
     var el = document.createElement('div');

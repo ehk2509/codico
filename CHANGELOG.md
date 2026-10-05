@@ -2,6 +2,15 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.1.1 - 2026-10-05
+
+### Fixed
+- Chat panel was unresponsive in 0.1.0: a syntax error in the webview script left every button, input and message handler unwired.
+
+### Added
+- Regression test that parses every webview script (`chat.html` inline scripts and `media/*.js`), so a webview syntax error fails CI.
+- Marketplace `AI` / `Chat` categories and search keywords.
+
 ## 0.1.0 - 2026-10-05
 
 ### Added
