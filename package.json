@@ -390,7 +390,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test",
-    "check": "npm test"
+    "check": "npm test",
+    "eval:coding": "node scripts/eval/run.js"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
