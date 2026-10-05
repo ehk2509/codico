@@ -31,6 +31,10 @@ jobs:
 
       - run: npm ci
       - run: npm test
+      - name: Install VS Code test harness
+        run: npm install --no-save @vscode/test-electron@2.5.2
+      - name: Run Extension Host smoke test
+        run: xvfb-run -a node tests/vscode/runTest.js
 
       - name: Validate tag matches package version
         if: github.event_name == 'push'
@@ -39,6 +43,8 @@ jobs:
 
       - name: Package VSIX
         run: npx --yes @vscode/vsce package --out codico.vsix
+      - name: Smoke-install packaged VSIX
+        run: node tests/vscode/installVsix.js codico.vsix
 
       - uses: actions/upload-artifact@v4
         with:
