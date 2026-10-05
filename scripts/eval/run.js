@@ -59,6 +59,12 @@ async function main() {
   if (limit > 0) { tasks = tasks.slice(0, limit); }
   if (!tasks.length) { throw new Error(`No tasks match --filter ${filterRaw}`); }
 
+  // Build the current Codico extension before VS Code loads it from
+  // extensionDevelopmentPath. Historical task worktrees are compiled separately
+  // by their verifier via npm test after the agent finishes.
+  const compile = run(npmCommand(), ['run', 'compile'], { inherit: true, timeout: 5 * 60_000 });
+  if (compile.status !== 0) { throw new Error('Failed to compile the Codico evaluation extension.'); }
+
   // The benchmark driver uses the same VS Code test harness as CI, but it is
   // intentionally not a permanent production dependency.
   const harness = run(npmCommand(), ['install', '--no-save', '@vscode/test-electron@2.5.2'], { inherit: true });
