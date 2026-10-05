@@ -20,14 +20,20 @@ import { ExtensionMessage } from './chatProtocol';
 export class ExternalToolRuntime {
     private readonly _browser = new BrowserManager();
     private _allowAllExternal = false;
+    private _evaluationMode = false;
 
     constructor(
         private readonly _mcp: McpManager,
         private readonly _post: (message: ExtensionMessage) => void,
     ) {}
 
+    public setEvaluationMode(enabled: boolean): void {
+        this._evaluationMode = enabled;
+        this._allowAllExternal = enabled;
+    }
+
     public resetTurnPermissions(): void {
-        this._allowAllExternal = false;
+        this._allowAllExternal = this._evaluationMode;
     }
 
     public setAllowPrivateNetwork(allow: boolean): void {
