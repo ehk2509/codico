@@ -1707,6 +1707,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _dispatchTool(tool: ToolCall, msgId: string, signal: AbortSignal): Promise<void> {
         if (signal.aborted) { return; }
 
+        if (tool.type.startsWith('browser_')) {
+            const allowPrivate = vscode.workspace.getConfiguration('codico')
+                .get<boolean>('browserAllowPrivateNetwork', false);
+            this._browser.setAllowPrivateNetwork(allowPrivate);
+        }
+
         // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
         if (this._chatMode) {
             const writeTools = new Set(['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call']);
