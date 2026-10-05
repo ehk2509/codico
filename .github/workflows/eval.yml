@@ -1,6 +1,9 @@
 name: Coding Holdout
 
 on:
+  push:
+    branches:
+      - 'eval/main-baseline-holdout'
   workflow_dispatch:
     inputs:
       model:
@@ -16,7 +19,7 @@ on:
       limit:
         description: Max tasks to run (0 = all frozen tasks)
         required: true
-        default: '4'
+        default: '0'
         type: string
       repetitions:
         description: Trials per selected task
@@ -49,15 +52,15 @@ jobs:
         run: |
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
+            --model "${{ inputs.model || 'deepseek/deepseek-v4-flash' }}" \
+            --filter "${{ inputs.filter || '.*' }}" \
+            --limit "${{ inputs.limit || '0' }}" \
+            --repetitions "${{ inputs.repetitions || '1' }}"
 
       - name: Upload holdout evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-coding-holdout
+          name: codico-main-baseline-holdout
           path: eval/results/
           if-no-files-found: warn
