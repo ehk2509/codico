@@ -2,13 +2,30 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, browser/MCP automation, and local Ollama.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "codico",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
+    "AI",
+    "Chat",
     "Other"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "coding agent",
+    "autonomous",
+    "chat",
+    "openrouter",
+    "ollama",
+    "claude",
+    "gpt",
+    "gemini",
+    "deepseek",
+    "mcp",
+    "autocomplete"
   ],
   "activationEvents": [
     "onStartupFinished"
