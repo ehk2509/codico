@@ -1,4 +1,10 @@
-# Codico
+<p align="center">
+  <img src="media/logo.svg" width="180" alt="Codico logo" />
+</p>
+
+<h1 align="center">Codico</h1>
+
+<p align="center"><strong>Your autonomous AI coding agent inside VS Code.</strong></p>
 
 An autonomous coding agent embedded directly in VS Code. Connect directly to major providers with your own keys — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, and Cerebras — access many additional providers through **OpenRouter**, or run fully offline with **Ollama**.
 
