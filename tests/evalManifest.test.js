@@ -5,16 +5,17 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const suite = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks.json'), 'utf8'));
+const v3 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v3.json'), 'utf8'));
 const v2 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v2.json'), 'utf8'));
 const v1 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v1.json'), 'utf8'));
 
-test('coding holdout v3 is frozen, non-trivial, and internally consistent', () => {
-  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v3');
+test('coding holdout v4 is frozen, non-trivial, and internally consistent', () => {
+  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v4');
   assert.equal(suite.frozen, true);
   assert.ok(Array.isArray(suite.tasks));
   assert.ok(suite.tasks.length >= 25);
   assert.ok(suite.maxTotalTokens >= 100000 && suite.maxTotalTokens <= 500000);
-  assert.ok(suite.maxTaskMinutes >= 5 && suite.maxTaskMinutes <= 15);
+  assert.equal(suite.maxTaskMinutes, 15);
 
   const ids = new Set();
   for (const task of suite.tasks) {
@@ -38,21 +39,33 @@ test('coding holdout v3 is frozen, non-trivial, and internally consistent', () =
   }
 });
 
-test('burned v1 and v2 suites remain archived', () => {
+test('burned v1-v3 suites remain archived', () => {
   assert.equal(v1.suiteVersion, 'codico-coding-holdout-v1');
   assert.equal(v2.suiteVersion, 'codico-coding-holdout-v2');
-  assert.equal(v1.frozen, true);
-  assert.equal(v2.frozen, true);
-  assert.equal(v1.tasks.length, suite.tasks.length);
-  assert.equal(v2.tasks.length, suite.tasks.length);
+  assert.equal(v3.suiteVersion, 'codico-coding-holdout-v3');
+  for (const archived of [v1, v2, v3]) {
+    assert.equal(archived.frozen, true);
+    assert.equal(archived.tasks.length, suite.tasks.length);
+  }
 });
 
-test('v3 fixes implementation-specific fingerprint scoring', () => {
-  const task = suite.tasks.find(t => t.id === 'tools-fingerprint-arguments');
-  assert.equal(task.verifierPath, 'eval/verifiers/toolFingerprintArguments.verifier.js');
+test('v4 fixes implementation-specific resume-overlap scoring', () => {
+  const task = suite.tasks.find(t => t.id === 'stream-resume-overlap');
+  assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlap.verifier.js');
   const source = fs.readFileSync(path.join(root, task.verifierPath), 'utf8');
-  assert.match(source, /fingerprint\(writeA\)/);
-  assert.match(source, /fingerprint\(runLs\)/);
+  assert.match(source, /findOverlapCandidate/);
+  assert.doesNotMatch(source, /repeatedPrefixLength\s*=\s*require/);
+});
+
+test('v4 retains behavior-level fingerprint and EOF verifiers', () => {
+  assert.equal(
+    suite.tasks.find(t => t.id === 'stream-unexpected-eof').verifierPath,
+    'eval/verifiers/streamUnexpectedEof.verifier.js',
+  );
+  assert.equal(
+    suite.tasks.find(t => t.id === 'tools-fingerprint-arguments').verifierPath,
+    'eval/verifiers/toolFingerprintArguments.verifier.js',
+  );
 });
 
 test('holdout covers multiple historical failure families', () => {
