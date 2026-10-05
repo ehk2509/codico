@@ -20,16 +20,16 @@ After changing code:
 
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
-You changed code. Do not declare success until the change is verified.
-Start with the edited component, but follow callers, consumers, shared abstractions, sibling implementations, or tests when needed to prove correctness. Discovery remains available for that purpose.
+You changed code. Do not declare success until the current edit is verified.
+Keep mutation focus on the edited file until its local invariant is coherent. You may read callers, consumers, shared abstractions, sibling implementations, or tests when needed, but do not mutate siblings merely to broaden the fix before the current edit passes verification.
 
-Before finishing:
+Before finishing or broadening:
 - review any [Local invariant audit] attached to the edit result;
+- re-read lifecycle/state control flow after mutation when requested and reconcile every normal success, completion, terminal, cancellation, error, and no-op path;
 - check requested behavior and every preservation / negative constraint;
-- identify normal success, completion, terminal, cancellation, and no-op paths that must remain unchanged when relevant;
 - prefer verifying the owning abstraction instead of only the edited call site;
-- run the narrowest relevant test, build, lint, or diagnostics command;
-- if verification exposes a gap, revise and verify again.`;
+- diagnostics, lint and compilation are static evidence; for lifecycle/state changes, run a behavior-level test-like command before considering the gate satisfied;
+- if verification exposes a gap, revise this edit first and verify again.`;
 
 export function systemPromptForAgentPhase(
     chatMode: boolean,
@@ -45,7 +45,10 @@ export function systemPromptForAgentPhase(
 
     if (verificationPending) {
         const target = verificationFile ? `\nEdited file: \`${verificationFile}\`.` : '';
-        return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${contract}`;
+        const nextStep = _verificationReadAllowed
+            ? '\nNext verification step: re-read the edited control flow once before relying on static checks.'
+            : '\nThe post-edit control-flow read is complete; prefer a behavior-level test next.';
+        return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${nextStep}${contract}`;
     }
 
     if (explorationLocked) {
