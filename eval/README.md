@@ -2,9 +2,13 @@
 
 Codico's coding-quality evidence is measured with a frozen historical-regression suite rather than toy generation prompts.
 
-## Frozen suite v1
+## Frozen suite v2
 
-`eval/tasks.json` contains **26 tasks** derived from bugs and hardening gaps that existed in earlier Codico commits. Each task records:
+`eval/tasks.json` contains **26 tasks** derived from bugs and hardening gaps that existed in earlier Codico commits.
+
+v2 was created after the first EOF smoke trials exposed an invalid v1 verifier: v1 required the exact later error-message wording even though the historical base commit had no recovery classifier consuming that string. Two independent patches emitted the correct `stream_error` behavior but were rejected only for wording. v2 replaces that implementation-string assertion with observable semantics: premature EOF must error, while `[DONE]` and a normal `finish_reason` must not.
+
+The original suite is preserved as `eval/tasks-v1.json`, with its original verifier archived under `eval/verifiers/v1/`, so the burned v1 evidence remains reproducible. Each task records:
 
 - an exact pre-fix Git commit;
 - a user-style problem statement;
@@ -39,6 +43,9 @@ git fetch --unshallow  # only needed for shallow clones
 export OPENROUTER_API_KEY=...
 npm ci
 npm run eval:coding -- --model deepseek/deepseek-v4-flash
+
+# reproduce the burned v1 suite explicitly
+npm run eval:coding -- --suite eval/tasks-v1.json --model deepseek/deepseek-v4-flash
 ```
 
 Useful subsets:
@@ -73,8 +80,8 @@ Then choose the model/filter/limit/repetitions from the Actions UI. The results 
 
 ## Freeze policy
 
-`codico-coding-holdout-v1` is burned evidence.
+`codico-coding-holdout-v1` is burned evidence and remains archived. `codico-coding-holdout-v2` is the active frozen suite.
 
-Do not improve a score by rewriting task prompts, changing base commits, weakening verifiers, or replacing a failing task. Any semantic change to the holdout creates a new suite version (for example `codico-coding-holdout-v2`) while v1 remains reproducible.
+Do not improve a score by silently rewriting task prompts, changing base commits, weakening verifiers, or replacing a failing task. Any semantic change to the active holdout creates a new suite version while earlier versions remain reproducible.
 
 Harness-only bug fixes are allowed when they do not change what a task asks or what constitutes success.

@@ -1,18 +1,18 @@
 {
-  "suiteVersion": "codico-coding-holdout-v2",
+  "suiteVersion": "codico-coding-holdout-v1",
   "frozen": true,
-  "description": "Historical Codico regressions with hidden semantic or fix-era verifiers. v2 replaces implementation-string assertions in the EOF task with observable stream-completion behavior while keeping the same bounded evaluation protocol.",
+  "description": "Historical Codico regressions with hidden, fix-era or behavior-level verifiers. Success is measured within a frozen iteration and cumulative-token budget.",
   "tasks": [
     {
       "id": "stream-unexpected-eof",
       "category": "streaming",
       "baseCommit": "486bf7638a39c517ed273a4313238b47c2a73d81",
-      "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker emits a stream_error describing the premature interruption instead of being silently accepted as complete. Keep normally completed streams unchanged.",
+      "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker is reported as an unexpected recoverable interruption instead of being silently accepted as complete. Keep normal completed streams unchanged.",
       "verifierFile": "streamCompletion.test.js",
-      "testNamePattern": "unexpected provider EOF is reported without flagging normal completion",
+      "testNamePattern": "unexpected provider EOF is surfaced as a recoverable stream interruption",
       "maxIterations": 16,
       "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281",
-      "verifierPath": "eval/verifiers/streamUnexpectedEof.verifier.js"
+      "verifierPath": "eval/verifiers/v1/streamUnexpectedEof.verifier.js"
     },
     {
       "id": "stream-resume-overlap",

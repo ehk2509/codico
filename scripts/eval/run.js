@@ -4,13 +4,17 @@ const os = require('node:os');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
-const suite = JSON.parse(fs.readFileSync(path.join(root, 'eval/tasks.json'), 'utf8'));
 
 function arg(name, fallback = undefined) {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : fallback;
 }
 function has(name) { return process.argv.includes(name); }
+
+const suiteArg = arg('--suite', 'eval/tasks.json');
+const suitePath = path.isAbsolute(suiteArg) ? suiteArg : path.join(root, suiteArg);
+const suite = JSON.parse(fs.readFileSync(suitePath, 'utf8'));
+
 function safeName(value) { return String(value).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 80); }
 function npmCommand() { return process.platform === 'win32' ? 'npm.cmd' : 'npm'; }
 function run(command, args, options = {}) {
