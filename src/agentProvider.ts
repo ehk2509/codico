@@ -20,7 +20,7 @@ import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { fetchPublicText } from './urlFetcher';
-import { getNativeToolDefinitions, nativeToolCallToToolCall } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 
 function getNonce(): string {
@@ -976,7 +976,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
                 let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
                 const inlineToolResults: string[] = [];
-                const nativeToolHistory: string[] = [];
+                const fencedToolResults: string[] = [];
+                const nativeToolExecutions: Array<{ call: NativeToolCall; result: string }> = [];
                 let recoverableStreamInterruption: string | null = null;
                 let recoverableFinishReason: string | null = null;
 
@@ -998,7 +999,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
                 };
 
-                const dispatchToolCall = async (tool: ToolCall): Promise<boolean> => {
+                const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     const fp = toolFingerprint(tool);
                     const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
                     _toolCallCounts.set(fp, callCount);
@@ -1007,15 +1008,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
                         this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
-                        return false;
+                        return { keepGoing: false, result: nudge };
                     }
 
                     await this._dispatchTool(tool, msgId, signal);
-                    if (this._lastInlineResult !== undefined) {
-                        inlineToolResults.push(this._lastInlineResult);
-                        this._lastInlineResult = undefined;
-                    }
-                    return true;
+                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    this._lastInlineResult = undefined;
+                    inlineToolResults.push(result);
+                    return { keepGoing: true, result };
                 };
 
                 // Dispatch every newly complete tool fence, sending the text before each first.
@@ -1037,8 +1037,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         // and create a new one after the pill
                         const tools = parseToolBody(fence.type, fence.body);
                         if (tools.length > 0) {
-                            const keepGoing = await dispatchToolCall(tools[0]);
-                            if (!keepGoing) { return; }
+                            const dispatched = await dispatchToolCall(tools[0]);
+                            fencedToolResults.push(dispatched.result);
+                            if (!dispatched.keepGoing) { return; }
                         }
                     }
                 };
@@ -1113,17 +1114,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         if (text) { await processContent(text); }
                     } else if (chunk.type === 'native_tool') {
-                        const tool = nativeToolCallToToolCall(chunk.call);
+                        const call: NativeToolCall = {
+                            ...chunk.call,
+                            id: chunk.call.id ?? `codico_${nodeCrypto.randomBytes(8).toString('hex')}`,
+                        };
+                        const tool = nativeToolCallToToolCall(call);
                         if (!tool) {
                             this._post({
                                 type: 'streamError',
                                 id: msgId,
-                                message: `Provider returned invalid arguments for native tool ${chunk.call.name}.`,
+                                message: `Provider returned invalid arguments for native tool ${call.name}.`,
                             });
                             continue;
                         }
-                        nativeToolHistory.push(tool.type);
-                        await dispatchToolCall(tool);
+                        const dispatched = await dispatchToolCall(tool);
+                        nativeToolExecutions.push({ call, result: dispatched.result });
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
@@ -1184,7 +1189,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         lastSentPos = fullContent.length;
                         dispatchedUpTo = fullContent.length;
-                        await dispatchToolCall(tools[0]);
+                        const dispatched = await dispatchToolCall(tools[0]);
+                        fencedToolResults.push(dispatched.result);
                     }
                 }
 
@@ -1204,15 +1210,26 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 const assistantHistoryContent = fullContent ||
-                    (nativeToolHistory.length > 0
-                        ? `[Native tool calls executed: ${nativeToolHistory.join(', ')}]`
-                        : recoverableStreamInterruption
-                            ? '[Stream interrupted before content]'
+                    (recoverableStreamInterruption
+                        ? '[Stream interrupted before content]'
+                        : nativeToolExecutions.length > 0
+                            ? ''
                             : '[Assistant turn completed without text]');
                 this._history.push({
                     role: 'assistant',
                     content: assistantHistoryContent,
+                    ...(nativeToolExecutions.length > 0
+                        ? { nativeToolCalls: nativeToolExecutions.map(execution => execution.call) }
+                        : {}),
                 });
+                for (const execution of nativeToolExecutions) {
+                    this._history.push({
+                        role: 'tool',
+                        content: execution.result,
+                        toolCallId: execution.call.id!,
+                        toolName: execution.call.name,
+                    });
+                }
 
                 // Unexpected transport EOFs are recoverable: preserve the partial
                 // assistant response and any tool results, then ask the model to
@@ -1223,8 +1240,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         streamRecoveryAttempts++;
 
                         const recoveryParts: string[] = [];
-                        if (inlineToolResults.length > 0) {
-                            recoveryParts.push(`[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`);
+                        if (fencedToolResults.length > 0) {
+                            recoveryParts.push(`[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`);
                         }
 
                         const cause = recoverableStreamInterruption
@@ -1303,9 +1320,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
                 }
 
-                // Inject tool results so the AI can continue
-                const resultText = `[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`;
-                this._history.push({ role: 'user', content: resultText });
+                // Fenced compatibility tools return results as a normal user message.
+                // Native calls already have provider-native tool result turns above.
+                if (fencedToolResults.length > 0) {
+                    const resultText = `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`;
+                    this._history.push({ role: 'user', content: resultText });
+                }
 
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
