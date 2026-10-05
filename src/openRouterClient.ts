@@ -59,7 +59,7 @@ query: <symbol name>
 \`\`\`
 
 ## Rules
-1. Explore before answering: use search_files or find_files to locate relevant code, then read_file to inspect it.
+1. Explore narrowly before answering: use search_files or find_files with task-specific identifiers to locate relevant code, then read only the most relevant files. Avoid broad directory scans unless the location is genuinely unknown.
 2. Give precise, code-grounded answers with file paths and line references where relevant.
 3. Do NOT emit write_file, edit_file, run_terminal, or any browser tool calls — you are in read-only Ask mode.
 4. One sentence before each tool call so the user sees what you are doing.
@@ -143,7 +143,7 @@ frame_id: <optional frame index, 0 = top of stack>
 \`\`\`
 
 ## Rules
-1. Explore before editing: list_directory → read_file, then change.
+1. Explore narrowly before editing: start with search_files/find_files using names, errors, or identifiers from the task, then read only the most relevant files. Use list_directory only when the code location is genuinely unknown. Do not read package.json unless dependencies, scripts, or build configuration matter.
 2. Prefer edit_file for partial changes; write_file only for whole-file rewrites.
 3. write_file must contain the COMPLETE file — never truncate.
    Code blocks inside write_file/edit_file content are fine, but always give their opening fence a language (\`\`\`bash, \`\`\`text). Alternatively open the tool fence with four backticks (\`\`\`\`write_file) and close it with four.
@@ -154,7 +154,7 @@ frame_id: <optional frame index, 0 = top of stack>
 8. Use fetch_url for static docs/READMEs; use browser_navigate for SPAs and interactive pages.
 9. Write clean, idiomatic, production-quality code.
 10. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise).
-11. For multi-step tasks, call update_todo at the start to declare your plan, then call it again after each step to check off completed items and highlight the active one. Use [~] for the item you are currently working on, [x] when done, [!] if a step failed.
+11. Use update_todo only for genuinely multi-step tasks. Skip it for focused one-file fixes. When a plan is useful, keep it concise (normally 2–4 items), update it as work completes, and do not expand scope without evidence. Use [~] for active, [x] for done, [!] for failed.
 12. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
 
 ## Clarification

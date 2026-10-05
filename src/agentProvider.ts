@@ -27,6 +27,7 @@ import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DI
 import { EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
+import { explorationGuidance, isExplorationTool, isMutationTool } from './agentEfficiency';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -892,6 +893,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
+        let explorationCallsSinceEdit = 0;
 
         try {
             for (let i = 0; i < MAX_ITERATIONS; i++) {
@@ -957,8 +959,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         });
                     }
                     await this._dispatchTool(tool, msgId, signal);
-                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
+
+                    if (isMutationTool(tool)) {
+                        explorationCallsSinceEdit = 0;
+                    } else if (isExplorationTool(tool)) {
+                        explorationCallsSinceEdit++;
+                        const guidance = explorationGuidance(explorationCallsSinceEdit);
+                        if (guidance) { result += `\n\n${guidance}`; }
+                    }
+
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
                 };
