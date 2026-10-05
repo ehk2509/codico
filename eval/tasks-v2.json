@@ -1,7 +1,7 @@
 {
-  "suiteVersion": "codico-coding-holdout-v3",
+  "suiteVersion": "codico-coding-holdout-v2",
   "frozen": true,
-  "description": "Historical Codico regressions with hidden behavior-level or fix-era verifiers. v3 removes implementation-specific fingerprint scoring and preflights historical verifier compatibility before model invocation.",
+  "description": "Historical Codico regressions with hidden semantic or fix-era verifiers. v2 replaces implementation-string assertions in the EOF task with observable stream-completion behavior while keeping the same bounded evaluation protocol.",
   "tasks": [
     {
       "id": "stream-unexpected-eof",
@@ -72,8 +72,7 @@
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "tool fingerprints distinguish calls by their arguments",
       "maxIterations": 16,
-      "verifierCommit": "463c761813544f8f6b6755441430937823070edb",
-      "verifierPath": "eval/verifiers/toolFingerprintArguments.verifier.js"
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
       "id": "tools-write-nested-fences",

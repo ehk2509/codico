@@ -68,59 +68,48 @@ test('malformed native arguments remain pending instead of executing', () => {
 });
 
 
-test('action-only native schema withdraws exploration tools after evidence budget', () => {
+test('action guidance keeps discovery capabilities available', () => {
   const { getNativeToolDefinitions, restrictNativeToolsForAction } = require('../out/nativeTools.js');
   const action = restrictNativeToolsForAction(getNativeToolDefinitions(false));
   const names = new Set(action.map(tool => tool.name));
-  assert.equal(names.has('edit_file'), true);
-  assert.equal(names.has('write_file'), true);
-  assert.equal(names.has('run_terminal'), true);
-  assert.equal(names.has('get_diagnostics'), true);
-  assert.equal(names.has('read_file'), false);
-  assert.equal(names.has('search_files'), false);
-  assert.equal(names.has('list_directory'), false);
-  assert.match(action.find(tool => tool.name === 'run_terminal').description, /verification/i);
+
+  for (const name of ['read_file', 'search_files', 'list_directory', 'edit_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+    assert.equal(names.has(name), true, `expected ${name} to remain available`);
+  }
+
+  assert.match(action.find(tool => tool.name === 'run_terminal').description, /source inspection remains available/i);
 });
 
-
-test('post-edit native schema keeps verification local to the edited file', () => {
-  const { nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+test('post-edit verification keeps dependency discovery available', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
   const verification = nativeToolsForAgentPhase(
     getNativeToolDefinitions(false),
     false,
     true,
     'src/a.ts',
   );
+
+  const names = new Set(verification.map(tool => tool.name));
+  for (const name of ['read_file', 'search_files', 'list_directory', 'fetch_url', 'edit_file', 'write_file', 'run_terminal']) {
+    assert.equal(names.has(name), true, `expected ${name} during verification`);
+  }
+
+  const read = verification.find(tool => tool.name === 'read_file');
+  assert.equal(read.inputSchema.properties.filepath.enum, undefined);
+  assert.match(read.description, /callers\/consumers\/siblings/i);
+});
+
+test('read capability is never withdrawn by an arbitrary audit count', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const verification = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    false,
+  );
+
   const names = new Set(verification.map(tool => tool.name));
   assert.equal(names.has('read_file'), true);
-  assert.equal(names.has('edit_file'), true);
-  assert.equal(names.has('write_file'), true);
-  assert.equal(names.has('run_terminal'), true);
-  assert.equal(names.has('search_files'), false);
-  assert.equal(names.has('list_directory'), false);
-  assert.equal(names.has('fetch_url'), false);
-
-  for (const name of ['read_file', 'edit_file', 'write_file']) {
-    const tool = verification.find(candidate => candidate.name === name);
-    assert.deepEqual(tool.inputSchema.properties.filepath.enum, ['src/a.ts']);
-  }
-  assert.match(verification.find(tool => tool.name === 'run_terminal').description, /source-inspection shell commands are blocked/i);
-});
-
-
-test('post-edit native schema removes read_file after the local audit budget is consumed', () => {
-  const { nativeToolsForAgentPhase } = require('../out/nativeTools.js');
-  const verification = nativeToolsForAgentPhase(
-    getNativeToolDefinitions(false),
-    false,
-    true,
-    'src/a.ts',
-    false,
-  );
-  const names = new Set(verification.map(tool => tool.name));
-  assert.equal(names.has('read_file'), false);
-  assert.equal(names.has('edit_file'), true);
-  assert.equal(names.has('write_file'), true);
-  assert.equal(names.has('run_terminal'), true);
-  assert.equal(names.has('get_diagnostics'), true);
+  assert.equal(names.has('search_files'), true);
 });

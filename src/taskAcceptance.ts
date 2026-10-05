@@ -1,40 +1,59 @@
-const MAX_TASK_CONTRACT_CHARS = 3500;
+const MAX_TASK_CONTRACT_CHARS = 2200;
+const MAX_CHECKLIST_ITEMS = 4;
+const MAX_CHECKLIST_ITEM_CHARS = 220;
 
 function normalized(text: string): string {
     return text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function preservationClauses(text: string): string[] {
-    const preserve = /\b(?:keep|preserve|unchanged|without|do not|don't|must not|should not|still|remain|avoid|only)\b/i;
+function clauses(text: string): string[] {
     return text
         .split(/(?<=[.!?])\s+|\n+/)
         .map(part => part.trim())
-        .filter(part => part.length > 0 && preserve.test(part))
-        .slice(0, 8);
+        .filter(Boolean);
 }
 
-/**
- * Keeps the user's acceptance criteria salient after long autonomous tool loops.
- * It does not invent requirements: preservation clauses are copied from the
- * original request and the full request remains the source of truth.
- */
+function boundedClauses(text: string, predicate?: (part: string) => boolean): string[] {
+    const selected = predicate ? clauses(text).filter(predicate) : clauses(text);
+    return selected
+        .slice(0, MAX_CHECKLIST_ITEMS)
+        .map(part => part.length > MAX_CHECKLIST_ITEM_CHARS
+            ? part.slice(0, MAX_CHECKLIST_ITEM_CHARS - 1).trimEnd() + '…'
+            : part);
+}
+
+function preservationClauses(text: string): string[] {
+    const preserve = /\b(?:keep|preserve|unchanged|without|do not|don't|must not|should not|still|remain|avoid|only)\b/i;
+    return boundedClauses(text, part => preserve.test(part));
+}
+
 export function buildTaskAcceptanceContract(rawText: string): string {
     const request = normalized(rawText).slice(0, MAX_TASK_CONTRACT_CHARS);
+    const acceptance = boundedClauses(request);
     const preservation = preservationClauses(request);
+    const checklist = acceptance.length > 0
+        ? '\n\nAcceptance checklist derived from the request:\n' + acceptance.map(item => `- ${item}`).join('\n')
+        : '';
     const preservationBlock = preservation.length > 0
-        ? '\n\nExplicit preservation / negative constraints:\n' +
-            preservation.map(item => `- ${item}`).join('\n')
+        ? '\n\nExplicit preservation / negative constraints:\n' + preservation.map(item => `- ${item}`).join('\n')
         : '';
 
     return `## Task acceptance contract
 
-The original user request remains authoritative. A fix is incomplete unless it satisfies the requested change and preserves every stated invariant.
+The original user request remains authoritative. A fix is incomplete unless it satisfies the requested behavior and preserves every stated invariant.
 
 Original request:
-${request}${preservationBlock}
+${request}${checklist}${preservationBlock}
+
+Implementation discipline:
+- identify the abstraction or API boundary that owns the behavior before patching a convenient call site;
+- prefer one reusable invariant over enumerating only variants visible in the first file;
+- inspect callers, consumers, sibling implementations, or existing tests when they materially affect correctness;
+- do not optimize for guessed hidden tests or a particular file layout: optimize for requested observable behavior.
 
 Verification requirements:
-- verify the changed behavior;
-- verify every explicit "keep / preserve / unchanged / without / do not / must not" constraint;
-- if focused tests do not exist, inspect the control-flow paths that distinguish the failure case from normal success/completion paths before finishing.`;
+- verify changed behavior, not only compilation;
+- verify every explicit preservation / negative constraint;
+- if a focused test exists, run it;
+- otherwise inspect control-flow or integration paths that distinguish the failure case from normal success/completion paths before finishing.`;
 }
