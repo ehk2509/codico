@@ -100,3 +100,16 @@ test('compatibility transports flatten native tool turns to readable text', () =
   assert.equal(flattened[2].role, 'user');
   assert.match(flattened[2].content, /Tool Result: read_file/);
 });
+
+
+test('Anthropic and Gemini compatibility mode flatten prior native turns', () => {
+  const anthropic = toAnthropicMessages(history, false);
+  assert.equal(JSON.stringify(anthropic).includes('tool_use'), false);
+  assert.equal(JSON.stringify(anthropic).includes('tool_result'), false);
+  assert.match(JSON.stringify(anthropic), /Tool Result: read_file/);
+
+  const gemini = toGeminiMessages(history, false);
+  assert.equal(JSON.stringify(gemini).includes('functionCall'), false);
+  assert.equal(JSON.stringify(gemini).includes('functionResponse'), false);
+  assert.match(JSON.stringify(gemini), /Tool Result: read_file/);
+});
