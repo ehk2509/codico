@@ -3163,6 +3163,10 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
         // in safeModelsJson corrupting the HTML (e.g. a model name containing "$&").
         const safeModelsJson = rawModelsJson.replace(/<\/script>/gi, '<\\/script>');
         html = html.replace('{{MODELS_JSON}}', () => safeModelsJson);
+        const markdownUri = _webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
+        ).toString();
+        html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
         return html;
     }
 
