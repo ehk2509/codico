@@ -246,6 +246,11 @@
           "minimum": 10,
           "description": "Kill a run_terminal command (and everything it started) after this many seconds"
         },
+        "codico.nativeToolCalling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use provider-native function/tool calling when supported. Disable to force compatibility fenced tools."
+        },
         "codico.inlineCompletionsEnabled": {
           "type": "boolean",
           "default": true,
