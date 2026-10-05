@@ -301,7 +301,7 @@ function _streamAnthropic(
     push: (v: StreamChunk | null | Error) => void,
     nativeTools: NativeToolDefinition[]
 ): void {
-    const messages = toAnthropicMessages(history);
+    const messages = toAnthropicMessages(history, nativeTools.length > 0);
 
     const body = JSON.stringify({
         model: modelId,
@@ -442,7 +442,7 @@ function _streamGoogle(
     nativeTools: NativeToolDefinition[]
 ): void {
     const body = JSON.stringify({
-        contents: toGeminiMessages(history),
+        contents: toGeminiMessages(history, nativeTools.length > 0),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         generationConfig: { maxOutputTokens: 8192 },
         ...(nativeTools.length > 0 ? {
