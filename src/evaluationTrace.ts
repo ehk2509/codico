@@ -8,7 +8,12 @@ function clip(value: string, max = 160): string {
 /** Safe, compact benchmark label: enough to diagnose routing without storing bodies/secrets. */
 export function evaluationToolTarget(tool: ToolCall): string {
     switch (tool.type) {
-        case 'read_file':
+        case 'read_file': {
+            const range = tool.startLine != null || tool.endLine != null
+                ? `:${tool.startLine ?? 1}-${tool.endLine ?? '*'}`
+                : '';
+            return `${tool.filepath}${range}`;
+        }
         case 'write_file':
         case 'edit_file':
             return tool.filepath;
