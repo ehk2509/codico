@@ -3158,6 +3158,10 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
             vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
         ).toString();
         html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
+        const streamNoticesUri = _webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'streamNotices.js')
+        ).toString();
+        html = html.replace('{{STREAM_NOTICES_JS_URI}}', streamNoticesUri);
         return html;
     }
 
