@@ -2,6 +2,7 @@ import * as https from 'https';
 import { ChatMessage, MessageContentPart, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
 import { StreamCompletionGuard } from './streamCompletion';
 import { NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
+import { toAnthropicMessages, toGeminiMessages, toOpenAIMessages } from './providerConversation';
 
 // ── Provider registry ─────────────────────────────────────────────────────────
 
@@ -172,7 +173,7 @@ function _streamOpenAICompat(
     push: (v: StreamChunk | null | Error) => void,
     nativeTools: NativeToolDefinition[]
 ): void {
-    const messages = [{ role: 'system' as const, content: system }, ...history];
+    const messages = toOpenAIMessages([{ role: 'system', content: system }, ...history], nativeTools.length > 0);
     const body = JSON.stringify({
         model: modelId,
         messages,
@@ -291,26 +292,6 @@ function _streamOpenAICompat(
 
 // ── Anthropic streaming ───────────────────────────────────────────────────────
 
-type AnthropicPart =
-    | { type: 'text'; text: string }
-    | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
-
-function _toAnthropicContent(content: string | MessageContentPart[]): string | AnthropicPart[] {
-    if (typeof content === 'string') { return content; }
-    const parts: AnthropicPart[] = [];
-    for (const p of content) {
-        if (p.type === 'text') {
-            parts.push({ type: 'text', text: p.text });
-        } else if (p.type === 'image_url') {
-            const m = p.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
-            if (m) { parts.push({ type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } }); }
-        }
-    }
-    // Fallback: if all image parts failed the data-URI check, avoid sending an empty array (Anthropic 400).
-    if (parts.length === 0) { return '[image]'; }
-    return parts.length === 1 && parts[0].type === 'text' ? parts[0].text : parts;
-}
-
 function _streamAnthropic(
     apiKey: string,
     modelId: string,
@@ -320,9 +301,7 @@ function _streamAnthropic(
     push: (v: StreamChunk | null | Error) => void,
     nativeTools: NativeToolDefinition[]
 ): void {
-    const messages = history
-        .filter(m => m.role !== 'system')
-        .map(m => ({ role: m.role as 'user' | 'assistant', content: _toAnthropicContent(m.content) }));
+    const messages = toAnthropicMessages(history);
 
     const body = JSON.stringify({
         model: modelId,
@@ -453,24 +432,6 @@ function _streamAnthropic(
 
 // ── Google Gemini streaming ───────────────────────────────────────────────────
 
-type GeminiPart = { text?: string; inlineData?: { mimeType: string; data: string } };
-
-function _toGeminiMessages(history: ChatMessage[]): Array<{ role: string; parts: GeminiPart[] }> {
-    return history.filter(m => m.role !== 'system').map(m => {
-        const role = m.role === 'assistant' ? 'model' : 'user';
-        if (typeof m.content === 'string') { return { role, parts: [{ text: m.content }] }; }
-        const parts: GeminiPart[] = (m.content as MessageContentPart[]).map(p => {
-            if (p.type === 'text') { return { text: p.text }; }
-            if (p.type === 'image_url') {
-                const match = p.image_url.url.match(/^data:([^;]+);base64,(.+)$/);
-                if (match) { return { inlineData: { mimeType: match[1], data: match[2] } }; }
-            }
-            return { text: '' };
-        });
-        return { role, parts };
-    });
-}
-
 function _streamGoogle(
     apiKey: string,
     modelId: string,
@@ -481,7 +442,7 @@ function _streamGoogle(
     nativeTools: NativeToolDefinition[]
 ): void {
     const body = JSON.stringify({
-        contents: _toGeminiMessages(history),
+        contents: toGeminiMessages(history),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         generationConfig: { maxOutputTokens: 8192 },
         ...(nativeTools.length > 0 ? {
