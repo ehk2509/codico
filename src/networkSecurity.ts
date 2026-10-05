@@ -101,7 +101,15 @@ function createPinnedLookup(addresses: dns.LookupAddress[]): typeof dns.lookup {
  * pinned to those validated answers. Pinning prevents a second DNS lookup from
  * rebinding the request to localhost/private infrastructure after validation.
  */
-export async function resolvePublicHttpUrl(rawUrl: string): Promise<ResolvedPublicUrl> {
+export type LookupAll = (hostname: string) => Promise<dns.LookupAddress[]>;
+
+const defaultLookupAll: LookupAll = (hostname) =>
+    dns.promises.lookup(hostname, { all: true, verbatim: true });
+
+export async function resolvePublicHttpUrl(
+    rawUrl: string,
+    lookupAll: LookupAll = defaultLookupAll
+): Promise<ResolvedPublicUrl> {
     let url: URL;
     try {
         url = new URL(rawUrl);
@@ -127,7 +135,7 @@ export async function resolvePublicHttpUrl(rawUrl: string): Promise<ResolvedPubl
             family: literalFamily,
         }];
     } else {
-        addresses = await dns.promises.lookup(url.hostname, { all: true, verbatim: true });
+        addresses = await lookupAll(url.hostname);
     }
 
     if (addresses.length === 0) {
