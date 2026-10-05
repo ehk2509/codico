@@ -2,6 +2,7 @@ import * as http from 'http';
 import * as https from 'https';
 import { SYSTEM_PROMPT, StreamChunk, ChatMessage } from './openRouterClient';
 import { StreamCompletionGuard } from './streamCompletion';
+import { flattenChatHistory } from './providerConversation';
 
 /**
  * Parse a base URL string into host, port, and path prefix.
@@ -89,10 +90,10 @@ export function streamOllama(
                 }
             }
 
-            const messages: ChatMessage[] = [
+            const messages = flattenChatHistory([
                 { role: 'system', content: effectiveSystemPrompt },
                 ...history,
-            ];
+            ]);
 
             const body = JSON.stringify({
                 model,
@@ -324,7 +325,7 @@ export function ollamaChatCompletion(
 
     const body = JSON.stringify({
         model,
-        messages,
+        messages: flattenChatHistory(messages),
         max_tokens: maxTokens,
         stream: false,
     });
