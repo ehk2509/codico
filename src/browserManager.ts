@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { chromium, Browser, Page } from 'playwright-core';
-import { resolvePublicHttpUrl } from './networkSecurity';
+import { assertBrowserRequestAllowed } from './browserNetworkPolicy';
 
 const CHROME_PATHS = [
     '/usr/bin/google-chrome-stable',
@@ -26,11 +26,7 @@ export class BrowserManager {
     }
 
     private async _assertRequestAllowed(rawUrl: string): Promise<void> {
-        if (this._allowPrivateNetwork) { return; }
-        let parsed: URL;
-        try { parsed = new URL(rawUrl); } catch { return; }
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { return; }
-        await resolvePublicHttpUrl(rawUrl);
+        await assertBrowserRequestAllowed(rawUrl, this._allowPrivateNetwork);
     }
 
     private async _installNetworkPolicy(page: Page): Promise<void> {
