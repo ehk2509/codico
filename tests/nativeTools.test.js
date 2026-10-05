@@ -83,23 +83,34 @@ test('action guidance keeps discovery available but prioritizes mutation', () =>
   assert.match(action.find(tool => tool.name === 'edit_file').description, /preferred action-phase tool/i);
 });
 
-test('post-edit verification keeps dependency discovery available', () => {
+test('post-edit verification keeps dependencies but prioritizes audit then tests', () => {
   const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
-  const verification = nativeToolsForAgentPhase(
+  const beforeRead = nativeToolsForAgentPhase(
     getNativeToolDefinitions(false),
     false,
     true,
     'src/a.ts',
+    true,
   );
 
-  const names = new Set(verification.map(tool => tool.name));
+  const names = new Set(beforeRead.map(tool => tool.name));
   for (const name of ['read_file', 'search_files', 'list_directory', 'fetch_url', 'edit_file', 'write_file', 'run_terminal']) {
     assert.equal(names.has(name), true, `expected ${name} during verification`);
   }
 
-  const read = verification.find(tool => tool.name === 'read_file');
-  assert.equal(read.inputSchema.properties.filepath.enum, undefined);
-  assert.match(read.description, /callers\/consumers\/siblings/i);
+  assert.equal(beforeRead[0].name, 'read_file');
+  assert.match(beforeRead.find(tool => tool.name === 'read_file').description, /Verification priority/i);
+  assert.match(beforeRead.find(tool => tool.name === 'get_diagnostics').description, /Static verification only/i);
+
+  const afterRead = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    false,
+  );
+  assert.equal(afterRead[0].name, 'run_terminal');
+  assert.match(afterRead.find(tool => tool.name === 'run_terminal').description, /Preferred verification tool/i);
 });
 
 test('read capability is never withdrawn by an arbitrary audit count', () => {
