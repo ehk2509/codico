@@ -82,3 +82,45 @@ test('fragmented native tool arguments become one structured tool call', async (
   });
   assert.equal(chunks.some(c => c.type === 'stream_error'), false);
 });
+
+
+test('native-tool capability errors retry once with fenced compatibility mode', async () => {
+  let requests = 0;
+  const chunks = await withFakeServer((req, res) => {
+    requests++;
+    let body = '';
+    req.setEncoding('utf8');
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      const parsed = JSON.parse(body);
+      if (requests === 1) {
+        assert.equal(Array.isArray(parsed.tools), true);
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'tools are not supported by this model' } }));
+        return;
+      }
+
+      assert.equal(parsed.tools, undefined);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"fallback worked"},"finish_reason":"stop"}]}\n\n');
+      res.end('data: [DONE]\n\n');
+    });
+  }, endpoint => collect(streamOpenRouter(
+    'test-key',
+    [{ role: 'user', content: 'hello' }],
+    'no-tools-model',
+    undefined,
+    undefined,
+    'low',
+    undefined,
+    getNativeToolDefinitions(false),
+    endpoint,
+  )));
+
+  assert.equal(requests, 2);
+  assert.equal(chunks.some(c => c.type === 'content' && c.text === 'fallback worked'), true);
+  assert.equal(
+    chunks.some(c => c.type === 'thinking' && /compatibility tool format/.test(c.text)),
+    true,
+  );
+});
