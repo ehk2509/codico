@@ -30,6 +30,7 @@ import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
+import { shouldRunAgentIteration } from './iterationBudget';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -785,6 +786,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const autoInject = config.get<boolean>('autoInjectContext', true);
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
+        const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
@@ -876,7 +878,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._followUpAbortController?.abort();
         this._followUpAbortController = null;
 
-        const MAX_ITERATIONS = maxIterations > 0 ? maxIterations : Infinity;
         const MAX_STREAM_RECOVERY_ATTEMPTS = 5;
         let streamRecoveryAttempts = 0;
         // Visible text just before a cutoff; the resumed response is checked against it
@@ -896,7 +897,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const MAX_IDENTICAL_CALLS = 3;
         const exploration = new ExplorationController(rawText);
         try {
-            for (let i = 0; i < MAX_ITERATIONS; i++) {
+            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations); i++) {
                 if (signal.aborted) { break; }
                 if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
                     this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) {
