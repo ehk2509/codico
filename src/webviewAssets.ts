@@ -63,6 +63,11 @@ export class WebviewAssets {
         ).toString();
         html = html.replace('{{CHAT_CSS_URI}}', chatCssUri);
 
+        const chatJsUri = webview.asWebviewUri(
+            vscode.Uri.joinPath(this.extensionUri, 'media', 'chat.js')
+        ).toString();
+        html = html.replace('{{CHAT_JS_URI}}', chatJsUri);
+
         const markdownUri = webview.asWebviewUri(
             vscode.Uri.joinPath(this.extensionUri, 'media', 'markdown.js')
         ).toString();
