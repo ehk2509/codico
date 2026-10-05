@@ -1,4 +1,8 @@
 import type { ToolCall } from './toolParser';
+import type { NativeToolDefinition } from './nativeTools';
+import { nativeToolsForAgentPhase } from './nativeTools';
+import { systemPromptForAgentPhase } from './agentPhasePrompt';
+import { buildTaskAcceptanceContract } from './taskAcceptance';
 import {
     explorationDecision,
     explorationTarget,
