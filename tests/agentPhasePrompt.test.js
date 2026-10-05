@@ -45,11 +45,14 @@ test('Ask mode remains read-only even when autonomous phase flags are set', () =
 
 test('verification prompt carries the acceptance contract without arbitrary read limits', () => {
   const contract = '## Task acceptance contract\nKeep normal completed streams unchanged.';
-  const allowed = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, true);
-  const formerlyExhausted = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, false);
+  const beforeAudit = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, true);
+  const afterAudit = systemPromptForAgentPhase(false, false, true, 'src/openRouterClient.ts', contract, false);
 
-  assert.match(allowed, /Keep normal completed streams unchanged/);
-  assert.match(allowed, /Discovery remains available/i);
-  assert.equal(formerlyExhausted, allowed);
-  assert.doesNotMatch(allowed, /read budget is exhausted/i);
+  assert.match(beforeAudit, /Keep normal completed streams unchanged/);
+  assert.match(afterAudit, /Keep normal completed streams unchanged/);
+  assert.match(beforeAudit, /re-read the edited control flow once/i);
+  assert.match(afterAudit, /post-edit control-flow read is complete/i);
+  assert.match(afterAudit, /behavior-level test next/i);
+  assert.doesNotMatch(beforeAudit, /read budget is exhausted/i);
+  assert.doesNotMatch(afterAudit, /read budget is exhausted/i);
 });
