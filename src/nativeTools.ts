@@ -387,6 +387,14 @@ export class OpenAIToolCallAccumulator {
         this._calls.set(index, current);
     }
 
+    get hasPending(): boolean {
+        return [...this._calls.values()].some(call => !call.emitted && Boolean(call.name));
+    }
+
+    pendingNames(): string[] {
+        return [...this._calls.values()].filter(call => !call.emitted && call.name).map(call => call.name);
+    }
+
     flushReady(): NativeToolCall[] {
         const ready: NativeToolCall[] = [];
         for (const [, call] of [...this._calls.entries()].sort((a, b) => a[0] - b[0])) {
