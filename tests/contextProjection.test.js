@@ -38,3 +38,27 @@ test('recent or small tool results are preserved verbatim', () => {
   assert.equal(result.omittedMessages, 0);
   assert.equal(result.history[0].content, 'small result');
 });
+
+
+test('recent large tool results obey a provider-facing character budget', () => {
+  const mk = (id, ch) => ({ role: 'tool', content: ch.repeat(9000), toolCallId: id, toolName: 'read_file' });
+  const history = [
+    { role: 'user', content: 'fix' },
+    mk('a', 'a'),
+    { role: 'assistant', content: 'next' },
+    mk('b', 'b'),
+    { role: 'assistant', content: 'next' },
+    mk('c', 'c'),
+    { role: 'assistant', content: 'latest' },
+  ];
+  const result = projectHistoryForModel(history, {
+    recentMessages: 6,
+    largeResultChars: 6000,
+    maxLargeResultChars: 12000,
+    preserveNewestLargeResults: 1,
+  });
+  assert.equal(result.history[5].content, history[5].content);
+  assert.match(result.history[3].content, /compacted/i);
+  assert.match(result.history[1].content, /compacted/i);
+  assert.equal(history[3].content.length, 9000, 'canonical history remains unchanged');
+});

@@ -9,6 +9,8 @@ export interface HistoryProjection {
 export interface HistoryProjectionOptions {
     recentMessages?: number;
     largeResultChars?: number;
+    maxLargeResultChars?: number;
+    preserveNewestLargeResults?: number;
 }
 
 function compactMarker(label: string, omittedChars: number): string {
@@ -27,39 +29,51 @@ export function projectHistoryForModel(
 ): HistoryProjection {
     const recentMessages = Math.max(2, options.recentMessages ?? 6);
     const largeResultChars = Math.max(1000, options.largeResultChars ?? 6000);
+    const maxLargeResultChars = Math.max(largeResultChars, options.maxLargeResultChars ?? 40_000);
+    const preserveNewestLargeResults = Math.max(0, options.preserveNewestLargeResults ?? 1);
     const recentStart = Math.max(0, history.length - recentMessages);
 
     let omittedMessages = 0;
     let omittedChars = 0;
+    let retainedLargeChars = 0;
+    let preservedLargeResults = 0;
+    const projected = [...history];
 
-    const projected = history.map((message, index): ChatMessage => {
-        if (index >= recentStart) { return message; }
-
-        if (message.role === 'tool' && message.content.length > largeResultChars) {
-            omittedMessages++;
-            omittedChars += message.content.length;
-            return {
-                ...message,
-                content: compactMarker(`prior ${message.toolName} result`, message.content.length),
-            };
-        }
-
-        if (
+    for (let index = history.length - 1; index >= 0; index--) {
+        const message = history[index];
+        const isNativeTool = message.role === 'tool';
+        const isCompatibilityTool =
             message.role === 'user' &&
             typeof message.content === 'string' &&
-            message.content.startsWith('[Tool Results]') &&
-            message.content.length > largeResultChars
-        ) {
-            omittedMessages++;
-            omittedChars += message.content.length;
-            return {
-                ...message,
-                content: compactMarker('prior compatibility tool results', message.content.length),
-            };
+            message.content.startsWith('[Tool Results]');
+        if (!isNativeTool && !isCompatibilityTool) { continue; }
+
+        const content = message.content as string;
+        if (content.length <= largeResultChars) { continue; }
+
+        const preserveNewest = preservedLargeResults < preserveNewestLargeResults;
+        const withinRecentBudget =
+            index >= recentStart &&
+            retainedLargeChars + content.length <= maxLargeResultChars;
+
+        if (preserveNewest || withinRecentBudget) {
+            preservedLargeResults++;
+            retainedLargeChars += content.length;
+            continue;
         }
 
-        return message;
-    });
+        omittedMessages++;
+        omittedChars += content.length;
+        projected[index] = isNativeTool
+            ? {
+                ...message,
+                content: compactMarker(`prior ${message.toolName} result`, content.length),
+            }
+            : {
+                ...message,
+                content: compactMarker('prior compatibility tool results', content.length),
+            };
+    }
 
     return { history: projected, omittedMessages, omittedChars };
 }
