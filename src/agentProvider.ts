@@ -1,7 +1,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as cp from 'child_process';
 import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
@@ -21,6 +20,7 @@ import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { fetchPublicText } from './urlFetcher';
 import { getNativeToolDefinitions, nativeToolCallToToolCall } from './nativeTools';
+import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
@@ -1960,7 +1960,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (this._allowAllTerminal) {
             granted = true;
         } else {
-            // Request permission inline in the chat (no VS Code modal)
             const permId = nodeCrypto.randomBytes(8).toString('hex');
             granted = await new Promise<boolean>((resolve) => {
                 this._pendingTerminalPermissions.set(permId, resolve);
@@ -1973,122 +1972,49 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return `[run_terminal] Denied by user:\n${tool.command}`;
         }
 
-        return new Promise<string>((resolve) => {
-            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            const shell = process.platform === 'win32'
-                ? (process.env.ComSpec || 'cmd.exe')
-                : (process.env.SHELL || '/bin/sh');
-            const shellArgs = process.platform === 'win32'
-                ? ['/d', '/s', '/c', tool.command]
-                : ['-c', tool.command];
+        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const timeoutSec = Math.max(
+            10,
+            vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300)
+        );
 
-            // ── Notify the webview so it can open a live terminal block ──
-            this._post({ type: 'terminalChunk', id: msgId, text: '' });
-
-            // Do not launch login shells: shell startup files are outside the
-            // workspace trust boundary and should not run for every agent command.
-            // On POSIX the shell leads its own process group so a timeout or Stop can
-            // kill everything it started, including background jobs (`server &`).
-            const useProcessGroup = process.platform !== 'win32';
-            const child = cp.spawn(shell, shellArgs, {
-                cwd,
-                env: process.env,
-                detached: useProcessGroup,
-            });
-
-            const timeoutSec = Math.max(10, vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300));
-            const TIMEOUT_MS = timeoutSec * 1000;
-            const killTree = (sig: NodeJS.Signals) => {
-                try {
-                    if (useProcessGroup && child.pid) { process.kill(-child.pid, sig); } else { child.kill(sig); }
-                } catch { /* already exited */ }
-            };
-
-            let timedOut = false;
-            let killTimer: ReturnType<typeof setTimeout> | undefined;
-            let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
-            let exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
-            const terminate = () => {
-                killTree('SIGTERM');
-                killTimer = setTimeout(() => killTree('SIGKILL'), 3_000);
-                // Settle even if something still holds the output pipes open
-                forceSettleTimer = setTimeout(() => finish(null, 'SIGKILL'), 5_000);
-            };
-            const timeoutTimer = setTimeout(() => { timedOut = true; terminate(); }, TIMEOUT_MS);
-
-            // Kill the command and everything it started when the user clicks Stop
-            const onAbort = () => terminate();
-            signal.addEventListener('abort', onAbort, { once: true });
-
-            const outputChunks: string[] = [];
-
-            const onData = (chunk: Buffer) => {
-                const text = chunk.toString('utf8');
-                outputChunks.push(text);
-                this._post({ type: 'terminalChunk', id: msgId, text });
-            };
-
-            child.stdout.on('data', onData);
-            child.stderr.on('data', onData);
-
-            // Guard against both 'error' and 'close' firing (e.g. ENOENT spawn failure)
-            let settled = false;
-            const settle = (result: string, success: boolean, errorMsg?: string) => {
-                if (settled) { return; }
-                settled = true;
-                clearTimeout(timeoutTimer);
-                clearTimeout(killTimer);
-                clearTimeout(forceSettleTimer);
-                clearTimeout(exitGraceTimer);
-                signal.removeEventListener('abort', onAbort);
-                // Stop reading: a background job may keep the pipes open indefinitely
-                child.stdout.destroy();
-                child.stderr.destroy();
-                this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success, error: errorMsg });
-                resolve(result);
-            };
-
-            const finish = (code: number | null, sig: NodeJS.Signals | null, note = '') => {
-                const output = outputChunks.join('') + note;
-                if (signal.aborted) {
-                    settle(`[run_terminal: ${tool.command}] Stopped by user.\n${output.slice(0, 4000)}`, false);
-                    return;
-                }
-                if (timedOut) {
-                    settle(
-                        `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. ` +
-                        `Long-running processes such as servers must not be started with run_terminal.)\n${output.slice(0, 4000)}`,
-                        false,
-                        `Timed out after ${timeoutSec}s`
-                    );
-                    return;
-                }
-                const exitCode = code ?? (sig ? 1 : 0);
-                const bgNote = useProcessGroup && child.pid && this._trackBackgroundGroup(child.pid, tool.command)
-                    ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
-                    : '';
-                settle(
-                    `[run_terminal: ${tool.command}]\nExit: ${exitCode}\n${output.slice(0, 4000)}${bgNote}`,
-                    exitCode === 0
-                );
-            };
-
-            // 'close' waits for every holder of the output pipes, which never happens when
-            // the command leaves a background job running. Once the shell itself exits,
-            // allow a moment for trailing output and then report the result.
-            child.on('exit', (code, sig) => {
-                exitGraceTimer = setTimeout(() => finish(code, sig), 1_000);
-            });
-            child.on('close', (code, sig) => finish(code, sig));
-
-            child.on('error', (err) => {
-                if (signal.aborted) {
-                    settle(`[run_terminal: ${tool.command}] Stopped by user.`, false);
-                    return;
-                }
-                settle(`[run_terminal: ${tool.command}] ERROR: ${err.message}`, false, err.message);
-            });
+        this._post({ type: 'terminalChunk', id: msgId, text: '' });
+        const result = await runTerminalProcess({
+            command: tool.command,
+            cwd,
+            timeoutMs: timeoutSec * 1000,
+            signal,
+            onChunk: (text) => this._post({ type: 'terminalChunk', id: msgId, text }),
         });
+
+        if (result.stopped) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false });
+            return `[run_terminal: ${tool.command}] Stopped by user.\n${result.output.slice(0, 4000)}`;
+        }
+        if (result.timedOut) {
+            const message = `Timed out after ${timeoutSec}s`;
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
+            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${result.output.slice(0, 4000)}`;
+        }
+        if (result.error) {
+            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: result.error });
+            return `[run_terminal: ${tool.command}] ERROR: ${result.error}`;
+        }
+
+        const bgNote = result.backgroundProcessGroup &&
+            this._trackBackgroundGroup(result.backgroundProcessGroup, tool.command)
+            ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
+            : '';
+        const success = result.exitCode === 0;
+        this._post({
+            type: 'toolResult',
+            id: msgId,
+            tool: 'run_terminal',
+            label: shortCmd,
+            success,
+            error: success ? undefined : `Exit ${result.exitCode}`,
+        });
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${result.output.slice(0, 4000)}${bgNote}`;
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */
@@ -2103,7 +2029,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private static _groupAlive(pgid: number): boolean {
-        try { process.kill(-pgid, 0); return true; } catch { return false; }
+        return processGroupAlive(pgid);
     }
 
     private _pruneBackgroundProcesses(): void {
@@ -2120,8 +2046,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private _killBackgroundProcesses(): void {
         for (const pgid of this._bgProcesses.keys()) {
-            try { process.kill(-pgid, 'SIGTERM'); } catch { /* already gone */ }
-            setTimeout(() => { try { process.kill(-pgid, 'SIGKILL'); } catch { /* exited */ } }, 3_000);
+            killProcessGroup(pgid, 'SIGTERM');
+            setTimeout(() => killProcessGroup(pgid, 'SIGKILL'), 3_000);
         }
         this._bgProcesses.clear();
         if (this._bgPollTimer) { clearInterval(this._bgPollTimer); this._bgPollTimer = undefined; }
