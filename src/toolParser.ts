@@ -262,12 +262,13 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
                 const endRaw = extractField(body, 'end_line');
                 const startLine = startRaw ? parseInt(startRaw, 10) : undefined;
                 const endLine = endRaw ? parseInt(endRaw, 10) : undefined;
-                tools.push({
+                const tool: ReadFileTool = {
                     type: 'read_file',
                     filepath: fp,
-                    startLine: startLine && startLine > 0 ? startLine : undefined,
-                    endLine: endLine && endLine > 0 ? endLine : undefined,
-                });
+                };
+                if (startLine && startLine > 0) { tool.startLine = startLine; }
+                if (endLine && endLine > 0) { tool.endLine = endLine; }
+                tools.push(tool);
             }
             break;
         }
