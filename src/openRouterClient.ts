@@ -17,17 +17,10 @@ export type MessageContentPart =
     | { type: 'image_url'; image_url: { url: string } };
 
 export type ChatMessage =
-    | {
-        role: 'system' | 'user' | 'assistant';
-        content: string | MessageContentPart[];
-        nativeToolCalls?: NativeToolCall[];
-      }
-    | {
-        role: 'tool';
-        content: string;
-        toolCallId: string;
-        toolName: string;
-      };
+    | { role: 'system'; content: string | MessageContentPart[] }
+    | { role: 'user'; content: string | MessageContentPart[] }
+    | { role: 'assistant'; content: string | MessageContentPart[]; nativeToolCalls?: NativeToolCall[] }
+    | { role: 'tool'; content: string; toolCallId: string; toolName: string };
 
 export interface OpenRouterEndpoint {
     protocol?: 'http:' | 'https:';
