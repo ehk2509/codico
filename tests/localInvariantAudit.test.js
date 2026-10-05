@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 
 const { buildLocalInvariantAudit } = require('../out/localInvariantAudit.js');
 
-test('stateful edits surface nearby lifecycle branches without hidden-test knowledge', () => {
+test('stateful edits classify semantic completion separately from transport closure', () => {
   const source = `
 function onLine(trimmed) {
   let streamEnded = false;
@@ -18,12 +18,18 @@ function onLine(trimmed) {
   res.on('error', handleError);
 }
 `.trim();
+
   const changed = "let gotTerminal = false;\nif (trimmed === 'data: [DONE]') { gotTerminal = true; pushEnd(); }";
   const audit = buildLocalInvariantAudit(source, changed);
+
   assert.match(audit, /Local invariant audit/);
+  assert.match(audit, /Semantic completion \/ normal terminal candidates/);
   assert.match(audit, /finishReason/);
+  assert.match(audit, /Transport closure \/ failure candidates/);
   assert.match(audit, /res\.on\('end'/);
   assert.match(audit, /res\.on\('error'/);
+  assert.match(audit, /every semantic completion\/normal-terminal candidate/i);
+  assert.match(audit, /explicit sentinel and a provider finish\/completion field/i);
   assert.match(audit, /resource\/transport closure distinct from semantic completion/i);
 });
 
