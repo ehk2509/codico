@@ -85,7 +85,7 @@ export class ExplorationController {
                 return {
                     isExploration: true,
                     guidance: '[System Verification] This is the one post-edit audit read. Check the requested change AND every ' +
-                        'preservation/negative constraint from the original task. Enumerate the normal success/completion/terminal paths ' +
+                        'preservation/negative constraint from the original task. Enumerate every normal success, completion, or terminal path ' +
                         'that must stay unchanged. After this read, do not read again: revise the edit or run a focused verification command.',
                 };
             }
