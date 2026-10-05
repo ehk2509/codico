@@ -106,3 +106,21 @@ test('post-edit native schema keeps verification local to the edited file', () =
   }
   assert.match(verification.find(tool => tool.name === 'run_terminal').description, /source-inspection shell commands are blocked/i);
 });
+
+
+test('post-edit native schema removes read_file after the local audit budget is consumed', () => {
+  const { nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const verification = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    false,
+  );
+  const names = new Set(verification.map(tool => tool.name));
+  assert.equal(names.has('read_file'), false);
+  assert.equal(names.has('edit_file'), true);
+  assert.equal(names.has('write_file'), true);
+  assert.equal(names.has('run_terminal'), true);
+  assert.equal(names.has('get_diagnostics'), true);
+});
