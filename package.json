@@ -1,8 +1,8 @@
 {
   "name": "codico",
   "displayName": "Codico",
-  "description": "Autonomous Coding Agent with live thinking visualization, file-write permissions, and OpenRouter streaming.",
-  "version": "0.0.1",
+  "description": "Autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, browser/MCP automation, and local Ollama.",
+  "version": "0.1.0",
   "publisher": "codico",
   "engines": {
     "vscode": "^1.85.0"
@@ -250,6 +250,11 @@
           "type": "boolean",
           "default": true,
           "description": "Use provider-native function/tool calling when supported. Disable to force compatibility fenced tools."
+        },
+        "codico.browserAllowPrivateNetwork": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow Codico browser automation to access localhost, private, link-local, and internal network destinations. Disabled by default for SSRF safety."
         },
         "codico.inlineCompletionsEnabled": {
           "type": "boolean",

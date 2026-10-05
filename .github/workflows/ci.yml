@@ -25,8 +25,25 @@ jobs:
       - run: npm test
 
 
-  vsix:
+  extension-host:
     needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - name: Install VS Code test harness
+        run: npm install --no-save @vscode/test-electron@2.5.2
+      - name: Run Extension Host smoke test
+        run: xvfb-run -a node tests/vscode/runTest.js
+
+
+  vsix:
+    needs: [test, extension-host]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -39,6 +56,10 @@ jobs:
         run: npx --yes @vscode/vsce package --out codico.vsix
       - name: Verify VSIX
         run: test -s codico.vsix
+      - name: Install VS Code test harness
+        run: npm install --no-save @vscode/test-electron@2.5.2
+      - name: Smoke-install packaged VSIX
+        run: node tests/vscode/installVsix.js codico.vsix
       - uses: actions/upload-artifact@v4
         with:
           name: codico-vsix

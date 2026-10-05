@@ -1502,12 +1502,25 @@ body { overflow-x: hidden; }
 window.__MODELS__ = JSON.parse(document.getElementById('models-data').textContent || '[]');
 </script>
 <script nonce="{{NONCE}}" src="{{MARKDOWN_JS_URI}}"></script>
+<script nonce="{{NONCE}}" src="{{STREAM_NOTICES_JS_URI}}"></script>
 <script nonce="{{NONCE}}">
 (function () {
   'use strict';
 
   var vscode = acquireVsCodeApi();
   var renderMd = window.CodicoMarkdown.renderMd;
+  var streamNotices = window.CodicoStreamNotices.create({
+    scrollBottom: scrollBottom,
+    sendMessage: function(text) {
+      vscode.postMessage({ type: 'sendMessage', text: text, contentParts: undefined });
+    },
+    compactAndContinue: function() {
+      _pendingContinueAfterCompact = true;
+      vscode.postMessage({ type: 'compactChat' });
+    }
+  });
+  var showStreamFinishReason = streamNotices.showStreamFinishReason;
+  var showStreamInlineError = streamNotices.showStreamInlineError;
 
   // ── Custom dropdown helpers ─────────────────────────────────────────────
   var _openDrop = null;
@@ -3641,86 +3654,7 @@ window.__MODELS__ = JSON.parse(document.getElementById('models-data').textConten
     scrollBottom();
   }
 
-  var FINISH_REASON_LABELS = {
-    length:         '⚠ Response cut off — model reached its output token limit.',
-    content_filter: '⚠ Response stopped by content filter.',
-    error:          '⚠ Model returned an error and stopped early.',
-  };
-
-  /** Append a soft warning inside the assistant message bubble. */
-  function showStreamFinishReason(msgId, reason) {
-    var label = FINISH_REASON_LABELS[reason] || ('⚠ Stream ended: ' + reason);
-    var wrap = document.getElementById('msg-' + msgId);
-    if (!wrap) { return; }
-    var el = document.createElement('div');
-    el.className = 'stream-stop-notice warn';
-    var txt = document.createElement('span');
-    txt.textContent = label;
-    el.appendChild(txt);
-    if (reason === 'length') {
-      var btn = document.createElement('button');
-      btn.className = 'continue-btn';
-      btn.textContent = '▶ Continue';
-      btn.title = 'Ask the model to continue from where it left off';
-      btn.addEventListener('click', function() {
-        btn.disabled = true;
-        btn.textContent = '…';
-        vscode.postMessage({ type: 'sendMessage', text: 'Continue', contentParts: undefined });
-      });
-      el.appendChild(btn);
-    }
-    var copyBtn = document.getElementById('copy-' + msgId);
-    if (copyBtn) { wrap.insertBefore(el, copyBtn); }
-    else { wrap.appendChild(el); }
-    scrollBottom();
-  }
-
-  /** Append an error notice inside the assistant message bubble (SSE-level error). */
-  function showStreamInlineError(msgId, message) {
-    var wrap = document.getElementById('msg-' + msgId);
-    if (!wrap) { return; }
-    var isCtxOverflow = /context.length|maximum context|context window|token.limit|too.long|exceed/i.test(message);
-    var isInterrupted = /stream interrupted|stream transport error|automatic recovery failed/i.test(message);
-    var el = document.createElement('div');
-    el.className = 'stream-stop-notice ' + (isCtxOverflow ? 'warn' : 'err');
-    var txt = document.createElement('span');
-    txt.textContent = isCtxOverflow
-      ? '⚠ Context limit reached — history is too long for the model.'
-      : isInterrupted
-        ? '⚠ Connection interrupted — Codico could not resume automatically.'
-        : '✕ Stream error: ' + message;
-    el.appendChild(txt);
-    if (isCtxOverflow) {
-      var btn = document.createElement('button');
-      btn.className = 'continue-btn';
-      btn.textContent = '↓↑ Compact & Continue';
-      btn.title = 'Summarize conversation history to free up context, then continue';
-      btn.addEventListener('click', function() {
-        btn.disabled = true;
-        btn.textContent = 'Compacting…';
-        _pendingContinueAfterCompact = true;
-        vscode.postMessage({ type: 'compactChat' });
-      });
-      el.appendChild(btn);
-    } else if (isInterrupted) {
-      var retryBtn = document.createElement('button');
-      retryBtn.className = 'continue-btn';
-      retryBtn.textContent = '▶ Continue';
-      retryBtn.title = 'Continue from the partial response';
-      retryBtn.addEventListener('click', function() {
-        retryBtn.disabled = true;
-        retryBtn.textContent = '…';
-        vscode.postMessage({ type: 'sendMessage', text: 'Continue exactly from where you stopped.', contentParts: undefined });
-      });
-      el.appendChild(retryBtn);
-    }
-    var copyBtn = document.getElementById('copy-' + msgId);
-    if (copyBtn) { wrap.insertBefore(el, copyBtn); }
-    else { wrap.appendChild(el); }
-    scrollBottom();
-  }
-
-  function showError(message) {
+  // Stream finish/error notices live in media/streamNotices.js.\n\n  function showError(message) {
     setStreaming(false);
     var isCtxOverflow = /context.length|maximum context|context window|token.limit|too.long|exceed/i.test(message);
     var el = document.createElement('div');

@@ -20,82 +20,13 @@ import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { fetchPublicText } from './urlFetcher';
-import { getNativeToolDefinitions, nativeToolCallToToolCall } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
+import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
+import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
-}
-
-// ─── Workspace diagnostics helpers (module-level, no class dependency) ────────
-
-/**
- * Count errors and warnings across the entire workspace.
- */
-function _countDiagnostics(): { errorCount: number; warningCount: number } {
-    let errorCount = 0;
-    let warningCount = 0;
-    for (const [, diags] of vscode.languages.getDiagnostics()) {
-        for (const d of diags) {
-            if (d.severity === vscode.DiagnosticSeverity.Error) { errorCount++; }
-            else if (d.severity === vscode.DiagnosticSeverity.Warning) { warningCount++; }
-        }
-    }
-    return { errorCount, warningCount };
-}
-
-/**
- * Build a compact, token-efficient summary of all workspace diagnostics
- * (errors first, then warnings). Returns null when the workspace is clean.
- *
- * - Capped at 60 entries to avoid prompt bloat.
- * - Groups by relative file path for readability.
- */
-function _buildWorkspaceDiagnosticsSummary(): string | null {
-    const CAP = 60;
-    type Entry = { rel: string; line: number; sev: 'ERROR' | 'WARNING'; msg: string; source?: string };
-    const entries: Entry[] = [];
-
-    for (const [uri, diags] of vscode.languages.getDiagnostics()) {
-        const rel = vscode.workspace.asRelativePath(uri);
-        for (const d of diags) {
-            if (d.severity !== vscode.DiagnosticSeverity.Error &&
-                d.severity !== vscode.DiagnosticSeverity.Warning) {
-                continue;
-            }
-            entries.push({
-                rel,
-                line: d.range.start.line + 1,
-                sev: d.severity === vscode.DiagnosticSeverity.Error ? 'ERROR' : 'WARNING',
-                msg: d.message.replace(/\n/g, ' ').slice(0, 200),
-                source: d.source ?? undefined,
-            });
-            if (entries.length >= CAP) { break; }
-        }
-        if (entries.length >= CAP) { break; }
-    }
-
-    if (entries.length === 0) { return null; }
-
-    // Errors first, then warnings; within each group sort by file then line
-    entries.sort((a, b) => {
-        if (a.sev !== b.sev) { return a.sev === 'ERROR' ? -1 : 1; }
-        if (a.rel !== b.rel) { return a.rel.localeCompare(b.rel); }
-        return a.line - b.line;
-    });
-
-    const errorCount = entries.filter(e => e.sev === 'ERROR').length;
-    const warnCount = entries.length - errorCount;
-    const truncated = entries.length >= CAP;
-
-    const lines = entries.map(e => {
-        const src = e.source ? `[${e.source}] ` : '';
-        return `${e.sev}  ${e.rel}:${e.line}  ${src}${e.msg}`;
-    });
-    if (truncated) { lines.push(`… (capped at ${CAP} — run get_diagnostics for the full list)`); }
-
-    const header = `Workspace Problems panel (${errorCount} error${errorCount !== 1 ? 's' : ''}, ${warnCount} warning${warnCount !== 1 ? 's' : ''}):`;
-    return `${header}\n${lines.join('\n')}`;
 }
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -313,7 +244,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
             // Watch Problems panel — push live error/warning counts to the webview badge
             const _postDiagCounts = (): void => {
-                const { errorCount, warningCount } = _countDiagnostics();
+                const { errorCount, warningCount } = countWorkspaceDiagnostics();
                 this._post({ type: 'diagnosticsChanged', errorCount, warningCount });
             };
             const diagWatcher = vscode.languages.onDidChangeDiagnostics(() => _postDiagCounts());
@@ -976,7 +907,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
                 let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
                 const inlineToolResults: string[] = [];
-                const nativeToolHistory: string[] = [];
+                const fencedToolResults: string[] = [];
+                const nativeToolExecutions: NativeToolExecution[] = [];
                 let recoverableStreamInterruption: string | null = null;
                 let recoverableFinishReason: string | null = null;
 
@@ -998,7 +930,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
                 };
 
-                const dispatchToolCall = async (tool: ToolCall): Promise<boolean> => {
+                const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     const fp = toolFingerprint(tool);
                     const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
                     _toolCallCounts.set(fp, callCount);
@@ -1007,15 +939,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
                         this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
-                        return false;
+                        return { keepGoing: false, result: nudge };
                     }
 
                     await this._dispatchTool(tool, msgId, signal);
-                    if (this._lastInlineResult !== undefined) {
-                        inlineToolResults.push(this._lastInlineResult);
-                        this._lastInlineResult = undefined;
-                    }
-                    return true;
+                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    this._lastInlineResult = undefined;
+                    inlineToolResults.push(result);
+                    return { keepGoing: true, result };
                 };
 
                 // Dispatch every newly complete tool fence, sending the text before each first.
@@ -1037,8 +968,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         // and create a new one after the pill
                         const tools = parseToolBody(fence.type, fence.body);
                         if (tools.length > 0) {
-                            const keepGoing = await dispatchToolCall(tools[0]);
-                            if (!keepGoing) { return; }
+                            const dispatched = await dispatchToolCall(tools[0]);
+                            fencedToolResults.push(dispatched.result);
+                            if (!dispatched.keepGoing) { return; }
                         }
                     }
                 };
@@ -1113,17 +1045,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         if (text) { await processContent(text); }
                     } else if (chunk.type === 'native_tool') {
-                        const tool = nativeToolCallToToolCall(chunk.call);
+                        const call: NativeToolCall & { id: string } = {
+                            ...chunk.call,
+                            id: chunk.call.id ?? `codico_${nodeCrypto.randomBytes(8).toString('hex')}`,
+                        };
+                        const tool = nativeToolCallToToolCall(call);
                         if (!tool) {
                             this._post({
                                 type: 'streamError',
                                 id: msgId,
-                                message: `Provider returned invalid arguments for native tool ${chunk.call.name}.`,
+                                message: `Provider returned invalid arguments for native tool ${call.name}.`,
                             });
                             continue;
                         }
-                        nativeToolHistory.push(tool.type);
-                        await dispatchToolCall(tool);
+                        const dispatched = await dispatchToolCall(tool);
+                        nativeToolExecutions.push({ call, result: dispatched.result });
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
@@ -1184,7 +1120,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         lastSentPos = fullContent.length;
                         dispatchedUpTo = fullContent.length;
-                        await dispatchToolCall(tools[0]);
+                        const dispatched = await dispatchToolCall(tools[0]);
+                        fencedToolResults.push(dispatched.result);
                     }
                 }
 
@@ -1194,25 +1131,27 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 if (signal.aborted) {
-                    // Avoid leaving history with a trailing 'user' message (from the previous
-                    // iteration's tool results) and no assistant reply — _isSessionInterrupted
-                    // would treat that as a resumable task on the next session load.
+                    // Preserve completed native tool calls/results even when the user stops
+                    // the turn after a tool has already finished.
                     if (fullContent.trim() || inlineToolResults.length > 0) {
-                        this._history.push({ role: 'assistant', content: fullContent || '(interrupted)' });
+                        appendAssistantIteration(
+                            this._history,
+                            fullContent,
+                            nativeToolExecutions,
+                            '(interrupted)'
+                        );
                     }
                     break;
                 }
 
-                const assistantHistoryContent = fullContent ||
-                    (nativeToolHistory.length > 0
-                        ? `[Native tool calls executed: ${nativeToolHistory.join(', ')}]`
-                        : recoverableStreamInterruption
-                            ? '[Stream interrupted before content]'
-                            : '[Assistant turn completed without text]');
-                this._history.push({
-                    role: 'assistant',
-                    content: assistantHistoryContent,
-                });
+                appendAssistantIteration(
+                    this._history,
+                    fullContent,
+                    nativeToolExecutions,
+                    recoverableStreamInterruption
+                        ? '[Stream interrupted before content]'
+                        : '[Assistant turn completed without text]'
+                );
 
                 // Unexpected transport EOFs are recoverable: preserve the partial
                 // assistant response and any tool results, then ask the model to
@@ -1223,8 +1162,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         streamRecoveryAttempts++;
 
                         const recoveryParts: string[] = [];
-                        if (inlineToolResults.length > 0) {
-                            recoveryParts.push(`[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`);
+                        if (fencedToolResults.length > 0) {
+                            recoveryParts.push(`[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`);
                         }
 
                         const cause = recoverableStreamInterruption
@@ -1303,9 +1242,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
                 }
 
-                // Inject tool results so the AI can continue
-                const resultText = `[Tool Results]\n\n${inlineToolResults.join('\n\n---\n\n')}`;
-                this._history.push({ role: 'user', content: resultText });
+                // Fenced compatibility tools return results as a normal user message.
+                // Native calls already have provider-native tool result turns above.
+                if (fencedToolResults.length > 0) {
+                    const resultText = `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`;
+                    this._history.push({ role: 'user', content: resultText });
+                }
 
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
@@ -1438,10 +1380,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         try {
             // Take last 6 turns, filtering out injected tool-result messages so the model
             // sees the actual conversation, not raw terminal/file output.
-            const recent = this._history.slice(-6).filter(m => {
+            const recent = this._history.slice(-8).filter(m => {
+                if (m.role === 'tool') { return false; }
                 if (typeof m.content !== 'string') { return true; }
                 return !m.content.startsWith('[Tool Results]');
-            });
+            }).slice(-6);
             if (recent.length === 0) { return; }
 
             const contextStr = recent.map(m => {
@@ -1686,6 +1629,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Dispatches a single tool call immediately, stores result in _lastInlineResult */
     private async _dispatchTool(tool: ToolCall, msgId: string, signal: AbortSignal): Promise<void> {
         if (signal.aborted) { return; }
+
+        if (tool.type.startsWith('browser_')) {
+            const allowPrivate = vscode.workspace.getConfiguration('codico')
+                .get<boolean>('browserAllowPrivateNetwork', false);
+            this._browser.setAllowPrivateNetwork(allowPrivate);
+        }
 
         // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
         if (this._chatMode) {
@@ -2614,7 +2563,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // Auto-inject workspace diagnostics (all Problems panel errors/warnings)
         if (config.get<boolean>('autoInjectDiagnostics', true)) {
-            const diagSummary = _buildWorkspaceDiagnosticsSummary();
+            const diagSummary = buildWorkspaceDiagnosticsSummary();
             if (diagSummary) { parts.push(diagSummary); }
         }
 
@@ -3214,6 +3163,10 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
             vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
         ).toString();
         html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
+        const streamNoticesUri = _webview.asWebviewUri(
+            vscode.Uri.joinPath(this._extensionUri, 'media', 'streamNotices.js')
+        ).toString();
+        html = html.replace('{{STREAM_NOTICES_JS_URI}}', streamNoticesUri);
         return html;
     }
 

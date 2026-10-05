@@ -503,6 +503,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
 | `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
 | `codico.nativeToolCalling` | `boolean` | `true` | Prefer provider-native structured tools; disable to force fenced compatibility mode |
+| `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
 | `codico.openTabsContext` | `boolean` | `true` | Include open editor tabs as additional context |
@@ -537,8 +538,12 @@ codico/
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
 │   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
 │   ├── nativeTools.ts               # Provider-neutral JSON schemas + native tool-call decoding
+│   ├── providerConversation.ts      # OpenAI/Anthropic/Gemini native tool history serializers
+│   ├── agentHistory.ts              # Provider-aware assistant/tool-result history mutation
+│   ├── workspaceDiagnostics.ts      # Workspace Problems summary/count helpers
 │   ├── streamCompletion.ts          # Stream cutoff detection and resume helpers
 │   ├── networkSecurity.ts           # Public-address/DNS validation and pinned lookups
+│   ├── browserNetworkPolicy.ts      # Browser public/private-network request policy
 │   ├── urlFetcher.ts                # Secure public URL fetch + redirect/text handling
 │   ├── terminalProcess.ts           # Cross-platform command/process-tree lifecycle
 │   ├── mcpEnvironment.ts            # Minimal environment policy for MCP child processes
@@ -566,6 +571,7 @@ codico/
 ├── media/
 │   ├── chat.html                    # Main vanilla-JS webview UI
 │   ├── markdown.js                  # Extracted Markdown/tool-fence renderer
+│   ├── streamNotices.js             # Extracted cutoff/error/continue UI
 │   ├── models.json                  # Model list for the dropdown (free / premium / direct / local)
 │   └── icon.svg                     # Activity bar icon
 ├── out/                             # Compiled JS (git-ignored)
@@ -584,6 +590,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers, pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
+- **Browser network boundary** — browser automation validates every HTTP(S) navigation, redirect, and subresource against the same public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text
 - **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
@@ -601,7 +608,7 @@ npm test
 # Press F5 in VS Code to launch the Extension Development Host
 ```
 
-CI runs compile/regression tests on Linux, Windows, and macOS, then packages a VSIX as a separate gate. The packaged VSIX is uploaded as a workflow artifact.
+CI runs compile/regression tests on Linux, Windows, and macOS, then launches Codico inside a real VS Code Extension Host and smoke-installs the packaged VSIX before uploading it as an artifact.
 
 To package locally:
 
@@ -611,6 +618,7 @@ npx @vscode/vsce package --out codico.vsix
 
 ### Releases
 
-- Push a tag matching the package version (for example `v0.1.0`) to run the release workflow, rebuild/test the extension, create `codico.vsix`, and attach it to a GitHub Release.
+- Codico is versioned as `0.1.0` for the first release candidate.
+- Push a tag matching the package version (for example `v0.1.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
 - Manual workflow dispatch can also publish the validated VSIX to the Visual Studio Marketplace (`VSCE_PAT`) and/or Open VSX (`OVSX_PAT`).
 - Tag releases fail if the Git tag does not exactly match `package.json#version`.
