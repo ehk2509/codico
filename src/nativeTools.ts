@@ -3,18 +3,7 @@ import {
     UpdateTodoTool,
 } from './toolParser';
 
-export interface JsonSchema {
-    type: 'object';
-    properties: Record<string, {
-        type?: string;
-        description?: string;
-        enum?: unknown[];
-        items?: unknown;
-        additionalProperties?: boolean;
-    }>;
-    required?: string[];
-    additionalProperties?: boolean;
-}
+export type JsonSchema = Record<string, unknown>;
 
 export interface NativeToolDefinition {
     name: ToolCall['type'];
