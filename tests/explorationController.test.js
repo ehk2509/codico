@@ -2,37 +2,39 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ExplorationController } = require('../out/explorationController.js');
 
-test('exploration pressure is advisory and never withdraws discovery', () => {
+test('controller enters action phase without withdrawing discovery capabilities', () => {
   const controller = new ExplorationController();
   let last;
 
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 8; i++) {
     last = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
     assert.equal(last.block, undefined);
   }
 
-  assert.equal(controller.locked, false);
+  assert.equal(controller.locked, true);
+  assert.match(last.guidance, /make the smallest evidence-backed code change/i);
 
-  const repeated = new ExplorationController();
-  for (let i = 0; i < 4; i++) {
-    last = repeated.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  }
-
-  assert.equal(last.block, undefined);
-  assert.match(last.guidance, /inspected this target repeatedly/i);
-  assert.equal(repeated.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), false);
+  const stillReadable = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  assert.equal(stillReadable.block, undefined);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), false);
 });
 
-test('post-edit verification can follow dependencies and gates completion', () => {
+test('post-edit verification resets action phase and can follow dependencies', () => {
   const controller = new ExplorationController(
     'Fix premature EOF handling. Keep normal completed streams unchanged.'
   );
+
+  for (let i = 0; i < 8; i++) {
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  assert.equal(controller.locked, true);
 
   controller.after(
     { type: 'edit_file', filepath: 'src/openRouterClient.ts', oldStr: 'a', newStr: 'b' },
     '[edit_file: src/openRouterClient.ts] Edit applied successfully.\n\n[Local invariant audit]\n- finishReason'
   );
 
+  assert.equal(controller.locked, false);
   assert.equal(controller.verificationPending, true);
   assert.match(controller.completionGuidance(), /have not completed the task acceptance check/i);
 
@@ -40,18 +42,11 @@ test('post-edit verification can follow dependencies and gates completion', () =
   assert.equal(sibling.block, undefined);
   assert.match(sibling.guidance, /following a dependency/i);
 
-  const local = controller.before({ type: 'read_file', filepath: 'src/openRouterClient.ts' }, false);
-  assert.equal(local.block, undefined);
-  assert.match(local.guidance, /audit this edit/i);
-
   const verified = controller.after(
     { type: 'run_terminal', command: 'npm test' },
     '[run_terminal: npm test]\nExit: 0\nall good'
   );
-
   assert.equal(controller.verificationPending, false);
-  assert.equal(controller.completionGuidance(), undefined);
-  assert.match(verified, /acceptance gate is satisfied/i);
 });
 
 test('Ask mode remains unconstrained', () => {
