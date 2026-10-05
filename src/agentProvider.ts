@@ -22,80 +22,11 @@ import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, norma
 import { fetchPublicText } from './urlFetcher';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
+import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
+import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
-}
-
-// ─── Workspace diagnostics helpers (module-level, no class dependency) ────────
-
-/**
- * Count errors and warnings across the entire workspace.
- */
-function _countDiagnostics(): { errorCount: number; warningCount: number } {
-    let errorCount = 0;
-    let warningCount = 0;
-    for (const [, diags] of vscode.languages.getDiagnostics()) {
-        for (const d of diags) {
-            if (d.severity === vscode.DiagnosticSeverity.Error) { errorCount++; }
-            else if (d.severity === vscode.DiagnosticSeverity.Warning) { warningCount++; }
-        }
-    }
-    return { errorCount, warningCount };
-}
-
-/**
- * Build a compact, token-efficient summary of all workspace diagnostics
- * (errors first, then warnings). Returns null when the workspace is clean.
- *
- * - Capped at 60 entries to avoid prompt bloat.
- * - Groups by relative file path for readability.
- */
-function _buildWorkspaceDiagnosticsSummary(): string | null {
-    const CAP = 60;
-    type Entry = { rel: string; line: number; sev: 'ERROR' | 'WARNING'; msg: string; source?: string };
-    const entries: Entry[] = [];
-
-    for (const [uri, diags] of vscode.languages.getDiagnostics()) {
-        const rel = vscode.workspace.asRelativePath(uri);
-        for (const d of diags) {
-            if (d.severity !== vscode.DiagnosticSeverity.Error &&
-                d.severity !== vscode.DiagnosticSeverity.Warning) {
-                continue;
-            }
-            entries.push({
-                rel,
-                line: d.range.start.line + 1,
-                sev: d.severity === vscode.DiagnosticSeverity.Error ? 'ERROR' : 'WARNING',
-                msg: d.message.replace(/\n/g, ' ').slice(0, 200),
-                source: d.source ?? undefined,
-            });
-            if (entries.length >= CAP) { break; }
-        }
-        if (entries.length >= CAP) { break; }
-    }
-
-    if (entries.length === 0) { return null; }
-
-    // Errors first, then warnings; within each group sort by file then line
-    entries.sort((a, b) => {
-        if (a.sev !== b.sev) { return a.sev === 'ERROR' ? -1 : 1; }
-        if (a.rel !== b.rel) { return a.rel.localeCompare(b.rel); }
-        return a.line - b.line;
-    });
-
-    const errorCount = entries.filter(e => e.sev === 'ERROR').length;
-    const warnCount = entries.length - errorCount;
-    const truncated = entries.length >= CAP;
-
-    const lines = entries.map(e => {
-        const src = e.source ? `[${e.source}] ` : '';
-        return `${e.sev}  ${e.rel}:${e.line}  ${src}${e.msg}`;
-    });
-    if (truncated) { lines.push(`… (capped at ${CAP} — run get_diagnostics for the full list)`); }
-
-    const header = `Workspace Problems panel (${errorCount} error${errorCount !== 1 ? 's' : ''}, ${warnCount} warning${warnCount !== 1 ? 's' : ''}):`;
-    return `${header}\n${lines.join('\n')}`;
 }
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -313,7 +244,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
             // Watch Problems panel — push live error/warning counts to the webview badge
             const _postDiagCounts = (): void => {
-                const { errorCount, warningCount } = _countDiagnostics();
+                const { errorCount, warningCount } = countWorkspaceDiagnostics();
                 this._post({ type: 'diagnosticsChanged', errorCount, warningCount });
             };
             const diagWatcher = vscode.languages.onDidChangeDiagnostics(() => _postDiagCounts());
@@ -977,7 +908,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
                 const inlineToolResults: string[] = [];
                 const fencedToolResults: string[] = [];
-                const nativeToolExecutions: Array<{ call: NativeToolCall; result: string }> = [];
+                const nativeToolExecutions: NativeToolExecution[] = [];
                 let recoverableStreamInterruption: string | null = null;
                 let recoverableFinishReason: string | null = null;
 
@@ -1114,7 +1045,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         if (text) { await processContent(text); }
                     } else if (chunk.type === 'native_tool') {
-                        const call: NativeToolCall = {
+                        const call: NativeToolCall & { id: string } = {
                             ...chunk.call,
                             id: chunk.call.id ?? `codico_${nodeCrypto.randomBytes(8).toString('hex')}`,
                         };
@@ -1209,27 +1140,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     break;
                 }
 
-                const assistantHistoryContent = fullContent ||
-                    (recoverableStreamInterruption
+                appendAssistantIteration(
+                    this._history,
+                    fullContent,
+                    nativeToolExecutions,
+                    recoverableStreamInterruption
                         ? '[Stream interrupted before content]'
-                        : nativeToolExecutions.length > 0
-                            ? ''
-                            : '[Assistant turn completed without text]');
-                this._history.push({
-                    role: 'assistant',
-                    content: assistantHistoryContent,
-                    ...(nativeToolExecutions.length > 0
-                        ? { nativeToolCalls: nativeToolExecutions.map(execution => execution.call) }
-                        : {}),
-                });
-                for (const execution of nativeToolExecutions) {
-                    this._history.push({
-                        role: 'tool',
-                        content: execution.result,
-                        toolCallId: execution.call.id!,
-                        toolName: execution.call.name,
-                    });
-                }
+                        : '[Assistant turn completed without text]'
+                );
 
                 // Unexpected transport EOFs are recoverable: preserve the partial
                 // assistant response and any tool results, then ask the model to
@@ -2640,7 +2558,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // Auto-inject workspace diagnostics (all Problems panel errors/warnings)
         if (config.get<boolean>('autoInjectDiagnostics', true)) {
-            const diagSummary = _buildWorkspaceDiagnosticsSummary();
+            const diagSummary = buildWorkspaceDiagnosticsSummary();
             if (diagSummary) { parts.push(diagSummary); }
         }
 
