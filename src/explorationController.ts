@@ -145,7 +145,7 @@ export class ExplorationController {
 
             return '[System Follow-through] Code changed. Verify the full task acceptance contract before broadening. ' +
                 (this._verificationAuditSeen
-                    ? 'A Local invariant audit is attached below; review every listed normal success/completion/terminal path. '
+                    ? 'Review the attached Local invariant audit; check every listed normal success/completion/terminal path. '
                     : 'You may re-read the edited file once for a focused local audit. ') +
                 'Check every preservation/negative constraint from the original request, then revise the edit if needed or run the narrowest verification command.';
         }
