@@ -2,8 +2,6 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
-import * as http from 'http';
-import * as https from 'https';
 import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
@@ -21,7 +19,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { resolvePublicHttpUrl } from './networkSecurity';
+import { fetchPublicText } from './urlFetcher';
 import { getNativeToolDefinitions, nativeToolCallToToolCall } from './nativeTools';
 
 function getNonce(): string {
@@ -2431,160 +2429,19 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._post({ type: 'browserScreenshot', id: msgId, dataUrl, url: this._browser.currentUrl });
     }
 
-    private async _handleFetchUrl(tool: FetchUrlTool, msgId: string, _redirectDepth = 0): Promise<string> {
-        const MAX_CHARS = 24_000;
-        if (_redirectDepth === 0 && !await this._confirmExternalAction('fetch a URL', tool.url)) {
+    private async _handleFetchUrl(tool: FetchUrlTool, msgId: string): Promise<string> {
+        if (!await this._confirmExternalAction('fetch a URL', tool.url)) {
             return `[fetch_url: ${tool.url}] Denied by user`;
         }
+
         try {
-            // Resolve + validate DNS before connecting, then pin the request to the
-            // validated public address set to prevent DNS rebinding.
-            let resolvedUrl: Awaited<ReturnType<typeof resolvePublicHttpUrl>>;
-            try {
-                resolvedUrl = await resolvePublicHttpUrl(tool.url);
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                return `[fetch_url: ${tool.url}] ERROR: ${message}`;
-            }
-            const parsed = resolvedUrl.url;
-
-            const rawHtml = await new Promise<string>((resolve, reject) => {
-                // Guard against double-settle: req.destroy() can emit 'error' after
-                // the redirect recursive call already resolved/rejected the promise.
-                let settled = false;
-                const once = {
-                    resolve: (v: string)  => { if (!settled) { settled = true; resolve(v); } },
-                    reject:  (e: unknown) => { if (!settled) { settled = true; reject(e);  } },
-                };
-                const mod = parsed.protocol === 'https:' ? https : http;
-                const req = mod.get(parsed, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (compatible; Codico/1.0)',
-                        'Accept': 'text/html,application/xhtml+xml,*/*',
-                    },
-                    timeout: 15_000,
-                    lookup: resolvedUrl.lookup,
-                }, (res: http.IncomingMessage) => {
-                    // Follow redirects (up to 5)
-                    if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308)
-                        && res.headers.location) {
-                        req.destroy();
-                        if (_redirectDepth >= 5) {
-                            once.reject(new Error('Too many redirects'));
-                            return;
-                        }
-                        let redirectUrl: URL;
-                        // Resolve against the current URL so relative redirects are handled.
-                        try { redirectUrl = new URL(res.headers.location, parsed); } catch {
-                            once.reject(new Error(`Invalid redirect URL: ${res.headers.location}`));
-                            return;
-                        }
-                        // The recursive request performs fresh DNS validation and pins its
-                        // own connection, so every redirect hop is protected too.
-                        this._handleFetchUrl({ ...tool, url: redirectUrl.href }, msgId, _redirectDepth + 1)
-                            .then(once.resolve).catch(once.reject);
-                        return;
-                    }
-                    if (res.statusCode && res.statusCode >= 400) {
-                        req.destroy();
-                        once.reject(new Error(`HTTP ${res.statusCode}`));
-                        return;
-                    }
-                    const chunks: Buffer[] = [];
-                    let totalBytes = 0;
-                    res.on('data', (d: Buffer) => {
-                        totalBytes += d.length;
-                        if (totalBytes > 5 * 1024 * 1024) {
-                            // Destroy the response (not just req) to stop data events immediately
-                            // and prevent chunks from growing further in memory after the cap.
-                            res.destroy();
-                            once.resolve(Buffer.concat([...chunks, d]).toString('utf8'));
-                            return;
-                        }
-                        chunks.push(d);
-                    });
-                    res.on('end', () => once.resolve(Buffer.concat(chunks).toString('utf8')));
-                    res.on('error', once.reject);
-                });
-                req.on('error', once.reject);
-                req.on('timeout', () => { req.destroy(); once.reject(new Error('Request timed out')); });
-            });
-
-            // Strip HTML tags, collapse whitespace — keep readable text
-            const text = rawHtml
-                .replace(/<script[\s\S]*?<\/script>/gi, '')
-                .replace(/<style[\s\S]*?<\/style>/gi, '')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/&nbsp;/gi, ' ')
-                .replace(/&amp;/gi, '&')
-                .replace(/&lt;/gi, '<')
-                .replace(/&gt;/gi, '>')
-                .replace(/&quot;/gi, '"')
-                .replace(/&#39;/gi, "'")
-                .replace(/[ \t]+/g, ' ')
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
-
-            const truncated = text.length > MAX_CHARS
-                ? text.slice(0, MAX_CHARS) + `\n… (truncated at ${MAX_CHARS} chars)`
-                : text;
-
-            if (_redirectDepth === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
-            }
-            return `[fetch_url: ${tool.url}]\n${truncated}`;
+            const text = await fetchPublicText(tool.url);
+            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
+            return `[fetch_url: ${tool.url}]\n${text}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            if (_redirectDepth === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
-            }
+            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
             return `[fetch_url: ${tool.url}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleGetDiagnostics(tool: GetDiagnosticsTool, msgId: string): Promise<string> {
-        try {
-            let pairs: [vscode.Uri, readonly vscode.Diagnostic[]][];
-
-            if (tool.filepath) {
-                const folders = vscode.workspace.workspaceFolders;
-                if (!folders || folders.length === 0) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: 'workspace', success: false, error: 'No workspace folder open' });
-                    return '[get_diagnostics] ERROR: No workspace folder open';
-                }
-                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-                if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
-                    return `[get_diagnostics: ${tool.filepath}] ERROR: Unsafe path rejected`;
-                }
-                const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
-                pairs = [[fileUri, vscode.languages.getDiagnostics(fileUri)]];
-            } else {
-                pairs = vscode.languages.getDiagnostics();
-            }
-
-            const lines: string[] = [];
-            let count = 0;
-            for (const [uri, diags] of pairs) {
-                const relPath = vscode.workspace.asRelativePath(uri);
-                for (const d of diags) {
-                    if (count >= 50) { lines.push('… (truncated at 50)'); break; }
-                    const sev = ['\u{1F534} ERROR', '\u26A0\uFE0F WARN', '\u2139\uFE0F INFO', '\uD83D\uDCA1 HINT'][d.severity] ?? 'DIAG';
-                    lines.push(`${relPath}:${d.range.start.line + 1}:${d.range.start.character + 1}: ${sev}: ${d.message}`);
-                    count++;
-                }
-                if (count >= 50) { break; }
-            }
-
-            const label = tool.filepath ?? 'workspace';
-            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label, success: true });
-            return lines.length === 0
-                ? `[get_diagnostics: ${label}] No diagnostics — workspace is clean!`
-                : `[get_diagnostics: ${label}]\n${lines.join('\n')}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath ?? 'workspace', success: false, error: message });
-            return `[get_diagnostics] ERROR: ${message}`;
         }
     }
 
