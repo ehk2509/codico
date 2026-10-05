@@ -251,6 +251,11 @@
           "default": true,
           "description": "Use provider-native function/tool calling when supported. Disable to force compatibility fenced tools."
         },
+        "codico.browserAllowPrivateNetwork": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow Codico browser automation to access localhost, private, link-local, and internal network destinations. Disabled by default for SSRF safety."
+        },
         "codico.inlineCompletionsEnabled": {
           "type": "boolean",
           "default": true,
