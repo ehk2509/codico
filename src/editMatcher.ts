@@ -100,3 +100,60 @@ export function resolveEditMatch(source: string, requestedOldText: string): Edit
 export function applyEditMatch(source: string, match: EditMatch, replacement: string): string {
     return source.slice(0, match.start) + replacement + source.slice(match.end);
 }
+
+
+/**
+ * Returns a small current-source excerpt near the strongest line-level anchor
+ * from a failed edit request. This does not relax matching; it only gives the
+ * model fresh evidence so it can retry with an exact current old_str.
+ */
+export function editFailureContext(
+    source: string,
+    requestedOldText: string,
+    contextLines = 3,
+): string {
+    const sourceLines = source.split('\n');
+    const requestedLines = requestedOldText
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.length >= 4)
+        .sort((a, b) => b.length - a.length);
+
+    let anchor = -1;
+    for (const requested of requestedLines) {
+        const matches: number[] = [];
+        for (let i = 0; i < sourceLines.length; i++) {
+            if (sourceLines[i].trim() === requested) { matches.push(i); }
+            if (matches.length > 1) { break; }
+        }
+        if (matches.length === 1) {
+            anchor = matches[0];
+            break;
+        }
+    }
+
+    if (anchor < 0) {
+        const identifiers = [...new Set(
+            requestedOldText.match(/[A-Za-z_$][\w$]{3,}/g) ?? []
+        )].slice(0, 12);
+        let bestScore = 0;
+        for (let i = 0; i < sourceLines.length; i++) {
+            const score = identifiers.reduce(
+                (sum, identifier) => sum + (sourceLines[i].includes(identifier) ? 1 : 0),
+                0,
+            );
+            if (score > bestScore) {
+                bestScore = score;
+                anchor = i;
+            }
+        }
+        if (bestScore === 0) { return ''; }
+    }
+
+    const from = Math.max(0, anchor - contextLines);
+    const to = Math.min(sourceLines.length, anchor + contextLines + 1);
+    return sourceLines
+        .slice(from, to)
+        .map((line, index) => `${from + index + 1}: ${line}`)
+        .join('\n');
+}
