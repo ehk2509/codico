@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - eval/pr13-advisory-exploration-holdout
+# PR13 targeted reliability holdout
   workflow_dispatch:
     inputs:
       model:
