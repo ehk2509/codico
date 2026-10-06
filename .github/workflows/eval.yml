@@ -1,0 +1,43 @@
+name: Coding Holdout
+
+on:
+  push:
+    branches:
+      - 'eval/pr11-token-efficient-resume-overlap'
+
+permissions:
+  contents: read
+
+jobs:
+  coding-holdout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run token-efficient resume-overlap holdout
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
+          xvfb-run -a npm run eval:coding -- \
+            --model "deepseek/deepseek-v4-flash" \
+            --filter "stream-resume-overlap" \
+            --limit "1" \
+            --repetitions "1"
+
+      - name: Upload holdout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codico-pr11-token-efficient-resume-overlap
+          path: eval/results/
+          if-no-files-found: warn
