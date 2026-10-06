@@ -2,7 +2,7 @@ import type { ToolCall } from './toolParser';
 import type { NativeToolDefinition } from './nativeTools';
 import { nativeToolsForAgentPhase } from './nativeTools';
 import { systemPromptForAgentPhase } from './agentPhasePrompt';
-import { buildTaskAcceptanceContract } from './taskAcceptance';
+import { buildTaskAcceptanceContract, taskLikelyRequiresMutation } from './taskAcceptance';
 import {
     explorationDecision,
     explorationTarget,
@@ -34,9 +34,15 @@ export class ExplorationController {
     private _integrationRecoveryIterations = 0;
     private _lastIntegrationRecoveryIteration = -1;
     private _focusedAction = false;
+    private _focusedReadIterations = 0;
+    private _lastFocusedReadIteration = -1;
     private readonly taskContract: string;
+    private readonly mutationRequired: boolean;
 
-    constructor(rawTask = '') { this.taskContract = buildTaskAcceptanceContract(rawTask); }
+    constructor(rawTask = '') {
+        this.taskContract = buildTaskAcceptanceContract(rawTask);
+        this.mutationRequired = taskLikelyRequiresMutation(rawTask);
+    }
 
     /** Called exactly once for each model/agent turn. */
     public beginIteration(): void { this._iteration++; }
@@ -45,6 +51,7 @@ export class ExplorationController {
     public get verificationPending(): boolean { return this._verificationPending; }
     public get verificationFile(): string | undefined { return this._verificationFile; }
     public get focusedAction(): boolean { return this._focusedAction; }
+    public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
 
     /**
      * True means the edited file still needs an explicit post-edit control-flow
@@ -55,7 +62,14 @@ export class ExplorationController {
     }
 
     public completionGuidance(): string | undefined {
-        if (!this._verificationPending) { return undefined; }
+        if (!this._verificationPending) {
+            if (this._focusedAction && this.mutationRequired) {
+                return this.focusedReadExhausted
+                    ? '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Focused source reading is complete. Do not finish yet: make the smallest evidence-backed edit now.'
+                    : '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Use at most the remaining bounded focused read, then edit. Do not finish with analysis only.';
+            }
+            return undefined;
+        }
         if (this._unwiredImports.size) {
             return '[System Verification] An edited file still contains an unreferenced local import: ' +
                 [...this._unwiredImports].join(', ') +
@@ -84,6 +98,9 @@ export class ExplorationController {
             this._focusedAction,
         );
         if (!prompt) { return prompt; }
+        if (this._focusedAction && this.focusedReadExhausted && this._unwiredImports.size === 0) {
+            return prompt + '\n\n## Focused reading complete\nNo more source reads are needed. Make the smallest evidence-backed code change now, then verify it.';
+        }
         if (this._unwiredImports.size === 0) { return prompt; }
         return prompt + '\n\n## Blocking integration issue\n' +
             'A local helper is imported but still unused in: ' +
@@ -102,6 +119,7 @@ export class ExplorationController {
             this.verificationReadAllowed,
             this._unwiredImports.size > 0,
             this._focusedAction,
+            this.focusedReadExhausted,
         );
     }
 
@@ -159,15 +177,28 @@ export class ExplorationController {
         if (this._focusedAction) {
             if (tool.type === 'read_file') {
                 const bounded = tool.startLine !== undefined || tool.endLine !== undefined;
-                return bounded
-                    ? {
-                        isExploration: true,
-                        guidance: '[System Focused Action] Use this bounded source range as exact edit context, then mutate. Do not restart broad discovery.',
-                    }
-                    : {
+                if (!bounded) {
+                    return {
                         isExploration: true,
                         block: '[System Focused Action] Broad reads are closed. Use explicit start_line/end_line on an identified file, or edit now.',
                     };
+                }
+                if (this._lastFocusedReadIteration !== this._iteration) {
+                    this._lastFocusedReadIteration = this._iteration;
+                    this._focusedReadIterations++;
+                }
+                if (this._focusedReadIterations > 2) {
+                    return {
+                        isExploration: true,
+                        block: '[System Focused Action] The two focused source-read turns are exhausted. Make the smallest evidence-backed edit now.',
+                    };
+                }
+                return {
+                    isExploration: true,
+                    guidance: this.focusedReadExhausted
+                        ? '[System Focused Action] This is the final bounded source-read turn. Use it as exact edit context and mutate in the next turn.'
+                        : '[System Focused Action] Use this bounded source range as exact edit context, then mutate. Do not restart broad discovery.',
+                };
             }
             return {
                 isExploration: true,
@@ -182,10 +213,14 @@ export class ExplorationController {
             }
             if (this._actionEscapeIterations > 4) {
                 this._focusedAction = true;
+                this._focusedReadIterations = 0;
+                this._lastFocusedReadIteration = -1;
                 if (tool.type === 'read_file' && (tool.startLine !== undefined || tool.endLine !== undefined)) {
+                    this._focusedReadIterations = 1;
+                    this._lastFocusedReadIteration = this._iteration;
                     return {
                         isExploration: true,
-                        guidance: '[System Focused Action] Broad discovery is now closed. Use this bounded range as final edit context, then mutate.',
+                        guidance: '[System Focused Action] Broad discovery is now closed. Use this bounded range as exact edit context; one additional focused read turn remains before you must mutate.',
                     };
                 }
                 return {
@@ -245,6 +280,8 @@ export class ExplorationController {
             this._actionEscapeIterations = 0;
             this._lastActionEscapeIteration = -1;
             this._focusedAction = false;
+            this._focusedReadIterations = 0;
+            this._lastFocusedReadIteration = -1;
             this._lockedAtIteration = -1;
             this._lastExplorationIteration = -1;
             this.targetVisits.clear();
