@@ -23,13 +23,17 @@ export const FOCUSED_ACTION_SYSTEM_PROMPT = `## Current phase — focused action
 Broad repository discovery is complete. Do not restart searches, listings, symbol scans, fetches, or source-inspection shell commands such as grep/cat/find.
 You already have enough evidence to choose the implementation area.
 
-Only one kind of discovery remains appropriate: a bounded read_file with explicit start_line/end_line on an already identified file when exact edit text is missing.
+Only two focused evidence turns remain, and they must stay inside files you already identified:
+- search_files is allowed only when glob is exactly one file that was already read; use it only to locate relevant line numbers;
+- read_file is allowed only with explicit start_line/end_line on an identified file.
+
+Repo-wide globs, listings, symbol scans, fetches, and source-inspection shell commands remain closed.
 Do not use terminal commands to recover source context.
-After that bounded range, edit immediately. If edit_file misses, its result will include fresh nearby source context for the next edit.
+After at most those two locator/read turns, edit immediately. If edit_file misses, its result will include fresh nearby source context for the next edit.
 
 Prefer edit_file or write_file now, then run the narrowest relevant verification command.
 
-The goal is: existing evidence → at most one precise source range → code change → verification.`;
+The goal is: existing evidence → exact-file locator → precise source range → code change → verification.`;
 
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
