@@ -264,3 +264,28 @@ test('post-mutation verification keeps repeated evidence reads and searches avai
   assert.equal(controller.verificationPending, true);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -n resume src/agentProvider.ts' }), false);
 });
+
+
+test('mutation-required task cannot complete before a successful edit', () => {
+  const controller = new ExplorationController('Fix the stream resume overlap bug.', 16);
+
+  for (let turn = 0; turn < 30; turn++) {
+    controller.beginIteration();
+    const check = controller.before(
+      { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
+      false,
+    );
+    assert.equal(check.block, undefined);
+  }
+
+  assert.equal(controller.mutationGracePending, true);
+  assert.match(controller.completionGuidance(), /requires a code change/i);
+
+  controller.after(
+    { type: 'edit_file', filepath: 'src/agentProvider.ts', oldStr: 'before', newStr: 'after' },
+    '[edit_file: src/agentProvider.ts] Edit applied successfully.'
+  );
+
+  assert.equal(controller.mutationGracePending, false);
+  assert.equal(controller.verificationPending, true);
+});
