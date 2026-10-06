@@ -176,8 +176,6 @@ export class ExplorationController {
         if (decision.lock && !this._locked) {
             this._locked = true;
             this._lockedAtIteration = this._iteration;
-            this._actionEscapeIterations = 0;
-            this._lastActionEscapeIteration = -1;
         }
         return { isExploration: true, guidance: decision.guidance };
     }
@@ -188,10 +186,6 @@ export class ExplorationController {
     }
 
     public after(tool: ToolCall, result = ''): string | undefined {
-        if (tool.type === 'read_file' && !/\bERROR\b/.test(result)) {
-            this.knownFiles.add(normalizeWorkspacePath(tool.filepath));
-        }
-
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
             if (!/\b(?:Edit applied successfully|Written successfully)\b/.test(result)) {
                 return '[System Follow-through] The edit was not applied. Resolve the tool failure before counting this as a code change.';
