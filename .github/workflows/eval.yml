@@ -41,3 +41,5 @@ jobs:
           name: codico-pr11-on-v6-token-efficient
           path: eval/results/
           if-no-files-found: warn
+
+# trigger token-efficient v6 comparison
