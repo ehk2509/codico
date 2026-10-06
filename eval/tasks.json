@@ -268,5 +268,5 @@
     }
   ],
   "maxTotalTokens": 400000,
-  "maxTaskMinutes": 15
+  "maxTaskMinutes": 0
 }
