@@ -37,10 +37,20 @@ test('pending mutation receives a bounded grace without reopening pure explorati
   assert.equal(shouldRunAgentIteration(19, 16, false, 4, true, 3), false);
 });
 
-test('mutation and verification grace share an absolute ceiling instead of stacking', () => {
-  assert.equal(shouldRunAgentIteration(18, 16, true, 4, true, 3), true);
-  assert.equal(shouldRunAgentIteration(19, 16, true, 4, true, 3), true);
-  assert.equal(shouldRunAgentIteration(20, 16, true, 4, true, 3), false);
+test('verification grace refreshes after late mutation but remains globally bounded', () => {
+  assert.equal(shouldRunAgentIteration(20, 16, true, 4, false, 3, 19), true);
+  assert.equal(shouldRunAgentIteration(22, 16, true, 4, false, 3, 19), true);
+  assert.equal(shouldRunAgentIteration(23, 16, true, 4, false, 3, 19), false);
+});
+
+test('early mutation does not expand the normal verification ceiling', () => {
+  assert.equal(shouldRunAgentIteration(19, 16, true, 4, false, 3, 5), true);
+  assert.equal(shouldRunAgentIteration(20, 16, true, 4, false, 3, 5), false);
+});
+
+test('successive late edits cannot extend beyond mutation plus verification grace ceiling', () => {
+  assert.equal(shouldRunAgentIteration(22, 16, true, 4, false, 3, 22), true);
+  assert.equal(shouldRunAgentIteration(23, 16, true, 4, false, 3, 22), false);
 });
 
 test('mutation grace is normalized independently', () => {
