@@ -474,3 +474,59 @@ test('successful edits expose their model turn for progress-aware verification g
   );
   assert.equal(controller.lastMutationIteration, 4);
 });
+
+
+test('focused action allows exact-file search only for a file already read', () => {
+  const controller = new ExplorationController('Fix the runtime bug.', 16);
+
+  for (let turn = 1; turn <= 6; turn++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + turn, isRegex: false }, false);
+  }
+
+  controller.beginIteration();
+  const read = { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1, endLine: 80 };
+  const readCheck = controller.before(read, false);
+  assert.equal(readCheck.block, undefined);
+  controller.after(read, '[read_file: src/agentProvider.ts]\n1: import x from "y";');
+
+  controller.beginIteration();
+  controller.before({ type: 'read_file', filepath: 'src/other.ts', startLine: 1, endLine: 40 }, false);
+
+  controller.beginIteration(); // focused action begins after half of 16
+  assert.equal(controller.focusedAction, true);
+
+  const unknown = controller.before(
+    { type: 'search_files', pattern: 'resume', glob: 'src/not-read.ts', isRegex: false },
+    false,
+  );
+  assert.match(unknown.block, /already been read/i);
+
+  const broad = controller.before(
+    { type: 'search_files', pattern: 'resume', glob: 'src\/**/*.ts', isRegex: false },
+    false,
+  );
+  assert.match(broad.block, /Repo-wide search is closed/i);
+
+  const exact = controller.before(
+    { type: 'search_files', pattern: 'stream_error|isRecoverable', glob: 'src/agentProvider.ts', isRegex: true },
+    false,
+  );
+  assert.equal(exact.block, undefined);
+  assert.match(exact.guidance, /exact-file search/i);
+
+  controller.beginIteration();
+  const range = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
+    false,
+  );
+  assert.equal(range.block, undefined);
+  assert.equal(controller.focusedReadExhausted, true);
+
+  controller.beginIteration();
+  const extraLocator = controller.before(
+    { type: 'search_files', pattern: 'more', glob: 'src/agentProvider.ts', isRegex: false },
+    false,
+  );
+  assert.match(extraLocator.block, /two focused locator\/read turns are exhausted/i);
+});
