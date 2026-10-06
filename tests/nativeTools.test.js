@@ -163,12 +163,13 @@ test('focused action phase keeps ranged reads but withdraws broad discovery tool
   );
   const names = new Set(tools.map(tool => tool.name));
 
-  for (const name of ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+  for (const name of ['edit_file', 'search_files', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
     assert.equal(names.has(name), true, 'expected ' + name + ' in focused action');
   }
-  for (const name of ['search_files', 'find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
+  for (const name of ['find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
     assert.equal(names.has(name), false, 'did not expect ' + name + ' in focused action');
   }
+  assert.match(tools.find(tool => tool.name === 'search_files').description, /glob to exactly one file/i);
   assert.match(tools.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
 });
 
@@ -187,9 +188,10 @@ test('focused action tool surface removes broad discovery but keeps ranged read 
 
   const names = new Set(focused.map(tool => tool.name));
   assert.equal(focused[0].name, 'edit_file');
-  assert.equal(focused[1].name, 'read_file');
+  assert.equal(focused[1].name, 'search_files');
+  assert.equal(focused[2].name, 'read_file');
   assert.equal(names.has('read_file'), true);
-  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('search_files'), true);
   assert.equal(names.has('find_files'), false);
   assert.equal(names.has('list_directory'), false);
   assert.equal(names.has('fetch_url'), false);
