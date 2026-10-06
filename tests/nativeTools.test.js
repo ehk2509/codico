@@ -144,3 +144,29 @@ test('unresolved integration makes edit_file the verification priority', () => {
   assert.match(tools.find(tool => tool.name === 'edit_file').description, /Blocking integration fix/i);
   assert.match(tools.find(tool => tool.name === 'read_file').description, /Integration recovery/i);
 });
+
+
+test('closed action phase withdraws discovery tools but keeps mutation and verification', () => {
+  const {
+    getNativeToolDefinitions,
+    nativeToolsForAgentPhase,
+  } = require('../out/nativeTools.js');
+
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+  );
+  const names = new Set(tools.map(tool => tool.name));
+
+  for (const name of ['edit_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+    assert.equal(names.has(name), true, 'expected ' + name + ' after discovery closes');
+  }
+  for (const name of ['read_file', 'search_files', 'find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
+    assert.equal(names.has(name), false, 'did not expect ' + name + ' after discovery closes');
+  }
+});
