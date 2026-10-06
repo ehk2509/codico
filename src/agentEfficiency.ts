@@ -77,9 +77,14 @@ export function explorationGuidance(streak: number): string | null {
 }
 
 const EXPLORATORY_TERMINAL_RE = /^\s*(?:(?:git\s+(?:grep|show|log|status|diff))|(?:rg|grep|find|fd|ls|cat|head|tail|less|more|sed|awk|wc)\b)/i;
+const LEADING_CD_RE = /^\s*cd\s+[^;&|]+\s*(?:&&|;)\s*/i;
 
 export function isExploratoryTerminalCommand(command: string): boolean {
-    return EXPLORATORY_TERMINAL_RE.test(command);
+    let candidate = command;
+    while (LEADING_CD_RE.test(candidate)) {
+        candidate = candidate.replace(LEADING_CD_RE, '');
+    }
+    return EXPLORATORY_TERMINAL_RE.test(candidate);
 }
 
 const BEHAVIORAL_VERIFICATION_RE = /(?:\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test\b|\bnode\s+--test\b|\b(?:pytest|py\.test|jest|vitest|mocha|ava|tap|go\s+test|cargo\s+test|dotnet\s+test|mvn\s+test|gradle\s+test|rspec|phpunit)\b)/i;
