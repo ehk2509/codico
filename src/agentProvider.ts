@@ -886,7 +886,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
         const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
-        let verificationNudges = 0;
+        const MAX_VERIFICATION_NUDGES = 2; let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
             : [];
@@ -979,8 +979,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
                         if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
-                        const progressReminder = exploration.progressReminder();
-                        if (progressReminder) { result += `\n\n${progressReminder}`; }
                         inlineToolResults.push(result);
                         return { keepGoing: true, result };
                     }
@@ -1290,8 +1288,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 streamRecoveryAttempts = 0;
                 if (inlineToolResults.length === 0) {
                     const verificationGuidance = exploration.completionGuidance();
-                    if (verificationGuidance) {
-                        verificationNudges++;
+                    if (verificationGuidance && verificationNudges++ < MAX_VERIFICATION_NUDGES) {
                         this._history.push({ role: 'user', content: verificationGuidance });
                         this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
