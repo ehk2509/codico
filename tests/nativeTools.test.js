@@ -170,3 +170,27 @@ test('closed action phase withdraws discovery tools but keeps mutation and verif
     assert.equal(names.has(name), false, 'did not expect ' + name + ' after discovery closes');
   }
 });
+
+
+test('focused action tool surface removes broad discovery but keeps ranged read capability', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const focused = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+  );
+
+  const names = new Set(focused.map(tool => tool.name));
+  assert.equal(focused[0].name, 'edit_file');
+  assert.equal(focused[1].name, 'read_file');
+  assert.equal(names.has('read_file'), true);
+  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('find_files'), false);
+  assert.equal(names.has('list_directory'), false);
+  assert.equal(names.has('fetch_url'), false);
+  assert.match(focused.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
+});
