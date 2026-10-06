@@ -49,6 +49,8 @@ test('terminal source inspection remains identifiable without being a hard lock'
   assert.equal(isExploratoryTerminalCommand("grep -rn 'StreamChunk' src/"), true);
   assert.equal(isExploratoryTerminalCommand('git grep StreamChunk -- src'), true);
   assert.equal(isExploratoryTerminalCommand('cat src/openRouterClient.ts'), true);
+  assert.equal(isExploratoryTerminalCommand('cd /tmp/workspace && grep -rn foo src/'), true);
+  assert.equal(isExploratoryTerminalCommand('cd /tmp/workspace; cat src/a.ts'), true);
   assert.equal(isExploratoryTerminalCommand('npm test'), false);
   assert.equal(isExploratoryTerminalCommand('npm run compile'), false);
 });
