@@ -324,10 +324,13 @@ export function restrictNativeToolsForVerification(
     tools: NativeToolDefinition[],
     filepath?: string,
     readNeeded = true,
+    integrationPending = false,
 ): NativeToolDefinition[] {
-    const priority: ToolCall['type'][] = readNeeded
-        ? ['read_file', 'edit_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
-        : ['run_terminal', 'edit_file', 'read_file', 'get_diagnostics', 'search_files', 'find_files', 'list_directory'];
+    const priority: ToolCall['type'][] = integrationPending
+        ? ['edit_file', 'read_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
+        : readNeeded
+            ? ['read_file', 'edit_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
+            : ['run_terminal', 'edit_file', 'read_file', 'get_diagnostics', 'search_files', 'find_files', 'list_directory'];
     const rank = new Map(priority.map((name, index) => [name, index]));
 
     return tools
@@ -335,20 +338,24 @@ export function restrictNativeToolsForVerification(
             if (tool.name === 'read_file') {
                 return {
                     ...tool,
-                    description: readNeeded
-                        ? filepath
-                            ? `Verification priority: re-read edited file ${filepath} and reconcile its changed control flow with normal success/completion/terminal/cancellation paths. Dependency reads remain available when needed.`
-                            : 'Verification priority: re-read the edited control flow and reconcile its invariants.'
-                        : 'Verification discovery: read only a concrete unresolved range/dependency. The edited control-flow audit is already complete.',
+                    description: integrationPending
+                        ? `Integration recovery: inspect only the exact current range in ${filepath ?? 'the edited file'} needed to wire the unresolved imported helper, then edit immediately.`
+                        : readNeeded
+                            ? filepath
+                                ? `Verification priority: re-read edited file ${filepath} and reconcile its changed control flow with normal success/completion/terminal/cancellation paths. Dependency reads remain available when needed.`
+                                : 'Verification priority: re-read the edited control flow and reconcile its invariants.'
+                            : 'Verification discovery: read only a concrete unresolved range/dependency. The edited control-flow audit is already complete.',
                 };
             }
 
             if (tool.name === 'edit_file') {
                 return {
                     ...tool,
-                    description: filepath
-                        ? `Verification mutation: revise ${filepath} first if its acceptance or preservation invariant is wrong. Avoid mutating sibling files until this edit is verified.`
-                        : 'Verification mutation: revise the current edited component before broadening.',
+                    description: integrationPending
+                        ? `Blocking integration fix: wire the newly imported helper into the real behavior path in ${filepath ?? 'the edited file'}, or remove the import. Prefer this tool now.`
+                        : filepath
+                            ? `Verification mutation: revise ${filepath} first if its acceptance or preservation invariant is wrong. Avoid mutating sibling files until this edit is verified.`
+                            : 'Verification mutation: revise the current edited component before broadening.',
                 };
             }
 
@@ -386,9 +393,15 @@ export function nativeToolsForAgentPhase(
     verificationPending: boolean,
     verificationFile?: string,
     verificationReadAllowed = true,
+    integrationPending = false,
 ): NativeToolDefinition[] {
     if (verificationPending) {
-        return restrictNativeToolsForVerification(tools, verificationFile, verificationReadAllowed);
+        return restrictNativeToolsForVerification(
+            tools,
+            verificationFile,
+            verificationReadAllowed,
+            integrationPending,
+        );
     }
 
     if (explorationLocked) { return restrictNativeToolsForAction(tools); }
