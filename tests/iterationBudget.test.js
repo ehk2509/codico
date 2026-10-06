@@ -28,3 +28,23 @@ test('negative or fractional grace is normalized safely', () => {
   assert.equal(shouldRunAgentIteration(17, 16, true, 2.9), true);
   assert.equal(shouldRunAgentIteration(18, 16, true, 2.9), false);
 });
+
+
+test('pending mutation receives a bounded grace without reopening pure exploration', () => {
+  assert.equal(shouldRunAgentIteration(16, 16, false, 4, false, 3), false);
+  assert.equal(shouldRunAgentIteration(16, 16, false, 4, true, 3), true);
+  assert.equal(shouldRunAgentIteration(18, 16, false, 4, true, 3), true);
+  assert.equal(shouldRunAgentIteration(19, 16, false, 4, true, 3), false);
+});
+
+test('mutation and verification grace share an absolute ceiling instead of stacking', () => {
+  assert.equal(shouldRunAgentIteration(18, 16, true, 4, true, 3), true);
+  assert.equal(shouldRunAgentIteration(19, 16, true, 4, true, 3), true);
+  assert.equal(shouldRunAgentIteration(20, 16, true, 4, true, 3), false);
+});
+
+test('mutation grace is normalized independently', () => {
+  assert.equal(shouldRunAgentIteration(16, 16, false, 4, true, -2), false);
+  assert.equal(shouldRunAgentIteration(17, 16, false, 4, true, 2.9), true);
+  assert.equal(shouldRunAgentIteration(18, 16, false, 4, true, 2.9), false);
+});
