@@ -291,3 +291,64 @@ test('focused action closes broad discovery but preserves explicit source ranges
     false,
   ).isExploration, false);
 });
+
+
+test('focused action permits two ranged-read turns then requires mutation', () => {
+  const controller = new ExplorationController(
+    'Fix the stream seam and add a general overlap calculation.'
+  );
+
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
+  }
+
+  controller.beginIteration();
+  const first = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
+    false,
+  );
+  assert.equal(controller.focusedAction, true);
+  assert.equal(first.block, undefined);
+  assert.equal(controller.focusedReadExhausted, false);
+
+  controller.beginIteration();
+  const second = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1101, endLine: 1250 },
+    false,
+  );
+  assert.equal(second.block, undefined);
+  assert.equal(controller.focusedReadExhausted, true);
+  assert.match(second.guidance, /final bounded source-read turn/i);
+
+  controller.beginIteration();
+  const third = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1251, endLine: 1350 },
+    false,
+  );
+  assert.match(third.block, /two focused source-read turns are exhausted/i);
+  assert.match(controller.completionGuidance(), /no mutation has succeeded/i);
+});
+
+test('focused action does not force a mutation for explanation-only requests', () => {
+  const controller = new ExplorationController('Explain how the stream recovery flow works.');
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  for (let i = 0; i < 5; i++) {
+    controller.beginIteration();
+    controller.before(
+      i === 4
+        ? { type: 'read_file', filepath: 'src/a.ts', startLine: 1, endLine: 20 }
+        : { type: 'search_files', pattern: 'e' + i, isRegex: false },
+      false,
+    );
+  }
+  assert.equal(controller.focusedAction, true);
+  assert.equal(controller.completionGuidance(), undefined);
+});
