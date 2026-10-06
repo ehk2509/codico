@@ -23,7 +23,7 @@ import { fetchPublicText } from './urlFetcher';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
-import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
+import { appendAssistantIteration, compactSupersededToolResults, NativeToolExecution } from './agentHistory';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
@@ -1231,6 +1231,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 actionNudges = 0;
+
+                // Deterministically shrink stale tool payloads before the next model call.
+                // This is not a budget or stopping rule: recent evidence stays exact and
+                // the loop remains unlimited. It only prevents old tool bodies from being
+                // retransmitted on every subsequent iteration.
+                compactSupersededToolResults(this._history);
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
