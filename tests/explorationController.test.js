@@ -273,7 +273,7 @@ test('focused action closes broad discovery but preserves explicit source ranges
 
   controller.beginIteration();
   const broad = controller.before({ type: 'search_files', pattern: 'resume', isRegex: false }, false);
-  assert.match(broad.block, /Broad discovery is closed/i);
+  assert.match(broad.block, /Repo-wide search is closed/i);
 
   const wholeFile = controller.before({ type: 'read_file', filepath: 'src/agentProvider.ts' }, false);
   assert.match(wholeFile.block, /Broad reads are closed/i);
@@ -323,7 +323,7 @@ test('focused action permits two ranged-read turns then requires mutation', () =
   );
   assert.equal(second.block, undefined);
   assert.equal(controller.focusedReadExhausted, true);
-  assert.match(second.guidance, /final bounded source-read turn/i);
+  assert.match(second.guidance, /final focused evidence turn/i);
 
   controller.beginIteration();
   const third = controller.before(
