@@ -25,6 +25,7 @@ export class ExplorationController {
     private _verificationFile?: string;
     private _verificationAuditSeen = false;
     private _verificationAuditReads = 0;
+    private readonly _unwiredImports = new Set<string>();
     private readonly taskContract: string;
 
     constructor(rawTask = '') { this.taskContract = buildTaskAcceptanceContract(rawTask); }
@@ -42,6 +43,11 @@ export class ExplorationController {
 
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) { return undefined; }
+        if (this._unwiredImports.size) {
+            return '[System Verification] An edited file still contains an unreferenced local import: ' +
+                [...this._unwiredImports].join(', ') +
+                '. Connect newly introduced helpers to their real caller/behavior path, or remove unused imports; then run a focused test. Do not finish with an import-only implementation.';
+        }
 
         if (this._verificationAuditSeen && this._verificationAuditReads === 0) {
             return '[System Verification] This lifecycle/state edit is not verified. Re-read the edited control flow once and reconcile every path listed in the Local invariant audit, especially normal success/completion/terminal/cancellation paths. Do not broaden to sibling implementations yet.';
@@ -121,6 +127,14 @@ export class ExplorationController {
 
     public after(tool: ToolCall, result = ''): string | undefined {
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
+            if (!/\b(?:Edit applied successfully|Written successfully)\b/.test(result)) {
+                return '[System Follow-through] The edit was not applied. Resolve the tool failure before counting this as a code change.';
+            }
+            if (result.includes('[Post-edit integration audit]')) {
+                this._unwiredImports.add(tool.filepath);
+            } else {
+                this._unwiredImports.delete(tool.filepath);
+            }
             const previousVerificationFile = this._verificationFile;
             const broadenedWhilePending =
                 this._verificationPending &&
@@ -134,6 +148,10 @@ export class ExplorationController {
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
             this._verificationAuditReads = 0;
             this.targetVisits.clear();
+
+            if (this._unwiredImports.size) {
+                return '[System Follow-through] An edited file has an unused local import. An imported helper is not implemented until a caller actually invokes it. Wire the helper into the behavior path or remove the unused import, then verify.';
+            }
 
             if (broadenedWhilePending) {
                 return '[System Follow-through] You changed a second file before the previous edit was behaviorally verified. Keep this new edit local now: audit its control flow and run behavior-level verification before changing another sibling.';
@@ -149,6 +167,9 @@ export class ExplorationController {
         if (!this._verificationPending) { return undefined; }
 
         if (tool.type === 'run_terminal' && !isExploratoryTerminalCommand(tool.command)) {
+            if (this._unwiredImports.size) {
+                return '[System Verification] A command cannot close the acceptance gate while a local import is unwired in: ' + [...this._unwiredImports].join(', ') + '. Connect the helper or remove its import before final verification.';
+            }
             if (!/\bExit:\s*0\b/.test(result)) {
                 return '[System Verification] Verification failed. Use the failure as evidence, revise the implementation, and verify again.';
             }
@@ -166,6 +187,9 @@ export class ExplorationController {
         }
 
         if (tool.type === 'get_diagnostics') {
+            if (this._unwiredImports.size) {
+                return '[System Verification] Clean diagnostics cannot prove an unused imported helper is integrated. Wire or remove it first.';
+            }
             const clean = !/\bERROR\b|🔴\s*ERROR/i.test(result);
             if (!clean) {
                 return '[System Verification] Diagnostics still report errors. Fix them before finishing.';
