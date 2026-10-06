@@ -13,14 +13,6 @@ import {
 
 export interface ExplorationCheck { isExploration: boolean; guidance?: string; block?: string; }
 
-function normalizeWorkspacePath(value: string): string {
-    return value.replace(/\\/g, '/').replace(/^\.\//, '');
-}
-
-function isExactFileGlob(value: string | undefined): value is string {
-    return Boolean(value && !/[*?\[\]{}!]/.test(value));
-}
-
 /**
  * Exploration pressure is advisory, never a capability lock. A read-count
  * heuristic cannot prove that enough evidence exists for a safe mutation.
@@ -28,7 +20,6 @@ function isExactFileGlob(value: string | undefined): value is string {
 export class ExplorationController {
     private streak = 0;
     private readonly targetVisits = new Map<string, number>();
-    private readonly knownFiles = new Set<string>();
     private _locked = false;
     private _verificationPending = false;
     private _verificationFile?: string;
@@ -38,22 +29,14 @@ export class ExplorationController {
     private _iteration = 0;
     private _lastExplorationIteration = -1;
     private _lockedAtIteration = -1;
-    private _actionEscapeIterations = 0;
-    private _lastActionEscapeIteration = -1;
-    private _integrationRecoveryIterations = 0;
-    private _lastIntegrationRecoveryIteration = -1;
-    private _focusedAction = false;
-    private _focusedReadIterations = 0;
-    private _lastFocusedReadIteration = -1;
     private _lastMutationIteration = 0;
     private readonly taskContract: string;
     private readonly mutationRequired: boolean;
-    private readonly normalIterationBudget: number;
 
     constructor(rawTask = '', normalIterationBudget = 0) {
         this.taskContract = buildTaskAcceptanceContract(rawTask);
         this.mutationRequired = taskLikelyRequiresMutation(rawTask);
-        this.normalIterationBudget = Math.max(0, Math.floor(normalIterationBudget));
+        void normalIterationBudget; // Kept for API compatibility; never used as a capability limit.
     }
 
     /** Called exactly once for each model/agent turn. */
@@ -69,11 +52,11 @@ export class ExplorationController {
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
     public get verificationFile(): string | undefined { return this._verificationFile; }
-    public get focusedAction(): boolean { return this._focusedAction; }
-    public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
+    public get focusedAction(): boolean { return false; }
+    public get focusedReadExhausted(): boolean { return false; }
     public get lastMutationIteration(): number { return this._lastMutationIteration; }
     public get mutationGracePending(): boolean {
-        return this.mutationRequired && this._focusedAction && this.focusedReadExhausted && !this._verificationPending;
+        return false;
     }
 
     /**
@@ -86,11 +69,6 @@ export class ExplorationController {
 
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) {
-            if (this._focusedAction && this.mutationRequired) {
-                return this.focusedReadExhausted
-                    ? '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Focused source reading is complete. Do not finish yet: make the smallest evidence-backed edit now.'
-                    : '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Use at most the remaining bounded focused read, then edit. Do not finish with analysis only.';
-            }
             return undefined;
         }
         if (this._unwiredImports.size) {
@@ -118,8 +96,8 @@ export class ExplorationController {
             this._verificationFile,
             this.taskContract,
             this.verificationReadAllowed,
-            this._focusedAction,
-            this.focusedReadExhausted,
+            false,
+            false,
         );
         if (!prompt) { return prompt; }
         if (this._unwiredImports.size === 0) { return prompt; }
@@ -139,8 +117,8 @@ export class ExplorationController {
             this._verificationFile,
             this.verificationReadAllowed,
             this._unwiredImports.size > 0,
-            this._focusedAction,
-            this.focusedReadExhausted,
+            false,
+            false,
         );
     }
 
@@ -236,13 +214,6 @@ export class ExplorationController {
             this._verificationFile = tool.filepath;
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
             this._verificationAuditReads = 0;
-            this._integrationRecoveryIterations = 0;
-            this._lastIntegrationRecoveryIteration = -1;
-            this._actionEscapeIterations = 0;
-            this._lastActionEscapeIteration = -1;
-            this._focusedAction = false;
-            this._focusedReadIterations = 0;
-            this._lastFocusedReadIteration = -1;
             this._lockedAtIteration = -1;
             this._lastExplorationIteration = -1;
             this.targetVisits.clear();
@@ -317,7 +288,5 @@ export class ExplorationController {
         this._verificationFile = undefined;
         this._verificationAuditSeen = false;
         this._verificationAuditReads = 0;
-        this._integrationRecoveryIterations = 0;
-        this._lastIntegrationRecoveryIteration = -1;
     }
 }
