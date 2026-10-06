@@ -57,3 +57,14 @@ Verification requirements:
 - if a focused test exists, run it;
 - otherwise inspect control-flow or integration paths that distinguish the failure case from normal success/completion paths before finishing.`;
 }
+
+
+const MUTATION_INTENT_RE = /\b(?:fix|implement|change|update|modify|refactor|patch|correct|add|remove|replace|prevent|make|wire|integrate|create)\b/i;
+
+/**
+ * Conservative signal used only to prevent an agent from declaring success
+ * after a long focused coding pass without making any code change.
+ */
+export function taskLikelyRequiresMutation(rawText: string): boolean {
+    return MUTATION_INTENT_RE.test(normalized(rawText));
+}
