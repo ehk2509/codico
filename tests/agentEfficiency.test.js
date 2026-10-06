@@ -17,12 +17,10 @@ test('focused exploration policy distinguishes reads from mutations', () => {
   assert.equal(isMutationTool({ type: 'edit_file', filepath: 'a', oldStr: 'x', newStr: 'y' }), true);
 });
 
-test('exploration transitions from advisory guidance to an action-preferred phase', () => {
+test('exploration transitions into action phase after six evidence calls', () => {
   assert.equal(explorationGuidance(5), null);
-  assert.match(explorationGuidance(6), /evidence-backed edit/i);
-  assert.equal(explorationGuidance(7), null);
 
-  const action = explorationDecision(8, 1);
+  const action = explorationDecision(6, 1);
   assert.equal(action.lock, true);
   assert.equal(action.block, undefined);
   assert.match(action.guidance, /make the smallest evidence-backed code change/i);
@@ -41,7 +39,7 @@ test('repeated targets become stronger guidance without capability withdrawal', 
   assert.equal(early.block, undefined);
   assert.match(early.guidance, /inspected this target repeatedly/i);
 
-  const action = explorationDecision(8, 3);
+  const action = explorationDecision(6, 3);
   assert.equal(action.lock, true);
   assert.equal(action.block, undefined);
   assert.match(action.guidance, /revisited this target repeatedly/i);
