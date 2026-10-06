@@ -123,3 +123,22 @@ test('unwired imports in another edited file remain pending', () => {
     '[edit_file: src/b.ts] Edit applied successfully.');
   assert.match(controller.completionGuidance(), /src\/a\.ts/);
 });
+
+
+test('unwired helper is injected into every verification system prompt and tool policy', () => {
+  const controller = new ExplorationController('Use the helper in the actual caller.');
+  controller.after(
+    { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'old', newStr: 'new' },
+    '[edit_file: src/consumer.ts] Edit applied successfully.\n\n[Post-edit integration audit]\n- dedupe from ./helpers'
+  );
+
+  const prompt = controller.systemPrompt(false);
+  assert.match(prompt, /Blocking integration issue/);
+  assert.match(prompt, /src\/consumer\.ts/);
+
+  const tools = controller.nativeTools(require('../out/nativeTools.js').getNativeToolDefinitions(false));
+  assert.equal(tools[0].name, 'edit_file');
+
+  const search = controller.before({ type: 'search_files', pattern: 'anything', isRegex: false }, false);
+  assert.match(search.guidance, /Stop broad discovery/i);
+});
