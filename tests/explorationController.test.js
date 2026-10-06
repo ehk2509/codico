@@ -81,3 +81,45 @@ test('Ask mode remains unconstrained', () => {
     assert.equal(check.isExploration, false);
   }
 });
+
+
+test('unwired import blocks completion even after clean diagnostics and a passing test', () => {
+  const controller = new ExplorationController('Wire the new helper into the actual call site');
+  const tool = { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'old', newStr: 'new' };
+  const first = controller.after(tool,
+    "[edit_file: src/consumer.ts] Edit applied successfully.\n\n[Post-edit integration audit]\n- dedupe from ./helpers");
+  assert.match(first, /imported helper is not implemented/i);
+  assert.match(controller.completionGuidance(), /unreferenced local import/i);
+  assert.equal(controller.verificationPending, true);
+
+  const diagnostics = controller.after(
+    { type: 'get_diagnostics', filepath: 'src/consumer.ts' }, '[get_diagnostics] No diagnostics.');
+  assert.match(diagnostics, /cannot prove/i);
+  const terminal = controller.after(
+    { type: 'run_terminal', command: 'npm test' }, '[run_terminal]\nExit: 0');
+  assert.match(terminal, /cannot close the acceptance gate/i);
+  assert.equal(controller.verificationPending, true);
+
+  controller.after(tool, '[edit_file: src/consumer.ts] Edit applied successfully.');
+  assert.doesNotMatch(controller.completionGuidance(), /unreferenced local import/i);
+  controller.after({ type: 'run_terminal', command: 'npm test' }, '[run_terminal]\nExit: 0');
+  assert.equal(controller.verificationPending, false);
+});
+
+test('unapplied and denied edits do not start verification', () => {
+  const controller = new ExplorationController();
+  const result = controller.after(
+    { type: 'edit_file', filepath: 'src/a.ts', oldStr: 'x', newStr: 'y' },
+    '[edit_file: src/a.ts] ERROR: oldStr not found');
+  assert.match(result, /was not applied/i);
+  assert.equal(controller.verificationPending, false);
+});
+
+test('unwired imports in another edited file remain pending', () => {
+  const controller = new ExplorationController();
+  controller.after({ type: 'edit_file', filepath: 'src/a.ts', oldStr: 'a', newStr: 'b' },
+    '[edit_file: src/a.ts] Edit applied successfully.\n\n[Post-edit integration audit]\n- helper from ./helpers');
+  controller.after({ type: 'edit_file', filepath: 'src/b.ts', oldStr: 'a', newStr: 'b' },
+    '[edit_file: src/b.ts] Edit applied successfully.');
+  assert.match(controller.completionGuidance(), /src\/a\.ts/);
+});
