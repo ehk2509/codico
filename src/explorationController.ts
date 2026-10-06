@@ -26,11 +26,21 @@ export class ExplorationController {
     private _verificationAuditSeen = false;
     private _verificationAuditReads = 0;
     private readonly _unwiredImports = new Set<string>();
-    private _integrationRecoveryReads = 0;
-    private _actionEscapeReads = 0;
+    private _iteration = 0;
+    private _lastExplorationIteration = -1;
+    private _lockedAtIteration = -1;
+    private _actionEscapeIterations = 0;
+    private _lastActionEscapeIteration = -1;
+    private _integrationRecoveryIterations = 0;
+    private _lastIntegrationRecoveryIteration = -1;
+    private _actionExplorationClosed = false;
     private readonly taskContract: string;
 
     constructor(rawTask = '') { this.taskContract = buildTaskAcceptanceContract(rawTask); }
+
+    /** Called exactly once for each model/agent turn. */
+    public beginIteration(): void { this._iteration++; }
+
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
     public get verificationFile(): string | undefined { return this._verificationFile; }
@@ -104,8 +114,11 @@ export class ExplorationController {
                         block: '[System Integration] A helper import is still unwired. Broad discovery is blocked until you wire that helper into the current consumer or remove the import.',
                     };
                 }
-                this._integrationRecoveryReads++;
-                if (this._integrationRecoveryReads > 1) {
+                if (this._lastIntegrationRecoveryIteration !== this._iteration) {
+                    this._lastIntegrationRecoveryIteration = this._iteration;
+                    this._integrationRecoveryIterations++;
+                }
+                if (this._integrationRecoveryIterations > 1) {
                     return {
                         isExploration: true,
                         block: '[System Integration] You already used the one targeted recovery read for this unwired helper. Edit the consumer now using the fresh source you have, or remove the import.',
@@ -139,27 +152,42 @@ export class ExplorationController {
 
         if (!isExplorationTool(tool)) { return { isExploration: false }; }
 
-        if (this._locked) {
-            this._actionEscapeReads++;
-            if (this._actionEscapeReads > 2) {
+        if (this._locked && this._iteration > this._lockedAtIteration) {
+            if (this._lastActionEscapeIteration !== this._iteration) {
+                this._lastActionEscapeIteration = this._iteration;
+                this._actionEscapeIterations++;
+            }
+            if (this._actionEscapeIterations > 2) {
+                this._actionExplorationClosed = true;
                 return {
                     isExploration: true,
-                    block: '[System Action] Open-ended exploration is closed after two targeted escape-hatch reads. Make the smallest evidence-backed edit now. If the edit misses, the tool will return fresh recovery context.',
+                    block: '[System Action] Open-ended exploration is closed after two targeted escape-hatch turns. Make the smallest evidence-backed edit now. If the edit misses, the tool will return fresh recovery context.',
                 };
             }
         }
 
         const target = explorationTarget(tool);
         const targetVisits = target ? (this.targetVisits.get(target) ?? 0) + 1 : 1;
-        const nextStreak = this.streak + 1;
-        const decision = explorationDecision(nextStreak, targetVisits);
-        this.streak = nextStreak;
+        if (this._lastExplorationIteration !== this._iteration) {
+            this._lastExplorationIteration = this._iteration;
+            this.streak++;
+        }
+        const decision = explorationDecision(this.streak, targetVisits);
         if (target) { this.targetVisits.set(target, targetVisits); }
-        if (decision.lock) { this._locked = true; }
+        if (decision.lock && !this._locked) {
+            this._locked = true;
+            this._lockedAtIteration = this._iteration;
+            this._actionEscapeIterations = 0;
+            this._lastActionEscapeIteration = -1;
+        }
         return { isExploration: true, guidance: decision.guidance };
     }
 
-    public blocksTerminal(_tool: ToolCall): boolean { return false; }
+    public blocksTerminal(tool: ToolCall): boolean {
+        if (tool.type !== 'run_terminal' || !isExploratoryTerminalCommand(tool.command)) { return false; }
+        if (this._unwiredImports.size > 0) { return true; }
+        return this._actionExplorationClosed;
+    }
 
     public after(tool: ToolCall, result = ''): string | undefined {
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
@@ -183,8 +211,13 @@ export class ExplorationController {
             this._verificationFile = tool.filepath;
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
             this._verificationAuditReads = 0;
-            this._integrationRecoveryReads = 0;
-            this._actionEscapeReads = 0;
+            this._integrationRecoveryIterations = 0;
+            this._lastIntegrationRecoveryIteration = -1;
+            this._actionEscapeIterations = 0;
+            this._lastActionEscapeIteration = -1;
+            this._actionExplorationClosed = false;
+            this._lockedAtIteration = -1;
+            this._lastExplorationIteration = -1;
             this.targetVisits.clear();
 
             if (this._unwiredImports.size) {
@@ -257,6 +290,7 @@ export class ExplorationController {
         this._verificationFile = undefined;
         this._verificationAuditSeen = false;
         this._verificationAuditReads = 0;
-        this._integrationRecoveryReads = 0;
+        this._integrationRecoveryIterations = 0;
+        this._lastIntegrationRecoveryIteration = -1;
     }
 }
