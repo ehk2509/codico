@@ -281,11 +281,15 @@ const ACTION_DISCOVERY = new Set<ToolCall['type']>([
  * explicitly described as a narrow escape hatch for one missing fact.
  */
 export function restrictNativeToolsForAction(
-    tools: NativeToolDefinition[]
+    tools: NativeToolDefinition[],
+    explorationClosed = false,
 ): NativeToolDefinition[] {
     const rank = new Map(ACTION_PRIORITY.map((name, index) => [name, index]));
+    const available = explorationClosed
+        ? tools.filter(tool => !ACTION_DISCOVERY.has(tool.name))
+        : tools;
 
-    return tools
+    return available
         .map(tool => {
             if (ACTION_DISCOVERY.has(tool.name)) {
                 return {
@@ -394,6 +398,7 @@ export function nativeToolsForAgentPhase(
     verificationFile?: string,
     verificationReadAllowed = true,
     integrationPending = false,
+    explorationClosed = false,
 ): NativeToolDefinition[] {
     if (verificationPending) {
         return restrictNativeToolsForVerification(
@@ -404,7 +409,7 @@ export function nativeToolsForAgentPhase(
         );
     }
 
-    if (explorationLocked) { return restrictNativeToolsForAction(tools); }
+    if (explorationLocked) { return restrictNativeToolsForAction(tools, explorationClosed); }
     return tools;
 }
 
