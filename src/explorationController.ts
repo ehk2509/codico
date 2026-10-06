@@ -61,7 +61,7 @@ export class ExplorationController {
     }
 
     public systemPrompt(chatMode: boolean): string | undefined {
-        return systemPromptForAgentPhase(
+        const prompt = systemPromptForAgentPhase(
             chatMode,
             this._locked,
             this._verificationPending,
@@ -69,6 +69,13 @@ export class ExplorationController {
             this.taskContract,
             this.verificationReadAllowed,
         );
+        if (!prompt || this._unwiredImports.size === 0) { return prompt; }
+        return prompt + '\n\n## Blocking integration issue\n' +
+            'A local helper is imported but still unused in: ' +
+            [...this._unwiredImports].join(', ') +
+            '. Stop broad exploration. Wire that helper into the actual behavior/caller path now, or remove the import. ' +
+            'After the wiring edit, run the narrowest relevant test.';
+
     }
 
     public nativeTools(tools: NativeToolDefinition[]): NativeToolDefinition[] {
@@ -78,6 +85,7 @@ export class ExplorationController {
             this._verificationPending,
             this._verificationFile,
             this.verificationReadAllowed,
+            this._unwiredImports.size > 0,
         );
     }
 
@@ -86,6 +94,13 @@ export class ExplorationController {
 
         if (this._verificationPending && isExplorationTool(tool)) {
             if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
+
+            if (this._unwiredImports.size > 0 && tool.type !== 'read_file') {
+                return {
+                    isExploration: true,
+                    guidance: '[System Integration] A helper import is still unwired. Stop broad discovery and edit the current consumer now. Use read_file only for one exact missing range needed to make that wiring edit.',
+                };
+            }
 
             if (tool.type === 'read_file') {
                 const local = !this._verificationFile || tool.filepath === this._verificationFile;
