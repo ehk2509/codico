@@ -47,7 +47,7 @@ test('new callable abstractions carry a behavior-integration reminder', () => {
   ].join('\n');
   const audit = buildLocalInvariantAudit(changed, changed);
   assert.match(audit, /Post-edit behavior integration reminder/);
-  assert.match(audit, /production caller\/path actually invokes it/i);
+  assert.match(audit, /real production caller\/path invokes it/i);
   assert.match(audit, /helper definition alone is not sufficient/i);
 });
 
