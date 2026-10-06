@@ -7,11 +7,13 @@ test('controller enters action phase with two discovery escape hatches', () => {
   let last;
 
   for (let i = 0; i < 8; i++) {
+    controller.beginIteration();
     last = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
     assert.equal(last.block, undefined);
   }
 
   assert.equal(controller.locked, true);
+  controller.beginIteration();
   const thirdAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
   assert.match(thirdAfterLock.block, /exploration is closed/i);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), false);
@@ -145,12 +147,16 @@ test('unwired helper is injected into every verification system prompt and tool 
 test('action phase allows only two targeted exploration escape hatches before requiring an edit', () => {
   const controller = new ExplorationController();
   for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
     controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
   }
   assert.equal(controller.locked, true);
 
+  controller.beginIteration();
   const first = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  controller.beginIteration();
   const second = controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
+  controller.beginIteration();
   const third = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
 
   assert.equal(first.block, undefined);
@@ -165,7 +171,9 @@ test('unwired helper gets one recovery read and then must be edited', () => {
     '[edit_file: src/consumer.ts] Edit applied successfully.\n\n[Post-edit integration audit]\n- dedupe from ./helpers'
   );
 
+  controller.beginIteration();
   const first = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
+  controller.beginIteration();
   const second = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
   const search = controller.before({ type: 'search_files', pattern: 'dedupe', isRegex: false }, false);
 
@@ -179,4 +187,45 @@ test('unwired helper gets one recovery read and then must be edited', () => {
   );
   const afterFix = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
   assert.equal(afterFix.block, undefined);
+});
+
+
+test('batched exploration calls in one model turn consume one exploration iteration', () => {
+  const controller = new ExplorationController();
+
+  for (let turn = 1; turn <= 5; turn++) {
+    controller.beginIteration();
+    for (let call = 0; call < 4; call++) {
+      const check = controller.before(
+        { type: 'search_files', pattern: 'turn-' + turn + '-call-' + call, isRegex: false },
+        false,
+      );
+      assert.equal(check.block, undefined);
+    }
+    assert.equal(controller.locked, false);
+  }
+
+  controller.beginIteration();
+  const first = controller.before({ type: 'search_files', pattern: 'sixth-turn-a', isRegex: false }, false);
+  const second = controller.before({ type: 'search_files', pattern: 'sixth-turn-b', isRegex: false }, false);
+  assert.equal(controller.locked, true);
+  assert.equal(first.block, undefined);
+  assert.equal(second.block, undefined);
+});
+
+test('closed action exploration also blocks terminal cat/grep bypasses', () => {
+  const controller = new ExplorationController();
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  controller.beginIteration();
+  controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  controller.beginIteration();
+  controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
+  controller.beginIteration();
+  const blocked = controller.before({ type: 'read_file', filepath: 'src/c.ts' }, false);
+  assert.match(blocked.block, /exploration is closed/i);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn foo src/' }), true);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
 });
