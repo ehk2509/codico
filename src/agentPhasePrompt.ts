@@ -1,4 +1,4 @@
-import { CHAT_SYSTEM_PROMPT, SYSTEM_PROMPT } from './openRouterClient';
+import { CHAT_SYSTEM_PROMPT, MUTATION_ONLY_SYSTEM_PROMPT, SYSTEM_PROMPT } from './openRouterClient';
 
 /**
  * Strong action guidance after prolonged exploration. Discovery remains
@@ -52,6 +52,7 @@ export function systemPromptForAgentPhase(
     taskContract = '',
     _verificationReadAllowed = true,
     focusedAction = false,
+    focusedReadExhausted = false,
 ): string | undefined {
     if (chatMode) { return CHAT_SYSTEM_PROMPT; }
 
@@ -63,6 +64,10 @@ export function systemPromptForAgentPhase(
             ? '\nNext verification step: re-read the edited control flow once before relying on static checks.'
             : '\nThe post-edit control-flow read is complete; prefer a behavior-level test next.';
         return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${nextStep}${contract}`;
+    }
+
+    if (focusedAction && focusedReadExhausted) {
+        return `${MUTATION_ONLY_SYSTEM_PROMPT}${contract}`;
     }
 
     if (focusedAction) {
