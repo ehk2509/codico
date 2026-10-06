@@ -3,8 +3,10 @@ function evaluateHoldoutResult(record) {
   const maxTotalTokens = Number(record.maxTotalTokens || 0);
   const withinTokenBudget = Boolean(
     metrics &&
-    !metrics.budgetExceeded &&
-    (maxTotalTokens <= 0 || metrics.totalTokens <= maxTotalTokens)
+    (
+      maxTotalTokens <= 0 ||
+      (!metrics.budgetExceeded && metrics.totalTokens <= maxTotalTokens)
+    )
   );
 
   return {
