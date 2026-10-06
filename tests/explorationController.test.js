@@ -239,7 +239,7 @@ test('pre-mutation exploration pressure never removes evidence access', () => {
 });
 
 
-test('post-mutation verification never hard-blocks repeated evidence reads or searches', () => {
+test('post-mutation verification keeps repeated evidence reads and searches available', () => {
   const controller = new ExplorationController('Fix and verify the stream resume wiring.', 16);
   controller.beginIteration();
   controller.after(
