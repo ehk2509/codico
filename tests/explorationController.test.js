@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ExplorationController } = require('../out/explorationController.js');
 
-test('controller enters action phase without withdrawing discovery capabilities', () => {
+test('controller enters action phase with two discovery escape hatches', () => {
   const controller = new ExplorationController();
   let last;
 
@@ -12,10 +12,8 @@ test('controller enters action phase without withdrawing discovery capabilities'
   }
 
   assert.equal(controller.locked, true);
-  assert.match(last.guidance, /make the smallest evidence-backed code change/i);
-
-  const stillReadable = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  assert.equal(stillReadable.block, undefined);
+  const thirdAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  assert.match(thirdAfterLock.block, /exploration is closed/i);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), false);
 });
 
@@ -140,7 +138,7 @@ test('unwired helper is injected into every verification system prompt and tool 
   assert.equal(tools[0].name, 'edit_file');
 
   const search = controller.before({ type: 'search_files', pattern: 'anything', isRegex: false }, false);
-  assert.match(search.guidance, /Stop broad discovery/i);
+  assert.match(search.block, /Broad discovery is blocked/i);
 });
 
 
