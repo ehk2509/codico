@@ -2,29 +2,36 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { evaluateHoldoutResult } = require('../scripts/eval/resultPolicy.js');
 
-function baseRecord(metrics) {
+function baseRecord(metrics, maxTotalTokens = 0) {
   return {
     setupOk: true,
     agentOk: true,
     verifierOk: true,
-    maxTotalTokens: 400000,
+    maxTotalTokens,
     metrics,
   };
 }
 
-test('holdout success requires valid verifier, agent completion, and token budget compliance', () => {
+test('unlimited holdouts do not fail because of cumulative token count', () => {
   assert.deepEqual(
-    evaluateHoldoutResult(baseRecord({ totalTokens: 399999, budgetExceeded: false })),
+    evaluateHoldoutResult(baseRecord({ totalTokens: 999999, budgetExceeded: false })),
     { withinTokenBudget: true, success: true },
   );
 
+  // A stale budgetExceeded flag cannot make an explicitly unlimited run fail.
   assert.deepEqual(
-    evaluateHoldoutResult(baseRecord({ totalTokens: 419740, budgetExceeded: true })),
-    { withinTokenBudget: false, success: false },
+    evaluateHoldoutResult(baseRecord({ totalTokens: 999999, budgetExceeded: true })),
+    { withinTokenBudget: true, success: true },
   );
+});
 
+test('explicit non-zero token ceilings are still enforceable for local experiments', () => {
   assert.deepEqual(
-    evaluateHoldoutResult(baseRecord({ totalTokens: 400001, budgetExceeded: false })),
+    evaluateHoldoutResult(baseRecord({ totalTokens: 399999, budgetExceeded: false }, 400000)),
+    { withinTokenBudget: true, success: true },
+  );
+  assert.deepEqual(
+    evaluateHoldoutResult(baseRecord({ totalTokens: 400001, budgetExceeded: false }, 400000)),
     { withinTokenBudget: false, success: false },
   );
 });
