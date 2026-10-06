@@ -1,41 +1,21 @@
 /**
- * Decides whether another autonomous agent iteration is allowed.
+ * Decides whether another autonomous agent iteration should run.
  *
- * maxIterations is the normal budget. Two bounded grace phases can extend it:
- * - mutation grace: a coding task reached mutation-only mode but has not yet
- *   produced a successful change;
- * - verification grace: code changed and still needs acceptance checks.
- *
- * Verification grace is progress-aware: a successful late edit refreshes the
- * verification window, but the whole loop is still clipped to the absolute
- * ceiling maxIterations + mutationGraceIterations + verificationGraceIterations.
+ * maxIterations is a soft exploration budget only. It must never terminate a
+ * coding task while a required mutation or post-edit verification is pending.
+ * Pending correctness obligations therefore keep the loop alive until they are
+ * satisfied or the user aborts.
  */
 export function shouldRunAgentIteration(
     iteration: number,
     maxIterations: number,
     verificationPending: boolean,
-    verificationGraceIterations = 4,
+    _verificationGraceIterations = 4,
     mutationPending = false,
-    mutationGraceIterations = 3,
-    lastMutationIteration = 0,
+    _mutationGraceIterations = 3,
+    _lastMutationIteration = 0,
 ): boolean {
+    if (verificationPending || mutationPending) { return true; }
     if (maxIterations <= 0) { return true; }
-    if (iteration < maxIterations) { return true; }
-
-    const verificationGrace = Math.max(0, Math.floor(verificationGraceIterations));
-    const mutationGrace = Math.max(0, Math.floor(mutationGraceIterations));
-
-    if (verificationPending) {
-        const baselineDeadline = maxIterations + verificationGrace;
-        const progressDeadline = lastMutationIteration > 0
-            ? lastMutationIteration + verificationGrace
-            : baselineDeadline;
-        const absoluteDeadline = maxIterations + mutationGrace + verificationGrace;
-        return iteration < Math.min(
-            absoluteDeadline,
-            Math.max(baselineDeadline, progressDeadline),
-        );
-    }
-
-    return mutationPending && iteration < maxIterations + mutationGrace;
+    return iteration < maxIterations;
 }
