@@ -288,17 +288,28 @@ export function restrictNativeToolsForAction(
     const priority: ToolCall['type'][] = explorationClosed
         ? focusedReadExhausted
             ? ['edit_file', 'write_file', 'run_terminal', 'get_diagnostics']
-            : ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
+            : ['edit_file', 'search_files', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
         : ACTION_PRIORITY;
     const rank = new Map(priority.map((name, index) => [name, index]));
     const available = explorationClosed
         ? tools.filter(tool =>
-            (!ACTION_DISCOVERY.has(tool.name) || tool.name === 'read_file') &&
-            !(focusedReadExhausted && tool.name === 'read_file'))
+            (
+                !ACTION_DISCOVERY.has(tool.name) ||
+                tool.name === 'read_file' ||
+                tool.name === 'search_files'
+            ) &&
+            !(focusedReadExhausted && (tool.name === 'read_file' || tool.name === 'search_files')))
         : tools;
 
     return available
         .map(tool => {
+            if (tool.name === 'search_files' && explorationClosed) {
+                return {
+                    ...tool,
+                    description: 'Focused action locator. Set glob to exactly one file that you already read (for example src/agentProvider.ts); use the search only to find relevant line locations. Repo-wide globs are blocked. Then use at most one bounded read_file range before editing.',
+                };
+            }
+
             if (tool.name === 'read_file' && explorationClosed) {
                 return {
                     ...tool,
