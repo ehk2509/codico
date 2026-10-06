@@ -26,6 +26,8 @@ export class ExplorationController {
     private _verificationAuditSeen = false;
     private _verificationAuditReads = 0;
     private readonly _unwiredImports = new Set<string>();
+    private _integrationRecoveryReads = 0;
+    private _actionEscapeReads = 0;
     private readonly taskContract: string;
 
     constructor(rawTask = '') { this.taskContract = buildTaskAcceptanceContract(rawTask); }
@@ -95,11 +97,20 @@ export class ExplorationController {
         if (this._verificationPending && isExplorationTool(tool)) {
             if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
 
-            if (this._unwiredImports.size > 0 && tool.type !== 'read_file') {
-                return {
-                    isExploration: true,
-                    guidance: '[System Integration] A helper import is still unwired. Stop broad discovery and edit the current consumer now. Use read_file only for one exact missing range needed to make that wiring edit.',
-                };
+            if (this._unwiredImports.size > 0) {
+                if (tool.type !== 'read_file') {
+                    return {
+                        isExploration: true,
+                        block: '[System Integration] A helper import is still unwired. Broad discovery is blocked until you wire that helper into the current consumer or remove the import.',
+                    };
+                }
+                this._integrationRecoveryReads++;
+                if (this._integrationRecoveryReads > 1) {
+                    return {
+                        isExploration: true,
+                        block: '[System Integration] You already used the one targeted recovery read for this unwired helper. Edit the consumer now using the fresh source you have, or remove the import.',
+                    };
+                }
             }
 
             if (tool.type === 'read_file') {
@@ -127,6 +138,16 @@ export class ExplorationController {
         }
 
         if (!isExplorationTool(tool)) { return { isExploration: false }; }
+
+        if (this._locked) {
+            this._actionEscapeReads++;
+            if (this._actionEscapeReads > 2) {
+                return {
+                    isExploration: true,
+                    block: '[System Action] Open-ended exploration is closed after two targeted escape-hatch reads. Make the smallest evidence-backed edit now. If the edit misses, the tool will return fresh recovery context.',
+                };
+            }
+        }
 
         const target = explorationTarget(tool);
         const targetVisits = target ? (this.targetVisits.get(target) ?? 0) + 1 : 1;
@@ -162,6 +183,8 @@ export class ExplorationController {
             this._verificationFile = tool.filepath;
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
             this._verificationAuditReads = 0;
+            this._integrationRecoveryReads = 0;
+            this._actionEscapeReads = 0;
             this.targetVisits.clear();
 
             if (this._unwiredImports.size) {
@@ -234,5 +257,6 @@ export class ExplorationController {
         this._verificationFile = undefined;
         this._verificationAuditSeen = false;
         this._verificationAuditReads = 0;
+        this._integrationRecoveryReads = 0;
     }
 }
