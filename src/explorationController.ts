@@ -38,14 +38,33 @@ export class ExplorationController {
     private _lastFocusedReadIteration = -1;
     private readonly taskContract: string;
     private readonly mutationRequired: boolean;
+    private readonly normalIterationBudget: number;
 
-    constructor(rawTask = '') {
+    constructor(rawTask = '', normalIterationBudget = 0) {
         this.taskContract = buildTaskAcceptanceContract(rawTask);
         this.mutationRequired = taskLikelyRequiresMutation(rawTask);
+        this.normalIterationBudget = Math.max(0, Math.floor(normalIterationBudget));
     }
 
     /** Called exactly once for each model/agent turn. */
-    public beginIteration(): void { this._iteration++; }
+    public beginIteration(): void {
+        this._iteration++;
+        const broadBudget = this.normalIterationBudget > 0
+            ? Math.ceil(this.normalIterationBudget / 2)
+            : 0;
+        if (
+            broadBudget > 0 &&
+            this.mutationRequired &&
+            this._locked &&
+            !this._verificationPending &&
+            !this._focusedAction &&
+            this._iteration > broadBudget
+        ) {
+            this._focusedAction = true;
+            this._focusedReadIterations = 0;
+            this._lastFocusedReadIteration = -1;
+        }
+    }
 
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
