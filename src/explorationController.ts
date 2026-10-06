@@ -52,6 +52,9 @@ export class ExplorationController {
     public get verificationFile(): string | undefined { return this._verificationFile; }
     public get focusedAction(): boolean { return this._focusedAction; }
     public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
+    public get mutationGracePending(): boolean {
+        return this.mutationRequired && this._focusedAction && this.focusedReadExhausted && !this._verificationPending;
+    }
 
     /**
      * True means the edited file still needs an explicit post-edit control-flow
