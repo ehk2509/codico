@@ -92,7 +92,10 @@ async function main() {
   const timeoutMinutes = Number.isFinite(requestedTimeoutMinutes)
     ? Math.max(0, requestedTimeoutMinutes)
     : 0;
-  const maxTotalTokens = Math.max(1, Number(arg('--max-total-tokens', String(suite.maxTotalTokens || 400000))));
+  const requestedMaxTotalTokens = Number(arg('--max-total-tokens', String(suite.maxTotalTokens ?? 0)));
+  const maxTotalTokens = Number.isFinite(requestedMaxTotalTokens)
+    ? Math.max(0, requestedMaxTotalTokens)
+    : 0;
   const filter = new RegExp(filterRaw, 'i');
 
   let tasks = suite.tasks.filter(task =>
@@ -304,6 +307,7 @@ async function main() {
     `Model: **${model}**`,
     `Success: **${passed.length}/${valid.length} valid tasks (${(summary.successRate * 100).toFixed(1)}%)**`,
     `Invalid verifier tasks skipped before model invocation: **${invalid.length}**`,
+    `Token ceiling: **${maxTotalTokens > 0 ? maxTotalTokens.toLocaleString() : 'none'}**`,
     `Over-budget valid tasks: **${overBudget.length}**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,
     '',
