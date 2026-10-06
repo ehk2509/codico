@@ -3,6 +3,7 @@ const LIFECYCLE_RE = /\b(?:done|finish(?:ed|reason)?|complete(?:d|ion)?|terminal
 const STATE_RE = /\b(?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:true|false|null|undefined)\b|(?:===|!==)\s*(?:true|false|null|undefined)/i;
 const SEMANTIC_TERMINAL_RE = /(?:\[DONE\]|\b(?:done|finish(?:ed|reason)?|complete(?:d|ion)?|terminal|success|resolve|stop)\b|finish_reason)/i;
 const TRANSPORT_TERMINAL_RE = /(?:\.on\(\s*['"](?:end|close|error|aborted?)['"]|\b(?:connection|socket|transport|end(?:ed)?|close(?:d)?|error|abort(?:ed)?|reject)\b)/i;
+const CALLABLE_DECL_RE = /\b(?:export\s+)?(?:async\s+)?function\s+[A-Za-z_$][\w$]*\b|\b(?:export\s+)?const\s+[A-Za-z_$][\w$]*\s*=\s*(?:async\s*)?\([^)]*\)\s*=>/;
 
 interface AuditCandidate {
     line: number;
@@ -24,7 +25,14 @@ function renderCandidates(title: string, items: AuditCandidate[]): string {
  */
 export function buildLocalInvariantAudit(source: string, changedText: string): string {
     const importAudit = buildImportUsageAudit(source);
-    if (!LIFECYCLE_RE.test(changedText) && !STATE_RE.test(changedText)) { return importAudit; }
+    const callableReminder = CALLABLE_DECL_RE.test(changedText)
+        ? '\n\n[Post-edit behavior integration reminder]\n' +
+            'This edit introduces or rewrites a callable abstraction. If the task requests an observable runtime behavior change, ' +
+            'a helper definition alone is not sufficient: make sure a real production caller/path invokes it before final verification.'
+        : '';
+    if (!LIFECYCLE_RE.test(changedText) && !STATE_RE.test(changedText)) {
+        return importAudit + callableReminder;
+    }
 
     const lines = source.split('\n');
     const index = source.indexOf(changedText);
@@ -56,5 +64,5 @@ export function buildLocalInvariantAudit(source: string, changedText: string): s
         '- If a new guard reports premature transport end, every semantic completion/normal-terminal candidate above must transition or bypass that guard before transport closure.\n' +
         '- Do not assume one terminal representation is the only success path: an explicit sentinel and a provider finish/completion field can both represent normal completion when the surrounding source treats them as terminal.\n' +
         '- Keep resource/transport closure distinct from semantic completion when they are different states.\n' +
-        '- If any listed normal path can trigger the new failure guard, revise this same file before moving on.' + importAudit;
+        '- If any listed normal path can trigger the new failure guard, revise this same file before moving on.' + importAudit + callableReminder;
 }
