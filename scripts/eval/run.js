@@ -88,7 +88,10 @@ async function main() {
   const filterRaw = arg('--filter', '.*');
   const repetitions = Math.max(1, Number(arg('--repetitions', '1')));
   const limit = Math.max(0, Number(arg('--limit', '0')));
-  const timeoutMinutes = Math.max(1, Number(arg('--timeout-minutes', String(suite.maxTaskMinutes || 10))));
+  const requestedTimeoutMinutes = Number(arg('--timeout-minutes', String(suite.maxTaskMinutes ?? 0)));
+  const timeoutMinutes = Number.isFinite(requestedTimeoutMinutes)
+    ? Math.max(0, requestedTimeoutMinutes)
+    : 0;
   const maxTotalTokens = Math.max(1, Number(arg('--max-total-tokens', String(suite.maxTotalTokens || 400000))));
   const filter = new RegExp(filterRaw, 'i');
 
@@ -189,7 +192,7 @@ async function main() {
         const agent = run(
           process.execPath,
           [path.join(root, 'eval/vscode/runTask.js'), workspace],
-          { env, timeout: timeoutMinutes * 60_000, inherit: true }
+          { env, timeout: timeoutMinutes > 0 ? timeoutMinutes * 60_000 : undefined, inherit: true }
         );
         record.agentOk = agent.status === 0;
         record.agentTimedOut = /ETIMEDOUT/i.test(agent.error);
