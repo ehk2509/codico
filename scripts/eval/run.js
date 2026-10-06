@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { missingVerifierOutModules } = require('./verifierPreflight');
+const { evaluateHoldoutResult } = require('./resultPolicy');
 
 const root = path.resolve(__dirname, '../..');
 
@@ -245,7 +246,9 @@ async function main() {
           stdout: tail(verify.stdout),
           stderr: tail(verify.stderr),
         };
-        record.success = record.setupOk && record.agentOk && record.verifierOk;
+        const resultPolicy = evaluateHoldoutResult(record);
+        record.withinTokenBudget = resultPolicy.withinTokenBudget;
+        record.success = resultPolicy.success;
 
         try { fs.unlinkSync(verifierDest); } catch {}
       } catch (error) {
@@ -267,6 +270,7 @@ async function main() {
 
   const invalid = results.filter(r => r.invalidVerifier);
   const valid = results.filter(r => !r.invalidVerifier);
+  const overBudget = valid.filter(r => r.metrics && r.withinTokenBudget === false);
   const passed = valid.filter(r => r.success);
   const summary = {
     suiteVersion: suite.suiteVersion,
@@ -275,6 +279,7 @@ async function main() {
     taskCount: results.length,
     validTaskCount: valid.length,
     invalid: invalid.length,
+    overBudget: overBudget.length,
     passed: passed.length,
     failed: valid.length - passed.length,
     successRate: valid.length ? passed.length / valid.length : 0,
@@ -288,7 +293,7 @@ async function main() {
 
   fs.writeFileSync(path.join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2));
   const rows = results.map(r =>
-    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.invalidVerifier ? 'INVALID' : (r.success ? 'PASS' : 'FAIL')} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
+    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.invalidVerifier ? 'INVALID' : (r.metrics && r.withinTokenBudget === false ? 'OVER_BUDGET' : (r.success ? 'PASS' : 'FAIL'))} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
   );
   const markdown = [
     `# Codico coding holdout — ${suite.suiteVersion}`,
@@ -296,6 +301,7 @@ async function main() {
     `Model: **${model}**`,
     `Success: **${passed.length}/${valid.length} valid tasks (${(summary.successRate * 100).toFixed(1)}%)**`,
     `Invalid verifier tasks skipped before model invocation: **${invalid.length}**`,
+    `Over-budget valid tasks: **${overBudget.length}**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,
     '',
     '| Task | Category | Result | Steps | Tool calls | Tokens | Context chars omitted | Files changed |',
