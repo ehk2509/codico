@@ -787,7 +787,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const autoInject = config.get<boolean>('autoInjectContext', true);
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
-        const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4);
+        const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
@@ -898,7 +898,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const MAX_IDENTICAL_CALLS = 3;
         const exploration = new ExplorationController(rawText);
         try {
-            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations); i++) {
+            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations); i++) {
                 if (signal.aborted) { break; }
                 if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
                     this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) {
@@ -1329,7 +1329,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
-                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations)) {
+                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations)) {
                     const keepGoing = await new Promise<boolean>((resolve) => {
                         this._checkpointResolver = resolve;
                         signal.addEventListener('abort', () => resolve(false), { once: true });
@@ -1340,7 +1340,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 // Warn the user when the iteration cap is about to be hit on the last loop
-                if (!shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations)) {
+                if (!shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations)) {
                     this._post({ type: 'iterationLimit', id: msgId, limit: maxIterations });
                 }
             }
