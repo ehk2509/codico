@@ -896,7 +896,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
-        const exploration = new ExplorationController(rawText);
+        const exploration = new ExplorationController(rawText, maxIterations);
         try {
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations); i++) {
                 if (signal.aborted) { break; }
