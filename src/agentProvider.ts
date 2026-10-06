@@ -911,6 +911,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 this._evalSteps = Math.max(this._evalSteps, i + 1);
+                exploration.beginIteration();
                 this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
 
                 let fullContent = '';
