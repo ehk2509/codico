@@ -1,7 +1,7 @@
 {
-  "suiteVersion": "codico-coding-holdout-v5",
+  "suiteVersion": "codico-coding-holdout-v6",
   "frozen": true,
-  "description": "Historical Codico regressions with hidden behavior-level or fix-era verifiers. v5 requires resume-overlap logic to be actually invoked in the recovery path and enforces the frozen cumulative token budget as a success criterion.",
+  "description": "Historical Codico regressions with hidden behavior-level or fix-era verifiers. v6 preserves v5 scoring behavior except that holdouts have no evaluator wall-clock or cumulative-token ceiling; bounded normal/mutation/verification iteration policy remains the execution limit.",
   "tasks": [
     {
       "id": "stream-unexpected-eof",
@@ -267,6 +267,6 @@
       "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
     }
   ],
-  "maxTotalTokens": 400000,
+  "maxTotalTokens": 0,
   "maxTaskMinutes": 0
 }
