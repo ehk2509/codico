@@ -56,7 +56,7 @@ export class ExplorationController {
     public get focusedReadExhausted(): boolean { return false; }
     public get lastMutationIteration(): number { return this._lastMutationIteration; }
     public get mutationGracePending(): boolean {
-        return false;
+        return this.mutationRequired && this._lastMutationIteration === 0;
     }
 
     /**
@@ -69,6 +69,9 @@ export class ExplorationController {
 
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) {
+            if (this.mutationRequired && this._lastMutationIteration === 0) {
+                return '[System Action] This request requires a code change, but no mutation has succeeded yet. Continue gathering only the evidence needed for correctness, then make the smallest evidence-backed edit. Do not finish with analysis only.';
+            }
             return undefined;
         }
         if (this._unwiredImports.size) {
