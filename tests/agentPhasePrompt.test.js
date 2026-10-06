@@ -71,3 +71,30 @@ test('focused action forbids broad and terminal discovery but permits one bounde
   assert.match(prompt, /Do not use terminal commands to recover source context/i);
   assert.doesNotMatch(prompt, /Discovery tools remain available/);
 });
+
+
+test('mutation-only phase removes discovery tool affordances from the compatibility prompt', () => {
+  const prompt = systemPromptForAgentPhase(
+    false,
+    true,
+    false,
+    undefined,
+    '## Task acceptance contract\nFix the bug.',
+    true,
+    true,
+    true,
+  );
+
+  assert.match(prompt, /mutation required/i);
+  assert.match(prompt, /```edit_file/);
+  assert.match(prompt, /```write_file/);
+  assert.match(prompt, /```run_terminal/);
+  assert.match(prompt, /```get_diagnostics/);
+
+  assert.doesNotMatch(prompt, /```read_file/);
+  assert.doesNotMatch(prompt, /```search_files/);
+  assert.doesNotMatch(prompt, /```find_files/);
+  assert.doesNotMatch(prompt, /```list_directory/);
+  assert.doesNotMatch(prompt, /Explore narrowly before editing/i);
+  assert.match(prompt, /Only the four tools listed above are valid/i);
+});
