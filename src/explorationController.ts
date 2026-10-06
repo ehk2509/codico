@@ -36,6 +36,7 @@ export class ExplorationController {
     private _focusedAction = false;
     private _focusedReadIterations = 0;
     private _lastFocusedReadIteration = -1;
+    private _lastMutationIteration = 0;
     private readonly taskContract: string;
     private readonly mutationRequired: boolean;
     private readonly normalIterationBudget: number;
@@ -71,6 +72,7 @@ export class ExplorationController {
     public get verificationFile(): string | undefined { return this._verificationFile; }
     public get focusedAction(): boolean { return this._focusedAction; }
     public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
+    public get lastMutationIteration(): number { return this._lastMutationIteration; }
     public get mutationGracePending(): boolean {
         return this.mutationRequired && this._focusedAction && this.focusedReadExhausted && !this._verificationPending;
     }
@@ -291,6 +293,7 @@ export class ExplorationController {
 
             this.streak = 0;
             this._locked = false;
+            this._lastMutationIteration = this._iteration;
             this._verificationPending = true;
             this._verificationFile = tool.filepath;
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
