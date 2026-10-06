@@ -2,18 +2,18 @@
 
 Codico's coding-quality evidence is measured with a frozen historical-regression suite rather than toy generation prompts.
 
-## Frozen suite v5
+## Frozen suite v6
 
 `eval/tasks.json` contains **26 tasks** derived from historical Codico bugs and hardening gaps.
 
-v5 preserves the corpus and fixes two scoring holes found in the first v4 run:
+v6 preserves the v5 task corpus and behavior-level verifiers, including the requirement that resume-overlap logic is actually called from the recovery path. It changes only the evaluation ceilings:
 
-- resume-overlap only passes when a behaviorally correct overlap calculation is **actually called** in the stream recovery path; importing a helper is not enough;
-- the frozen **400k cumulative token budget is part of success**. A behaviorally correct patch that exceeds the budget is reported as `OVER_BUDGET`, not `PASS`.
+- **no evaluator wall-clock timeout** (`maxTaskMinutes: 0`);
+- **no cumulative token ceiling** (`maxTotalTokens: 0`).
 
-There is no evaluator wall-clock timeout for the active suite. The 400k cumulative token budget and bounded normal/mutation/verification iteration budgets remain the quality and cost limits. Periodic partial checkpoints still preserve evidence if the host or CI process is interrupted externally.
+The agent is still bounded by the normal iteration budget plus mutation/verification grace, and hidden verifiers still determine correctness. Periodic checkpoints preserve evidence if the host or CI process is interrupted externally.
 
-Burned v1-v4 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v4.json`.
+Burned v1-v5 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v5.json`. v5 retains its original 15-minute / 400k-token policy for reproducibility.
 
 ### Execution protocol
 
@@ -43,6 +43,9 @@ npm run eval:coding -- --model deepseek/deepseek-v4-flash
 # optional: impose a local wall-clock ceiling explicitly (0/default = none)
 npm run eval:coding -- --timeout-minutes 30 --model deepseek/deepseek-v4-flash
 
+# optional: impose a cumulative token ceiling explicitly (0/default = none)
+npm run eval:coding -- --max-total-tokens 400000 --model deepseek/deepseek-v4-flash
+
 # reproduce burned suites explicitly
 npm run eval:coding -- --suite eval/tasks-v2.json --model deepseek/deepseek-v4-flash
 npm run eval:coding -- --suite eval/tasks-v1.json --model deepseek/deepseek-v4-flash
@@ -60,6 +63,6 @@ Results are written beneath `eval/results/` and are git-ignored.
 
 ## Freeze policy
 
-`codico-coding-holdout-v1` through `v4` are burned evidence and stay reproducible. `codico-coding-holdout-v5` is active and frozen.
+`codico-coding-holdout-v1` through `v5` are burned evidence and stay reproducible. `codico-coding-holdout-v6` is active and frozen.
 
 Any semantic scoring or quality-budget change creates a new suite version. Harness-only diagnostics improvements may land in place when they do not change what constitutes success.
