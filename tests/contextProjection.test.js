@@ -94,3 +94,31 @@ test('recent or small tool results are preserved verbatim', () => {
   assert.equal(result.omittedMessages, 0);
   assert.equal(result.history[0].content, 'small result');
 });
+
+
+test('older error and mutation evidence is preserved without mutating canonical history', () => {
+  const error = 'ERROR failed to apply patch\n' + 'e'.repeat(8000);
+  const mutation = 'Edit applied successfully\n' + 'm'.repeat(8000);
+  const stale = 'ordinary output\n' + 's'.repeat(8000);
+  const history = [
+    { role: 'tool', content: error, toolCallId: 'err', toolName: 'run_terminal' },
+    { role: 'tool', content: mutation, toolCallId: 'edit', toolName: 'edit_file' },
+    { role: 'tool', content: stale, toolCallId: 'old', toolName: 'read_file' },
+    { role: 'assistant', content: 'later' },
+    { role: 'user', content: 'continue' },
+  ];
+
+  const result = projectHistoryForModel(history, {
+    recentMessages: 2,
+    largeResultChars: 6000,
+    preserveNewestLargeResults: 0,
+    preserveNewestTargetResults: 0,
+    preserveErrorResults: 1,
+    preserveMutationResults: 1,
+  });
+
+  assert.equal(result.history[0].content, error);
+  assert.equal(result.history[1].content, mutation);
+  assert.match(result.history[2].content, /compacted/i);
+  assert.equal(history[2].content, stale, 'canonical history stays untouched');
+});
