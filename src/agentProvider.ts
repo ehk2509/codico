@@ -31,7 +31,7 @@ import { ExplorationController } from './explorationController';
 import { sliceFileByLines } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
-import { applyEditMatch, resolveEditMatch } from './editMatcher';
+import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -1134,6 +1134,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._evalPromptTokens += chunk.promptTokens;
                         this._evalCompletionTokens += chunk.completionTokens;
+                        if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
@@ -2212,7 +2213,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? `old_str matches ${resolved.candidates}+ locations after safe normalization — provide more context`
                     : 'old_str not found, including safe whitespace-tolerant matching';
                 this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
+                const fresh = editFailureContext(content, tool.oldStr);
+                return `[edit_file: ${tool.filepath}] ERROR: ${err}${fresh ? `\nCurrent source near the closest requested anchor:\n\`\`\`\n${fresh}\n\`\`\`` : ''}`;
             }
             const editMatch = resolved.match;
 
