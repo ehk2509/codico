@@ -20,7 +20,7 @@ import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, norma
 import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
-import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
+import { appendAssistantIteration, compactSupersededToolResults, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
@@ -1309,6 +1309,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 actionNudges = 0;
+
+                // Deterministically shrink stale tool payloads before the next model call.
+                // This does not cap tokens or iterations; it only avoids replaying stale bodies.
+                compactSupersededToolResults(this._history);
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
