@@ -24,6 +24,7 @@ import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } fr
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, compactSupersededToolResults, NativeToolExecution } from './agentHistory';
+import { buildTaskAcceptanceContract, taskLikelyRequiresMutation } from './taskAcceptance';
 
 function getNonce(): string {
     return nodeCrypto.randomBytes(24).toString('base64url');
@@ -790,6 +791,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
+        const mutationRequired = !this._chatMode && taskLikelyRequiresMutation(rawText);
+        const taskAcceptanceContract = buildTaskAcceptanceContract(rawText);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
@@ -803,6 +806,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (customPrefix) {
             effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${customPrefix}` : customPrefix;
         }
+        effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${taskAcceptanceContract}` : taskAcceptanceContract;
+
         // Append MCP tool documentation if any servers are connected
         const mcpSection = this._mcp.buildSystemPromptSection();
         if (mcpSection) {
@@ -1214,6 +1219,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 streamRecoveryAttempts = 0;
 
                 if (inlineToolResults.length === 0) {
+                    if (mutationRequired && this._filesWrittenThisTurn === 0) {
+                        this._history.push({ role: 'user', content: '[Completion check] A requested code change has not been applied yet. Continue using the evidence already gathered and make the smallest correct edit before finishing.' });
+                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
                     // Some models announce an action ("I'll locate the file.") and end the
                     // turn without emitting the tool fence. Ask them to issue it rather than
                     // treating the announcement as the final answer. Bounded per request.
