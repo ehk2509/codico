@@ -1901,7 +1901,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
                 this._filesWrittenThisTurn++;
                 const lineCount = contentToWrite.split('\n').length;
-                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.`;
+                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
             }
         } catch (err: unknown) {
             errorMsg = err instanceof Error ? err.message : String(err);
