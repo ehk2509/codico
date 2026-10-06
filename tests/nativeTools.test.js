@@ -127,3 +127,20 @@ test('read capability is never withdrawn by an arbitrary audit count', () => {
   assert.equal(names.has('read_file'), true);
   assert.equal(names.has('search_files'), true);
 });
+
+
+test('unresolved integration makes edit_file the verification priority', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/consumer.ts',
+    false,
+    true,
+  );
+
+  assert.equal(tools[0].name, 'edit_file');
+  assert.match(tools.find(tool => tool.name === 'edit_file').description, /Blocking integration fix/i);
+  assert.match(tools.find(tool => tool.name === 'read_file').description, /Integration recovery/i);
+});
