@@ -1312,7 +1312,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Deterministically shrink stale tool payloads before the next model call.
                 // This does not cap tokens or iterations; it only avoids replaying stale bodies.
-                compactSupersededToolResults(this._history);
+                // Ablation: preserve canonical v6 history exactly; PR11 compaction disabled for this run.
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
