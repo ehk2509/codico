@@ -96,6 +96,9 @@ export class ExplorationController {
 
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) {
+            if (this.mutationRequired && this._lastMutationIteration === 0) {
+                return '[Completion check] The request requires a code change, but no mutation has succeeded. Continue from existing evidence and make the smallest correct edit before finishing.';
+            }
             if (this._focusedAction && this.mutationRequired) {
                 return this.focusedReadExhausted
                     ? '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Focused source reading is complete. Do not finish yet: make the smallest evidence-backed edit now.'
