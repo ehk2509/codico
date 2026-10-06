@@ -20,7 +20,7 @@ import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, norma
 import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
-import { appendAssistantIteration, compactSupersededToolResults, NativeToolExecution } from './agentHistory';
+import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
