@@ -2,20 +2,27 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ExplorationController } = require('../out/explorationController.js');
 
-test('controller enters action phase with four discovery escape turns', () => {
+test('controller transitions from broad action escape to focused ranged reads', () => {
   const controller = new ExplorationController();
-  let last;
 
   for (let i = 0; i < 10; i++) {
     controller.beginIteration();
-    last = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-    assert.equal(last.block, undefined);
+    const check = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+    assert.equal(check.block, undefined);
   }
 
   assert.equal(controller.locked, true);
   controller.beginIteration();
-  const fifthAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  assert.match(fifthAfterLock.block, /exploration is closed/i);
+  const unbounded = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  assert.match(unbounded.block, /Broad discovery is now closed|Broad reads are closed/i);
+  assert.equal(controller.focusedAction, true);
+
+  const ranged = controller.before(
+    { type: 'read_file', filepath: 'src/a.ts', startLine: 100, endLine: 180 },
+    false,
+  );
+  assert.equal(ranged.block, undefined);
+  assert.match(ranged.guidance, /bounded range|exact edit context/i);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), true);
 });
 
@@ -144,7 +151,7 @@ test('unwired helper is injected into every verification system prompt and tool 
 });
 
 
-test('action phase allows four targeted exploration turns before requiring an edit', () => {
+test('action phase allows four broad escape turns before focused action', () => {
   const controller = new ExplorationController();
   for (let i = 0; i < 6; i++) {
     controller.beginIteration();
@@ -161,7 +168,14 @@ test('action phase allows four targeted exploration turns before requiring an ed
   const blocked = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
 
   for (const check of allowed) { assert.equal(check.block, undefined); }
-  assert.match(blocked.block, /exploration is closed/i);
+  assert.match(blocked.block, /Broad discovery is now closed/i);
+  assert.equal(controller.focusedAction, true);
+
+  const ranged = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1100, endLine: 1250 },
+    false,
+  );
+  assert.equal(ranged.block, undefined);
 });
 
 test('unwired helper gets one recovery read and then must be edited', () => {
@@ -213,7 +227,7 @@ test('batched exploration calls in one model turn consume one exploration iterat
   assert.equal(second.block, undefined);
 });
 
-test('closed action exploration also blocks terminal cat/grep bypasses', () => {
+test('focused action blocks terminal cat/grep bypasses while allowing ranged reads', () => {
   const controller = new ExplorationController();
   for (let i = 0; i < 6; i++) {
     controller.beginIteration();
@@ -225,7 +239,12 @@ test('closed action exploration also blocks terminal cat/grep bypasses', () => {
   }
   controller.beginIteration();
   const blocked = controller.before({ type: 'read_file', filepath: 'src/c.ts' }, false);
-  assert.match(blocked.block, /exploration is closed/i);
+  assert.match(blocked.block, /Broad discovery is now closed|Broad reads are closed/i);
+  const ranged = controller.before(
+    { type: 'read_file', filepath: 'src/c.ts', startLine: 50, endLine: 100 },
+    false,
+  );
+  assert.equal(ranged.block, undefined);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn foo src/' }), true);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
 });
