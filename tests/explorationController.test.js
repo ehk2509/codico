@@ -2,30 +2,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ExplorationController } = require('../out/explorationController.js');
 
-test('controller transitions from broad action escape to focused ranged reads', () => {
-  const controller = new ExplorationController();
-
-  for (let i = 0; i < 10; i++) {
-    controller.beginIteration();
-    const check = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-    assert.equal(check.block, undefined);
-  }
-
-  assert.equal(controller.locked, true);
-  controller.beginIteration();
-  const unbounded = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  assert.match(unbounded.block, /Broad discovery is now closed|Broad reads are closed/i);
-  assert.equal(controller.focusedAction, true);
-
-  const ranged = controller.before(
-    { type: 'read_file', filepath: 'src/a.ts', startLine: 100, endLine: 180 },
-    false,
-  );
-  assert.equal(ranged.block, undefined);
-  assert.match(ranged.guidance, /bounded range|exact edit context/i);
-  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), true);
-});
-
 test('lifecycle edits require a post-edit audit and behavior-level verification', () => {
   const controller = new ExplorationController(
     'Fix premature EOF handling. Keep normal completed streams unchanged.'
@@ -151,33 +127,6 @@ test('unwired helper is injected into every verification system prompt and tool 
 });
 
 
-test('action phase allows four broad escape turns before focused action', () => {
-  const controller = new ExplorationController();
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  assert.equal(controller.locked, true);
-
-  const allowed = [];
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    allowed.push(controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false));
-  }
-  controller.beginIteration();
-  const blocked = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
-
-  for (const check of allowed) { assert.equal(check.block, undefined); }
-  assert.match(blocked.block, /Broad discovery is now closed/i);
-  assert.equal(controller.focusedAction, true);
-
-  const ranged = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1100, endLine: 1250 },
-    false,
-  );
-  assert.equal(ranged.block, undefined);
-});
-
 test('unwired helper gets one recovery read and then must be edited', () => {
   const controller = new ExplorationController('Wire the helper.');
   controller.after(
@@ -227,217 +176,6 @@ test('batched exploration calls in one model turn consume one exploration iterat
   assert.equal(second.block, undefined);
 });
 
-test('focused action blocks terminal cat/grep bypasses while allowing ranged reads', () => {
-  const controller = new ExplorationController();
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
-  }
-  controller.beginIteration();
-  const blocked = controller.before({ type: 'read_file', filepath: 'src/c.ts' }, false);
-  assert.match(blocked.block, /Broad discovery is now closed|Broad reads are closed/i);
-  const ranged = controller.before(
-    { type: 'read_file', filepath: 'src/c.ts', startLine: 50, endLine: 100 },
-    false,
-  );
-  assert.equal(ranged.block, undefined);
-  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn foo src/' }), true);
-  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
-});
-
-
-test('focused action closes broad discovery but preserves explicit source ranges', () => {
-  const controller = new ExplorationController();
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'escape-' + i, isRegex: false }, false);
-  }
-
-  controller.beginIteration();
-  const transition = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
-    false,
-  );
-  assert.equal(controller.focusedAction, true);
-  assert.equal(transition.block, undefined);
-  assert.match(transition.guidance, /bounded range/i);
-
-  controller.beginIteration();
-  const broad = controller.before({ type: 'search_files', pattern: 'resume', isRegex: false }, false);
-  assert.match(broad.block, /Repo-wide search is closed/i);
-
-  const wholeFile = controller.before({ type: 'read_file', filepath: 'src/agentProvider.ts' }, false);
-  assert.match(wholeFile.block, /Broad reads are closed/i);
-
-  const ranged = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1101, endLine: 1300 },
-    false,
-  );
-  assert.equal(ranged.block, undefined);
-  assert.match(ranged.guidance, /exact edit context/i);
-
-  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -n resume src/agentProvider.ts' }), true);
-  assert.equal(controller.before(
-    { type: 'edit_file', filepath: 'src/agentProvider.ts', oldStr: 'a', newStr: 'b' },
-    false,
-  ).isExploration, false);
-});
-
-
-test('focused action permits two ranged-read turns then requires mutation', () => {
-  const controller = new ExplorationController(
-    'Fix the stream seam and add a general overlap calculation.'
-  );
-
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
-  }
-
-  controller.beginIteration();
-  const first = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
-    false,
-  );
-  assert.equal(controller.focusedAction, true);
-  assert.equal(first.block, undefined);
-  assert.equal(controller.focusedReadExhausted, false);
-
-  controller.beginIteration();
-  const second = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1101, endLine: 1250 },
-    false,
-  );
-  assert.equal(second.block, undefined);
-  assert.equal(controller.focusedReadExhausted, true);
-  assert.match(second.guidance, /final focused evidence turn/i);
-
-  controller.beginIteration();
-  const third = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1251, endLine: 1350 },
-    false,
-  );
-  assert.match(third.block, /two focused locator\/read turns are exhausted/i);
-  assert.match(controller.completionGuidance(), /no mutation has succeeded/i);
-});
-
-test('focused action does not force a mutation for explanation-only requests', () => {
-  const controller = new ExplorationController('Explain how the stream recovery flow works.');
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  for (let i = 0; i < 5; i++) {
-    controller.beginIteration();
-    controller.before(
-      i === 4
-        ? { type: 'read_file', filepath: 'src/a.ts', startLine: 1, endLine: 20 }
-        : { type: 'search_files', pattern: 'e' + i, isRegex: false },
-      false,
-    );
-  }
-  assert.equal(controller.focusedAction, true);
-  assert.equal(controller.completionGuidance(), undefined);
-});
-
-
-test('mutation grace activates only after focused reads are exhausted for coding work', () => {
-  const controller = new ExplorationController('Fix the bug and update the implementation.');
-
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
-  }
-
-  controller.beginIteration();
-  controller.before(
-    { type: 'read_file', filepath: 'src/target.ts', startLine: 1, endLine: 80 },
-    false,
-  );
-  assert.equal(controller.mutationGracePending, false);
-
-  controller.beginIteration();
-  controller.before(
-    { type: 'read_file', filepath: 'src/target.ts', startLine: 81, endLine: 160 },
-    false,
-  );
-  assert.equal(controller.focusedReadExhausted, true);
-  assert.equal(controller.mutationGracePending, true);
-
-  controller.after(
-    { type: 'edit_file', filepath: 'src/target.ts', oldStr: 'before', newStr: 'after' },
-    '[edit_file: src/target.ts] Edit applied successfully.'
-  );
-  assert.equal(controller.mutationGracePending, false);
-  assert.equal(controller.verificationPending, true);
-});
-
-test('explanation-only focused work never receives mutation grace', () => {
-  const controller = new ExplorationController('Explain the implementation and summarize the flow.');
-
-  for (let i = 0; i < 6; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
-  }
-  for (let i = 0; i < 4; i++) {
-    controller.beginIteration();
-    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
-  }
-  controller.beginIteration();
-  controller.before(
-    { type: 'read_file', filepath: 'src/target.ts', startLine: 1, endLine: 80 },
-    false,
-  );
-  controller.beginIteration();
-  controller.before(
-    { type: 'read_file', filepath: 'src/target.ts', startLine: 81, endLine: 160 },
-    false,
-  );
-
-  assert.equal(controller.focusedReadExhausted, true);
-  assert.equal(controller.mutationGracePending, false);
-});
-
-
-test('finite coding budgets reserve their second half for focused action', () => {
-  const controller = new ExplorationController('Fix the runtime bug.', 16);
-
-  for (let turn = 1; turn <= 6; turn++) {
-    controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + turn, isRegex: false }, false);
-  }
-  assert.equal(controller.locked, true);
-  assert.equal(controller.focusedAction, false);
-
-  controller.beginIteration(); // 7
-  assert.equal(controller.focusedAction, false);
-  controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-
-  controller.beginIteration(); // 8
-  assert.equal(controller.focusedAction, false);
-  controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
-
-  controller.beginIteration(); // 9 > half of 16
-  assert.equal(controller.focusedAction, true);
-});
-
 test('budget-aware focus does not force explanation-only or unlimited tasks', () => {
   const explanation = new ExplorationController('Explain how this works.', 16);
   for (let turn = 1; turn <= 10; turn++) {
@@ -476,57 +214,22 @@ test('successful edits expose their model turn for progress-aware verification g
 });
 
 
-test('focused action allows exact-file search only for a file already read', () => {
-  const controller = new ExplorationController('Fix the runtime bug.', 16);
 
-  for (let turn = 1; turn <= 6; turn++) {
+
+test('pre-mutation exploration pressure never removes evidence access', () => {
+  const controller = new ExplorationController('Fix the stream seam and add a general overlap calculation.', 16);
+
+  for (let turn = 1; turn <= 20; turn++) {
     controller.beginIteration();
-    controller.before({ type: 'search_files', pattern: 'p' + turn, isRegex: false }, false);
+    const tool = turn % 3 === 0
+      ? { type: 'read_file', filepath: 'src/agentProvider.ts' }
+      : { type: 'search_files', pattern: 'resume-' + turn, isRegex: false };
+    const check = controller.before(tool, false);
+    assert.equal(check.block, undefined, 'evidence access remains available before mutation');
   }
 
-  controller.beginIteration();
-  const read = { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1, endLine: 80 };
-  const readCheck = controller.before(read, false);
-  assert.equal(readCheck.block, undefined);
-  controller.after(read, '[read_file: src/agentProvider.ts]\n1: import x from "y";');
-
-  controller.beginIteration();
-  controller.before({ type: 'read_file', filepath: 'src/other.ts', startLine: 1, endLine: 40 }, false);
-
-  controller.beginIteration(); // focused action begins after half of 16
-  assert.equal(controller.focusedAction, true);
-
-  const unknown = controller.before(
-    { type: 'search_files', pattern: 'resume', glob: 'src/not-read.ts', isRegex: false },
-    false,
-  );
-  assert.match(unknown.block, /already been read/i);
-
-  const broad = controller.before(
-    { type: 'search_files', pattern: 'resume', glob: 'src\/**/*.ts', isRegex: false },
-    false,
-  );
-  assert.match(broad.block, /Repo-wide search is closed/i);
-
-  const exact = controller.before(
-    { type: 'search_files', pattern: 'stream_error|isRecoverable', glob: 'src/agentProvider.ts', isRegex: true },
-    false,
-  );
-  assert.equal(exact.block, undefined);
-  assert.match(exact.guidance, /exact-file search/i);
-
-  controller.beginIteration();
-  const range = controller.before(
-    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
-    false,
-  );
-  assert.equal(range.block, undefined);
-  assert.equal(controller.focusedReadExhausted, true);
-
-  controller.beginIteration();
-  const extraLocator = controller.before(
-    { type: 'search_files', pattern: 'more', glob: 'src/agentProvider.ts', isRegex: false },
-    false,
-  );
-  assert.match(extraLocator.block, /two focused locator\/read turns are exhausted/i);
+  assert.equal(controller.locked, true);
+  assert.equal(controller.focusedAction, false);
+  assert.equal(controller.lastMutationIteration, 0);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn resume src/' }), false);
 });

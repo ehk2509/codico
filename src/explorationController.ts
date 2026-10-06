@@ -59,7 +59,10 @@ export class ExplorationController {
     /** Called exactly once for each model/agent turn. */
     public beginIteration(): void {
         this._iteration++;
-        const broadBudget = this.normalIterationBudget > 0
+        // Exploration pressure must never become a capability lock before the first
+        // successful mutation. Iteration count is not evidence that the model has
+        // enough source context to edit safely.
+        const broadBudget = this._lastMutationIteration > 0 && this.normalIterationBudget > 0
             ? Math.ceil(this.normalIterationBudget / 2)
             : 0;
         if (
@@ -270,7 +273,7 @@ export class ExplorationController {
                 this._lastActionEscapeIteration = this._iteration;
                 this._actionEscapeIterations++;
             }
-            if (this._actionEscapeIterations > 4) {
+            if (this._lastMutationIteration > 0 && this._actionEscapeIterations > 4) {
                 this._focusedAction = true;
                 this._focusedReadIterations = 0;
                 this._lastFocusedReadIteration = -1;
