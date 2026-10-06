@@ -11,7 +11,7 @@ v5 preserves the corpus and fixes two scoring holes found in the first v4 run:
 - resume-overlap only passes when a behaviorally correct overlap calculation is **actually called** in the stream recovery path; importing a helper is not enough;
 - the frozen **400k cumulative token budget is part of success**. A behaviorally correct patch that exceeds the budget is reported as `OVER_BUDGET`, not `PASS`.
 
-The wall-clock limit remains a 15-minute safety ceiling, and periodic partial checkpoints preserve evidence if that ceiling is reached.
+There is no evaluator wall-clock timeout for the active suite. The 400k cumulative token budget and bounded normal/mutation/verification iteration budgets remain the quality and cost limits. Periodic partial checkpoints still preserve evidence if the host or CI process is interrupted externally.
 
 Burned v1-v4 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v4.json`.
 
@@ -30,7 +30,7 @@ For every task the runner:
 9. runs the verifier;
 10. kills any Electron processes carrying that unique profile path and removes the worktree.
 
-This keeps hidden tests invisible to the agent, prevents broken historical verifiers from wasting credits, and prevents one timed-out VS Code instance from poisoning the next task.
+This keeps hidden tests invisible to the agent, prevents broken historical verifiers from wasting credits, and isolates each VS Code instance so one interrupted run cannot poison the next task.
 
 ## Running locally
 
@@ -39,6 +39,9 @@ git fetch --unshallow  # if needed
 export OPENROUTER_API_KEY=...
 npm ci
 npm run eval:coding -- --model deepseek/deepseek-v4-flash
+
+# optional: impose a local wall-clock ceiling explicitly (0/default = none)
+npm run eval:coding -- --timeout-minutes 30 --model deepseek/deepseek-v4-flash
 
 # reproduce burned suites explicitly
 npm run eval:coding -- --suite eval/tasks-v2.json --model deepseek/deepseek-v4-flash
