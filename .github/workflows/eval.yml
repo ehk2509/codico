@@ -41,3 +41,5 @@ jobs:
           name: codico-pr11-token-efficient-resume-overlap
           path: eval/results/
           if-no-files-found: warn
+
+# trigger: pr11 token-efficiency validation
