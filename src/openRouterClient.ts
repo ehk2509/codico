@@ -209,7 +209,7 @@ filepath: <relative path, or omit for workspace>
 
 ## Rules
 
-1. Do not call read_file, search_files, find_files, list_directory, fetch_url, lsp_symbol, browser source-inspection tools, or source-inspection shell commands. That evidence phase is complete.
+1. Only the four tools listed above are valid in this phase. Do not issue any other function call or fenced tool block. Repository/source discovery is complete.
 2. Make the smallest evidence-backed code change now. Prefer edit_file; use write_file only for a necessary whole-file rewrite.
 3. If edit_file misses, use the fresh source context returned by the failed edit to retry. Do not restart discovery.
 4. run_terminal is for verification only in this phase: tests, builds, lint/type checks, or other focused validation. Do not use cat, grep, rg, sed, awk, head, tail, git show, or similar commands to inspect source.
