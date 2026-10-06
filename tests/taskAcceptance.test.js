@@ -13,6 +13,7 @@ test('task acceptance contract preserves outcomes and implementation discipline'
   assert.match(contract, /Acceptance checklist derived from the request/);
   assert.match(contract, /abstraction or API boundary that owns the behavior/i);
   assert.match(contract, /do not optimize for guessed hidden tests/i);
+  assert.match(contract, /production caller\/path actually invokes that helper/i);
 });
 
 test('task acceptance contract stays bounded for enormous prompts', () => {
