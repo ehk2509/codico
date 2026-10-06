@@ -979,6 +979,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
                         if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
+                        const progressReminder = exploration.progressReminder();
+                        if (progressReminder) { result += `\n\n${progressReminder}`; }
                         inlineToolResults.push(result);
                         return { keepGoing: true, result };
                     }
