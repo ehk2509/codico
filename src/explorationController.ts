@@ -13,6 +13,14 @@ import {
 
 export interface ExplorationCheck { isExploration: boolean; guidance?: string; block?: string; }
 
+function normalizeWorkspacePath(value: string): string {
+    return value.replace(/\\/g, '/').replace(/^\.\//, '');
+}
+
+function isExactFileGlob(value: string | undefined): value is string {
+    return Boolean(value && !/[*?\[\]{}!]/.test(value));
+}
+
 /**
  * Exploration pressure is advisory, never a capability lock. A read-count
  * heuristic cannot prove that enough evidence exists for a safe mutation.
@@ -20,6 +28,7 @@ export interface ExplorationCheck { isExploration: boolean; guidance?: string; b
 export class ExplorationController {
     private streak = 0;
     private readonly targetVisits = new Map<string, number>();
+    private readonly knownFiles = new Set<string>();
     private _locked = false;
     private _verificationPending = false;
     private _verificationFile?: string;
@@ -197,6 +206,38 @@ export class ExplorationController {
         if (!isExplorationTool(tool)) { return { isExploration: false }; }
 
         if (this._focusedAction) {
+            const consumeFocusedEvidenceTurn = (): boolean => {
+                if (this._lastFocusedReadIteration !== this._iteration) {
+                    this._lastFocusedReadIteration = this._iteration;
+                    this._focusedReadIterations++;
+                }
+                return this._focusedReadIterations <= 2;
+            };
+
+            if (tool.type === 'search_files') {
+                const exactFile = isExactFileGlob(tool.glob)
+                    ? normalizeWorkspacePath(tool.glob)
+                    : '';
+                if (!exactFile || !this.knownFiles.has(exactFile)) {
+                    return {
+                        isExploration: true,
+                        block: '[System Focused Action] Repo-wide search is closed. search_files is allowed only with glob set to one exact file that has already been read.',
+                    };
+                }
+                if (!consumeFocusedEvidenceTurn()) {
+                    return {
+                        isExploration: true,
+                        block: '[System Focused Action] The two focused locator/read turns are exhausted. Make the smallest evidence-backed edit now.',
+                    };
+                }
+                return {
+                    isExploration: true,
+                    guidance: this.focusedReadExhausted
+                        ? '[System Focused Action] This exact-file search is the final focused evidence turn. Use its line matches to edit next.'
+                        : '[System Focused Action] Use this exact-file search only to locate the relevant lines, then take at most one bounded read before editing.',
+                };
+            }
+
             if (tool.type === 'read_file') {
                 const bounded = tool.startLine !== undefined || tool.endLine !== undefined;
                 if (!bounded) {
@@ -205,26 +246,22 @@ export class ExplorationController {
                         block: '[System Focused Action] Broad reads are closed. Use explicit start_line/end_line on an identified file, or edit now.',
                     };
                 }
-                if (this._lastFocusedReadIteration !== this._iteration) {
-                    this._lastFocusedReadIteration = this._iteration;
-                    this._focusedReadIterations++;
-                }
-                if (this._focusedReadIterations > 2) {
+                if (!consumeFocusedEvidenceTurn()) {
                     return {
                         isExploration: true,
-                        block: '[System Focused Action] The two focused source-read turns are exhausted. Make the smallest evidence-backed edit now.',
+                        block: '[System Focused Action] The two focused locator/read turns are exhausted. Make the smallest evidence-backed edit now.',
                     };
                 }
                 return {
                     isExploration: true,
                     guidance: this.focusedReadExhausted
-                        ? '[System Focused Action] This is the final bounded source-read turn. Use it as exact edit context and mutate in the next turn.'
+                        ? '[System Focused Action] This is the final focused evidence turn. Use this source range as exact edit context and mutate next.'
                         : '[System Focused Action] Use this bounded source range as exact edit context, then mutate. Do not restart broad discovery.',
                 };
             }
             return {
                 isExploration: true,
-                block: '[System Focused Action] Broad discovery is closed. Use a bounded read_file range only if exact edit text is missing; otherwise edit now.',
+                block: '[System Focused Action] Broad discovery is closed. Use an exact-file search_files locator or a bounded read_file range only if exact edit text is missing; otherwise edit now.',
             };
         }
 
@@ -276,6 +313,10 @@ export class ExplorationController {
     }
 
     public after(tool: ToolCall, result = ''): string | undefined {
+        if (tool.type === 'read_file' && !/\bERROR\b/.test(result)) {
+            this.knownFiles.add(normalizeWorkspacePath(tool.filepath));
+        }
+
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
             if (!/\b(?:Edit applied successfully|Written successfully)\b/.test(result)) {
                 return '[System Follow-through] The edit was not applied. Resolve the tool failure before counting this as a code change.';
