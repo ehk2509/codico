@@ -82,6 +82,19 @@ export class ExplorationController {
     public get focusedAction(): boolean { return this._focusedAction; }
     public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
     public get lastMutationIteration(): number { return this._lastMutationIteration; }
+    public progressReminder(): string | undefined {
+        if (!this.mutationRequired || this._lastMutationIteration > 0 || this._verificationPending) { return undefined; }
+        if (this._focusedAction) {
+            return this.focusedReadExhausted
+                ? '[Task progress] Mutation is still required. Focused evidence is complete; use the exact source already gathered to edit now.'
+                : '[Task progress] Mutation is still required. Keep any remaining read exact and bounded, then edit; do not restart broad discovery.';
+        }
+        if (this._locked) {
+            return '[Task progress] The request still requires a code mutation and enough discovery evidence has been gathered. Transition from discovery to the smallest evidence-backed edit.';
+        }
+        return undefined;
+    }
+
     public get mutationGracePending(): boolean {
         return this.mutationRequired && this._focusedAction && this.focusedReadExhausted && !this._verificationPending;
     }
