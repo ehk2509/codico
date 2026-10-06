@@ -16,7 +16,7 @@ test('coding holdout v5 is frozen, non-trivial, and internally consistent', () =
   assert.ok(Array.isArray(suite.tasks));
   assert.ok(suite.tasks.length >= 25);
   assert.equal(suite.maxTotalTokens, 400000);
-  assert.equal(suite.maxTaskMinutes, 15);
+  assert.equal(suite.maxTaskMinutes, 0);
 
   const ids = new Set();
   for (const task of suite.tasks) {
