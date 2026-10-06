@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - eval/pr12-stream-resume-overlap
+# PR12 targeted holdout trigger
   workflow_dispatch:
     inputs:
       model:
