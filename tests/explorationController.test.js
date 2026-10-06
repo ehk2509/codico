@@ -2,11 +2,11 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { ExplorationController } = require('../out/explorationController.js');
 
-test('controller enters action phase with two discovery escape hatches', () => {
+test('controller enters action phase with four discovery escape turns', () => {
   const controller = new ExplorationController();
   let last;
 
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 10; i++) {
     controller.beginIteration();
     last = controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
     assert.equal(last.block, undefined);
@@ -14,8 +14,8 @@ test('controller enters action phase with two discovery escape hatches', () => {
 
   assert.equal(controller.locked, true);
   controller.beginIteration();
-  const thirdAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  assert.match(thirdAfterLock.block, /exploration is closed/i);
+  const fifthAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  assert.match(fifthAfterLock.block, /exploration is closed/i);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), true);
 });
 
@@ -144,7 +144,7 @@ test('unwired helper is injected into every verification system prompt and tool 
 });
 
 
-test('action phase allows only two targeted exploration escape hatches before requiring an edit', () => {
+test('action phase allows four targeted exploration turns before requiring an edit', () => {
   const controller = new ExplorationController();
   for (let i = 0; i < 6; i++) {
     controller.beginIteration();
@@ -152,16 +152,16 @@ test('action phase allows only two targeted exploration escape hatches before re
   }
   assert.equal(controller.locked, true);
 
+  const allowed = [];
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    allowed.push(controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false));
+  }
   controller.beginIteration();
-  const first = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  controller.beginIteration();
-  const second = controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
-  controller.beginIteration();
-  const third = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
+  const blocked = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
 
-  assert.equal(first.block, undefined);
-  assert.equal(second.block, undefined);
-  assert.match(third.block, /exploration is closed/i);
+  for (const check of allowed) { assert.equal(check.block, undefined); }
+  assert.match(blocked.block, /exploration is closed/i);
 });
 
 test('unwired helper gets one recovery read and then must be edited', () => {
@@ -219,10 +219,10 @@ test('closed action exploration also blocks terminal cat/grep bypasses', () => {
     controller.beginIteration();
     controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
   }
-  controller.beginIteration();
-  controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
-  controller.beginIteration();
-  controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
+  }
   controller.beginIteration();
   const blocked = controller.before({ type: 'read_file', filepath: 'src/c.ts' }, false);
   assert.match(blocked.block, /exploration is closed/i);
