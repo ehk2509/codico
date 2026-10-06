@@ -16,7 +16,7 @@ test('controller enters action phase with two discovery escape hatches', () => {
   controller.beginIteration();
   const thirdAfterLock = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
   assert.match(thirdAfterLock.block, /exploration is closed/i);
-  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), false);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'cat src/a.ts' }), true);
 });
 
 test('lifecycle edits require a post-edit audit and behavior-level verification', () => {
