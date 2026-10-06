@@ -886,7 +886,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
         const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
-        const MAX_VERIFICATION_NUDGES = 2; let verificationNudges = 0;
+        let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
             : [];
@@ -1288,7 +1288,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 streamRecoveryAttempts = 0;
                 if (inlineToolResults.length === 0) {
                     const verificationGuidance = exploration.completionGuidance();
-                    if (verificationGuidance && verificationNudges++ < MAX_VERIFICATION_NUDGES) {
+                    if (verificationGuidance) {
+                        verificationNudges++;
                         this._history.push({ role: 'user', content: verificationGuidance });
                         this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
@@ -1339,10 +1340,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     if (!keepGoing) { break; }
                 }
 
-                // Warn the user when the iteration cap is about to be hit on the last loop
-                if (!shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
-                    this._post({ type: 'iterationLimit', id: msgId, limit: maxIterations });
-                }
             }
         } catch (err: unknown) {
             // Only roll back if no tool calls have completed yet.  If the history already
