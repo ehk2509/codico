@@ -96,11 +96,9 @@ export class ExplorationController {
             this.taskContract,
             this.verificationReadAllowed,
             this._focusedAction,
+            this.focusedReadExhausted,
         );
         if (!prompt) { return prompt; }
-        if (this._focusedAction && this.focusedReadExhausted && this._unwiredImports.size === 0) {
-            return prompt + '\n\n## Focused reading complete\nNo more source reads are needed. Make the smallest evidence-backed code change now, then verify it.';
-        }
         if (this._unwiredImports.size === 0) { return prompt; }
         return prompt + '\n\n## Blocking integration issue\n' +
             'A local helper is imported but still unused in: ' +
