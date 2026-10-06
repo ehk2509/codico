@@ -291,6 +291,13 @@ export function restrictNativeToolsForAction(
 
     return available
         .map(tool => {
+            if (tool.name === 'read_file' && focused) {
+                return {
+                    ...tool,
+                    description: 'Focused action source read. Use an explicit start_line/end_line on an already identified file to obtain exact edit context, then edit immediately. Do not restart broad repository exploration.',
+                };
+            }
+
             if (ACTION_DISCOVERY.has(tool.name)) {
                 return {
                     ...tool,
