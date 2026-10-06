@@ -454,3 +454,23 @@ test('budget-aware focus does not force explanation-only or unlimited tasks', ()
   assert.equal(unlimited.locked, true);
   assert.equal(unlimited.focusedAction, false);
 });
+
+
+test('successful edits expose their model turn for progress-aware verification grace', () => {
+  const controller = new ExplorationController('Fix the implementation.');
+  controller.beginIteration();
+  controller.beginIteration();
+  controller.beginIteration();
+  controller.after(
+    { type: 'edit_file', filepath: 'src/a.ts', oldStr: 'before', newStr: 'after' },
+    '[edit_file: src/a.ts] Edit applied successfully.'
+  );
+  assert.equal(controller.lastMutationIteration, 3);
+
+  controller.beginIteration();
+  controller.after(
+    { type: 'edit_file', filepath: 'src/a.ts', oldStr: 'after', newStr: 'final' },
+    '[edit_file: src/a.ts] Edit applied successfully.'
+  );
+  assert.equal(controller.lastMutationIteration, 4);
+});
