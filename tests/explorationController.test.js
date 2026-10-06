@@ -229,3 +229,46 @@ test('closed action exploration also blocks terminal cat/grep bypasses', () => {
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn foo src/' }), true);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'npm test' }), false);
 });
+
+
+test('focused action closes broad discovery but preserves explicit source ranges', () => {
+  const controller = new ExplorationController();
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'escape-' + i, isRegex: false }, false);
+  }
+
+  controller.beginIteration();
+  const transition = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900, endLine: 1100 },
+    false,
+  );
+  assert.equal(controller.focusedAction, true);
+  assert.equal(transition.block, undefined);
+  assert.match(transition.guidance, /bounded range/i);
+
+  controller.beginIteration();
+  const broad = controller.before({ type: 'search_files', pattern: 'resume', isRegex: false }, false);
+  assert.match(broad.block, /Broad discovery is closed/i);
+
+  const wholeFile = controller.before({ type: 'read_file', filepath: 'src/agentProvider.ts' }, false);
+  assert.match(wholeFile.block, /Broad reads are closed/i);
+
+  const ranged = controller.before(
+    { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1101, endLine: 1300 },
+    false,
+  );
+  assert.equal(ranged.block, undefined);
+  assert.match(ranged.guidance, /exact edit context/i);
+
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -n resume src/agentProvider.ts' }), true);
+  assert.equal(controller.before(
+    { type: 'edit_file', filepath: 'src/agentProvider.ts', oldStr: 'a', newStr: 'b' },
+    false,
+  ).isExploration, false);
+});
