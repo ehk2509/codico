@@ -11,7 +11,7 @@ const EXPLORATION_TOOLS = new Set<ToolCall['type']>([
     'browser_get_text',
 ]);
 
-const ACTION_PHASE_AT = 8;
+const ACTION_PHASE_AT = 6;
 
 export function isExplorationTool(tool: ToolCall): boolean {
     return EXPLORATION_TOOLS.has(tool.type);
@@ -66,13 +66,6 @@ export function explorationDecision(streak: number, targetVisits: number): Explo
             guidance: '[System Action] You have enough evidence to stop open-ended exploration. ' +
                 'Make the smallest evidence-backed code change in your next response unless one concrete missing fact is required for correctness. ' +
                 'Discovery remains available only to close that specific fact; after inspecting it, act.',
-        };
-    }
-
-    if (streak === 6) {
-        return {
-            guidance: '[System Guidance] You have made 6 read-only exploration calls without changing code. ' +
-                'Prefer a small evidence-backed edit when ready, but keep exploring if a specific unresolved dependency, caller, invariant, or test still blocks a safe fix.',
         };
     }
 
