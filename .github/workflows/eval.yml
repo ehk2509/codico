@@ -3,7 +3,7 @@ name: Coding Holdout
 on:
   push:
     branches:
-      - 'eval/pr8-resume-overlap-v6-focused-locator'
+      - 'eval/pr11-on-v6-token-efficient'
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Run focused-locator resume-overlap holdout v6
+      - name: Run PR11 token-efficient resume-overlap holdout v6
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
@@ -38,6 +38,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-pr8-resume-overlap-v6-focused-locator
+          name: codico-pr11-on-v6-token-efficient
           path: eval/results/
           if-no-files-found: warn
