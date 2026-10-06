@@ -18,6 +18,16 @@ After changing code:
 3. run the narrowest meaningful test/build/diagnostics command;
 4. revise if verification exposes a gap.`;
 
+export const FOCUSED_ACTION_SYSTEM_PROMPT = `## Current phase — focused action
+
+Broad repository discovery is complete. Do not restart searches, listings, symbol scans, or source-inspection shell commands.
+You already have enough evidence to choose a likely implementation file.
+
+If exact edit text is still missing, use read_file with an explicit start_line/end_line on an already identified file. Keep the range narrow and move toward the relevant control flow.
+Otherwise edit now.
+
+The goal of this phase is: identified file → exact bounded source range → smallest code change → verification.`;
+
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
 You changed code. Do not declare success until the current edit is verified.
@@ -38,6 +48,7 @@ export function systemPromptForAgentPhase(
     verificationFile?: string,
     taskContract = '',
     _verificationReadAllowed = true,
+    focusedAction = false,
 ): string | undefined {
     if (chatMode) { return CHAT_SYSTEM_PROMPT; }
 
@@ -49,6 +60,10 @@ export function systemPromptForAgentPhase(
             ? '\nNext verification step: re-read the edited control flow once before relying on static checks.'
             : '\nThe post-edit control-flow read is complete; prefer a behavior-level test next.';
         return `${SYSTEM_PROMPT}\n\n${POST_EDIT_VERIFICATION_PROMPT}${target}${nextStep}${contract}`;
+    }
+
+    if (focusedAction) {
+        return `${SYSTEM_PROMPT}\n\n${FOCUSED_ACTION_SYSTEM_PROMPT}${contract}`;
     }
 
     if (explorationLocked) {
