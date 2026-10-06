@@ -81,7 +81,12 @@ export class ExplorationController {
             this.taskContract,
             this.verificationReadAllowed,
         );
-        if (!prompt || this._unwiredImports.size === 0) { return prompt; }
+        if (!prompt) { return prompt; }
+        if (this._actionExplorationClosed && this._unwiredImports.size === 0) {
+            return prompt + '\n\n## Discovery phase closed\n' +
+                'The bounded evidence window is exhausted. Do not request more source discovery. Make the smallest evidence-backed edit now; use the edit failure context if an exact replacement misses.';
+        }
+        if (this._unwiredImports.size === 0) { return prompt; }
         return prompt + '\n\n## Blocking integration issue\n' +
             'A local helper is imported but still unused in: ' +
             [...this._unwiredImports].join(', ') +
@@ -98,6 +103,7 @@ export class ExplorationController {
             this._verificationFile,
             this.verificationReadAllowed,
             this._unwiredImports.size > 0,
+            this._actionExplorationClosed,
         );
     }
 
@@ -157,11 +163,11 @@ export class ExplorationController {
                 this._lastActionEscapeIteration = this._iteration;
                 this._actionEscapeIterations++;
             }
-            if (this._actionEscapeIterations > 2) {
+            if (this._actionEscapeIterations > 4) {
                 this._actionExplorationClosed = true;
                 return {
                     isExploration: true,
-                    block: '[System Action] Open-ended exploration is closed after two targeted escape-hatch turns. Make the smallest evidence-backed edit now. If the edit misses, the tool will return fresh recovery context.',
+                    block: '[System Action] Open-ended exploration is closed after four targeted escape-hatch turns. You have enough source evidence now. Make the smallest evidence-backed edit; if it misses, edit_file will return fresh recovery context.',
                 };
             }
         }
