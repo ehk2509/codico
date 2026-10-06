@@ -13,6 +13,8 @@ export interface HistoryProjectionOptions {
     preserveNewestLargeResults?: number;
     preserveNewestTargetResults?: number;
     maxWorkingSetChars?: number;
+    preserveErrorResults?: number;
+    preserveMutationResults?: number;
 }
 
 function compactMarker(label: string, omittedChars: number): string {
@@ -125,6 +127,8 @@ export function projectHistoryForModel(
     const preserveNewestLargeResults = Math.max(0, options.preserveNewestLargeResults ?? 1);
     const preserveNewestTargetResults = Math.max(0, options.preserveNewestTargetResults ?? 6);
     const maxWorkingSetChars = Math.max(maxLargeResultChars, options.maxWorkingSetChars ?? 80_000);
+    const preserveErrorResults = Math.max(0, options.preserveErrorResults ?? 2);
+    const preserveMutationResults = Math.max(0, options.preserveMutationResults ?? 2);
     const recentStart = Math.max(0, history.length - recentMessages);
     const targetsByCallId = callTargets(history);
 
@@ -134,6 +138,8 @@ export function projectHistoryForModel(
     let retainedWorkingSetChars = 0;
     let preservedLargeResults = 0;
     let preservedTargetResults = 0;
+    let preservedErrors = 0;
+    let preservedMutations = 0;
     const seenTargets = new Set<string>();
     const projected = [...history];
 
@@ -153,6 +159,10 @@ export function projectHistoryForModel(
         const newestForTarget = Boolean(target && !seenTargets.has(target));
         if (target) { seenTargets.add(target); }
 
+        const isErrorEvidence = /\b(error|failed|exception|traceback|fatal|cannot|unable)\b/i.test(content);
+        const isMutationEvidence = isNativeTool && (message.toolName === 'edit_file' || message.toolName === 'write_file');
+        const preserveError = isErrorEvidence && preservedErrors < preserveErrorResults;
+        const preserveMutation = isMutationEvidence && preservedMutations < preserveMutationResults;
         const preserveNewest = preservedLargeResults < preserveNewestLargeResults;
         const preserveTarget =
             newestForTarget &&
@@ -162,7 +172,9 @@ export function projectHistoryForModel(
             index >= recentStart &&
             retainedLargeChars + content.length <= maxLargeResultChars;
 
-        if (preserveNewest || preserveTarget || withinRecentBudget) {
+        if (preserveError || preserveMutation || preserveNewest || preserveTarget || withinRecentBudget) {
+            if (preserveError) { preservedErrors++; }
+            if (preserveMutation) { preservedMutations++; }
             preservedLargeResults++;
             retainedLargeChars += content.length;
             if (preserveTarget) {
