@@ -123,11 +123,12 @@ test('unwired helper is injected into every verification system prompt and tool 
   assert.equal(tools[0].name, 'edit_file');
 
   const search = controller.before({ type: 'search_files', pattern: 'anything', isRegex: false }, false);
-  assert.match(search.block, /Broad discovery is blocked/i);
+  assert.equal(search.block, undefined);
+  assert.match(search.guidance, /helper import is still unwired/i);
 });
 
 
-test('unwired helper gets one recovery read and then must be edited', () => {
+test('unwired helper keeps evidence access open until it can be wired', () => {
   const controller = new ExplorationController('Wire the helper.');
   controller.after(
     { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'old', newStr: 'new' },
@@ -141,8 +142,11 @@ test('unwired helper gets one recovery read and then must be edited', () => {
   const search = controller.before({ type: 'search_files', pattern: 'dedupe', isRegex: false }, false);
 
   assert.equal(first.block, undefined);
-  assert.match(second.block, /already used the one targeted recovery read/i);
-  assert.match(search.block, /Broad discovery is blocked/i);
+  assert.equal(second.block, undefined);
+  assert.equal(search.block, undefined);
+  assert.match(first.guidance, /helper import is still unwired/i);
+  assert.match(second.guidance, /helper import is still unwired/i);
+  assert.match(search.guidance, /helper import is still unwired/i);
 
   controller.after(
     { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'before', newStr: 'after' },
@@ -232,4 +236,31 @@ test('pre-mutation exploration pressure never removes evidence access', () => {
   assert.equal(controller.focusedAction, false);
   assert.equal(controller.lastMutationIteration, 0);
   assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -rn resume src/' }), false);
+});
+
+
+test('post-mutation verification never hard-blocks repeated evidence reads or searches', () => {
+  const controller = new ExplorationController('Fix and verify the stream resume wiring.', 16);
+  controller.beginIteration();
+  controller.after(
+    { type: 'edit_file', filepath: 'src/agentProvider.ts', oldStr: 'before', newStr: 'after' },
+    '[edit_file: src/agentProvider.ts] Edit applied successfully.\n\n[Local invariant audit]\n- resume path'
+  );
+
+  for (let turn = 0; turn < 12; turn++) {
+    controller.beginIteration();
+    const read = controller.before(
+      { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 900 + turn, endLine: 980 + turn },
+      false,
+    );
+    assert.equal(read.block, undefined);
+    const search = controller.before(
+      { type: 'search_files', pattern: 'resume-' + turn, glob: 'src/agentProvider.ts', isRegex: false },
+      false,
+    );
+    assert.equal(search.block, undefined);
+  }
+
+  assert.equal(controller.verificationPending, true);
+  assert.equal(controller.blocksTerminal({ type: 'run_terminal', command: 'grep -n resume src/agentProvider.ts' }), false);
 });
