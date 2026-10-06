@@ -142,3 +142,43 @@ test('unwired helper is injected into every verification system prompt and tool 
   const search = controller.before({ type: 'search_files', pattern: 'anything', isRegex: false }, false);
   assert.match(search.guidance, /Stop broad discovery/i);
 });
+
+
+test('action phase allows only two targeted exploration escape hatches before requiring an edit', () => {
+  const controller = new ExplorationController();
+  for (let i = 0; i < 6; i++) {
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  assert.equal(controller.locked, true);
+
+  const first = controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+  const second = controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
+  const third = controller.before({ type: 'search_files', pattern: 'more', isRegex: false }, false);
+
+  assert.equal(first.block, undefined);
+  assert.equal(second.block, undefined);
+  assert.match(third.block, /exploration is closed/i);
+});
+
+test('unwired helper gets one recovery read and then must be edited', () => {
+  const controller = new ExplorationController('Wire the helper.');
+  controller.after(
+    { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'old', newStr: 'new' },
+    '[edit_file: src/consumer.ts] Edit applied successfully.\n\n[Post-edit integration audit]\n- dedupe from ./helpers'
+  );
+
+  const first = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
+  const second = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
+  const search = controller.before({ type: 'search_files', pattern: 'dedupe', isRegex: false }, false);
+
+  assert.equal(first.block, undefined);
+  assert.match(second.block, /already used the one targeted recovery read/i);
+  assert.match(search.block, /Broad discovery is blocked/i);
+
+  controller.after(
+    { type: 'edit_file', filepath: 'src/consumer.ts', oldStr: 'before', newStr: 'after' },
+    '[edit_file: src/consumer.ts] Edit applied successfully.'
+  );
+  const afterFix = controller.before({ type: 'read_file', filepath: 'src/consumer.ts' }, false);
+  assert.equal(afterFix.block, undefined);
+});
