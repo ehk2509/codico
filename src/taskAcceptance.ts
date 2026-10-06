@@ -53,6 +53,7 @@ Implementation discipline:
 
 Verification requirements:
 - verify changed behavior, not only compilation;
+- when an edit introduces a reusable helper for an observable behavior change, verify a production caller/path actually invokes that helper; a standalone helper definition is not behavioral completion;
 - verify every explicit preservation / negative constraint;
 - if a focused test exists, run it;
 - otherwise inspect control-flow or integration paths that distinguish the failure case from normal success/completion paths before finishing.`;
