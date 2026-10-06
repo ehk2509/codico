@@ -414,3 +414,43 @@ test('explanation-only focused work never receives mutation grace', () => {
   assert.equal(controller.focusedReadExhausted, true);
   assert.equal(controller.mutationGracePending, false);
 });
+
+
+test('finite coding budgets reserve their second half for focused action', () => {
+  const controller = new ExplorationController('Fix the runtime bug.', 16);
+
+  for (let turn = 1; turn <= 6; turn++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + turn, isRegex: false }, false);
+  }
+  assert.equal(controller.locked, true);
+  assert.equal(controller.focusedAction, false);
+
+  controller.beginIteration(); // 7
+  assert.equal(controller.focusedAction, false);
+  controller.before({ type: 'read_file', filepath: 'src/a.ts' }, false);
+
+  controller.beginIteration(); // 8
+  assert.equal(controller.focusedAction, false);
+  controller.before({ type: 'read_file', filepath: 'src/b.ts' }, false);
+
+  controller.beginIteration(); // 9 > half of 16
+  assert.equal(controller.focusedAction, true);
+});
+
+test('budget-aware focus does not force explanation-only or unlimited tasks', () => {
+  const explanation = new ExplorationController('Explain how this works.', 16);
+  for (let turn = 1; turn <= 10; turn++) {
+    explanation.beginIteration();
+    explanation.before({ type: 'search_files', pattern: 'e' + turn, isRegex: false }, false);
+  }
+  assert.equal(explanation.focusedAction, false);
+
+  const unlimited = new ExplorationController('Fix the runtime bug.', 0);
+  for (let turn = 1; turn <= 10; turn++) {
+    unlimited.beginIteration();
+    unlimited.before({ type: 'search_files', pattern: 'u' + turn, isRegex: false }, false);
+  }
+  assert.equal(unlimited.locked, true);
+  assert.equal(unlimited.focusedAction, false);
+});
