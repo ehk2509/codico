@@ -20,13 +20,16 @@ After changing code:
 
 export const FOCUSED_ACTION_SYSTEM_PROMPT = `## Current phase — focused action
 
-Broad repository discovery is complete. Do not restart searches, listings, symbol scans, or source-inspection shell commands.
-You already have enough evidence to choose a likely implementation file.
+Broad repository discovery is complete. Do not restart searches, listings, symbol scans, fetches, or source-inspection shell commands such as grep/cat/find.
+You already have enough evidence to choose the implementation area.
 
-If exact edit text is still missing, use read_file with an explicit start_line/end_line on an already identified file. Keep the range narrow and move toward the relevant control flow.
-Otherwise edit now.
+Only one kind of discovery remains appropriate: a bounded read_file with explicit start_line/end_line on an already identified file when exact edit text is missing.
+Do not use terminal commands to recover source context.
+After that bounded range, edit immediately. If edit_file misses, its result will include fresh nearby source context for the next edit.
 
-The goal of this phase is: identified file → exact bounded source range → smallest code change → verification.`;
+Prefer edit_file or write_file now, then run the narrowest relevant verification command.
+
+The goal is: existing evidence → at most one precise source range → code change → verification.`;
 
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
