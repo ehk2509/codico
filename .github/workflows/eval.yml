@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - eval/pr14-final-nonblocking-holdout
+# final PR14 repeated reliability gate
   workflow_dispatch:
     inputs:
       model:
