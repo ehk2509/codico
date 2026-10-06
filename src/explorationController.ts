@@ -59,8 +59,9 @@ export class ExplorationController {
     /** Called exactly once for each model/agent turn. */
     public beginIteration(): void {
         this._iteration++;
-        // Iteration budgets must never remove evidence access or force task completion.
-        const broadBudget = 0;
+        const broadBudget = this.normalIterationBudget > 0
+            ? Math.ceil(this.normalIterationBudget / 2)
+            : 0;
         if (
             broadBudget > 0 &&
             this.mutationRequired &&
@@ -269,7 +270,7 @@ export class ExplorationController {
                 this._lastActionEscapeIteration = this._iteration;
                 this._actionEscapeIterations++;
             }
-            if (false && this._actionEscapeIterations > 4) {
+            if (this._actionEscapeIterations > 4) {
                 this._focusedAction = true;
                 this._focusedReadIterations = 0;
                 this._lastFocusedReadIteration = -1;
