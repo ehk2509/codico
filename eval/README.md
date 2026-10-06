@@ -2,16 +2,18 @@
 
 Codico's coding-quality evidence is measured with a frozen historical-regression suite rather than toy generation prompts.
 
-## Frozen suite v4
+## Frozen suite v5
 
 `eval/tasks.json` contains **26 tasks** derived from historical Codico bugs and hardening gaps.
 
-v4 preserves the v3 task corpus while correcting two evidence-quality issues exposed by live runs:
+v5 preserves the corpus and fixes two scoring holes found in the first v4 run:
 
-- the resume-overlap task is scored by overlap behavior and integration use, not by requiring a helper with one exact name;
-- the wall-clock limit is a **15-minute safety ceiling** while the quality budgets remain fixed at 16 normal iterations and 400k cumulative tokens. The evaluation host writes periodic partial checkpoints so a hard timeout still preserves steps, tokens, tool calls, and trace evidence.
+- resume-overlap only passes when a behaviorally correct overlap calculation is **actually called** in the stream recovery path; importing a helper is not enough;
+- the frozen **400k cumulative token budget is part of success**. A behaviorally correct patch that exceeds the budget is reported as `OVER_BUDGET`, not `PASS`.
 
-Burned v1, v2, and v3 suites remain archived as `eval/tasks-v1.json`, `eval/tasks-v2.json`, and `eval/tasks-v3.json`.
+The wall-clock limit remains a 15-minute safety ceiling, and periodic partial checkpoints preserve evidence if that ceiling is reached.
+
+Burned v1-v4 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v4.json`.
 
 ### Execution protocol
 
@@ -55,6 +57,6 @@ Results are written beneath `eval/results/` and are git-ignored.
 
 ## Freeze policy
 
-`codico-coding-holdout-v1`, `v2`, and `v3` are burned evidence and stay reproducible. `codico-coding-holdout-v4` is active and frozen.
+`codico-coding-holdout-v1` through `v4` are burned evidence and stay reproducible. `codico-coding-holdout-v5` is active and frozen.
 
 Any semantic scoring or quality-budget change creates a new suite version. Harness-only diagnostics improvements may land in place when they do not change what constitutes success.
