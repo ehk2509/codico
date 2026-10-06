@@ -60,14 +60,16 @@ test('verification prompt carries the acceptance contract without arbitrary read
 });
 
 
-test('focused action forbids broad and terminal discovery but permits one bounded read', () => {
-  assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /Discovery tools are no longer available|Broad repository discovery is complete/i);
+test('focused action permits exact-file locating plus bounded source reads', () => {
+  assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /Broad repository discovery is complete/i);
   assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /source-inspection shell commands/i);
-  assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /bounded read_file/i);
+  assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /search_files is allowed only when glob is exactly one file/i);
+  assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /read_file is allowed only with explicit start_line\/end_line/i);
   assert.match(FOCUSED_ACTION_SYSTEM_PROMPT, /edit_file or write_file/i);
 
   const prompt = systemPromptForAgentPhase(false, true, false, undefined, '', true, true);
   assert.match(prompt, /focused action/i);
+  assert.match(prompt, /exact-file locator/i);
   assert.match(prompt, /Do not use terminal commands to recover source context/i);
   assert.doesNotMatch(prompt, /Discovery tools remain available/);
 });
