@@ -352,3 +352,65 @@ test('focused action does not force a mutation for explanation-only requests', (
   assert.equal(controller.focusedAction, true);
   assert.equal(controller.completionGuidance(), undefined);
 });
+
+
+test('mutation grace activates only after focused reads are exhausted for coding work', () => {
+  const controller = new ExplorationController('Fix the bug and update the implementation.');
+
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
+  }
+
+  controller.beginIteration();
+  controller.before(
+    { type: 'read_file', filepath: 'src/target.ts', startLine: 1, endLine: 80 },
+    false,
+  );
+  assert.equal(controller.mutationGracePending, false);
+
+  controller.beginIteration();
+  controller.before(
+    { type: 'read_file', filepath: 'src/target.ts', startLine: 81, endLine: 160 },
+    false,
+  );
+  assert.equal(controller.focusedReadExhausted, true);
+  assert.equal(controller.mutationGracePending, true);
+
+  controller.after(
+    { type: 'edit_file', filepath: 'src/target.ts', oldStr: 'before', newStr: 'after' },
+    '[edit_file: src/target.ts] Edit applied successfully.'
+  );
+  assert.equal(controller.mutationGracePending, false);
+  assert.equal(controller.verificationPending, true);
+});
+
+test('explanation-only focused work never receives mutation grace', () => {
+  const controller = new ExplorationController('Explain the implementation and summarize the flow.');
+
+  for (let i = 0; i < 6; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'search_files', pattern: 'p' + i, isRegex: false }, false);
+  }
+  for (let i = 0; i < 4; i++) {
+    controller.beginIteration();
+    controller.before({ type: 'read_file', filepath: 'src/' + i + '.ts' }, false);
+  }
+  controller.beginIteration();
+  controller.before(
+    { type: 'read_file', filepath: 'src/target.ts', startLine: 1, endLine: 80 },
+    false,
+  );
+  controller.beginIteration();
+  controller.before(
+    { type: 'read_file', filepath: 'src/target.ts', startLine: 81, endLine: 160 },
+    false,
+  );
+
+  assert.equal(controller.focusedReadExhausted, true);
+  assert.equal(controller.mutationGracePending, false);
+});
