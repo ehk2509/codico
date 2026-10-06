@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildTaskAcceptanceContract } = require('../out/taskAcceptance.js');
+const { buildTaskAcceptanceContract, taskLikelyRequiresMutation } = require('../out/taskAcceptance.js');
 
 test('task acceptance contract preserves outcomes and implementation discipline', () => {
   const contract = buildTaskAcceptanceContract(
@@ -17,4 +17,13 @@ test('task acceptance contract preserves outcomes and implementation discipline'
 
 test('task acceptance contract stays bounded for enormous prompts', () => {
   assert.ok(buildTaskAcceptanceContract('Fix this. Keep behavior unchanged. ' + 'x'.repeat(10000)).length < 6500);
+});
+
+
+test('mutation intent is detected conservatively for coding requests', () => {
+  assert.equal(taskLikelyRequiresMutation(
+    'When an interrupted stream resumes, prevent repeated text at the seam. Add a general overlap calculation.'
+  ), true);
+  assert.equal(taskLikelyRequiresMutation('Explain how stream resumption currently works.'), false);
+  assert.equal(taskLikelyRequiresMutation('Review the current implementation and summarize risks.'), false);
 });
