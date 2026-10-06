@@ -330,7 +330,7 @@ test('focused action permits two ranged-read turns then requires mutation', () =
     { type: 'read_file', filepath: 'src/agentProvider.ts', startLine: 1251, endLine: 1350 },
     false,
   );
-  assert.match(third.block, /two focused source-read turns are exhausted/i);
+  assert.match(third.block, /two focused locator\/read turns are exhausted/i);
   assert.match(controller.completionGuidance(), /no mutation has succeeded/i);
 });
 
