@@ -146,7 +146,7 @@ test('unresolved integration makes edit_file the verification priority', () => {
 });
 
 
-test('closed action phase withdraws discovery tools but keeps mutation and verification', () => {
+test('focused action phase keeps ranged reads but withdraws broad discovery tools', () => {
   const {
     getNativeToolDefinitions,
     nativeToolsForAgentPhase,
@@ -163,12 +163,13 @@ test('closed action phase withdraws discovery tools but keeps mutation and verif
   );
   const names = new Set(tools.map(tool => tool.name));
 
-  for (const name of ['edit_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
-    assert.equal(names.has(name), true, 'expected ' + name + ' after discovery closes');
+  for (const name of ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+    assert.equal(names.has(name), true, 'expected ' + name + ' in focused action');
   }
-  for (const name of ['read_file', 'search_files', 'find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
-    assert.equal(names.has(name), false, 'did not expect ' + name + ' after discovery closes');
+  for (const name of ['search_files', 'find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
+    assert.equal(names.has(name), false, 'did not expect ' + name + ' in focused action');
   }
+  assert.match(tools.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
 });
 
 
