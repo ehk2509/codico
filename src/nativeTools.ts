@@ -284,14 +284,17 @@ export function restrictNativeToolsForAction(
     tools: NativeToolDefinition[],
     explorationClosed = false,
 ): NativeToolDefinition[] {
-    const rank = new Map(ACTION_PRIORITY.map((name, index) => [name, index]));
+    const priority: ToolCall['type'][] = explorationClosed
+        ? ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
+        : ACTION_PRIORITY;
+    const rank = new Map(priority.map((name, index) => [name, index]));
     const available = explorationClosed
-        ? tools.filter(tool => !ACTION_DISCOVERY.has(tool.name))
+        ? tools.filter(tool => !ACTION_DISCOVERY.has(tool.name) || tool.name === 'read_file')
         : tools;
 
     return available
         .map(tool => {
-            if (tool.name === 'read_file' && focused) {
+            if (tool.name === 'read_file' && explorationClosed) {
                 return {
                     ...tool,
                     description: 'Focused action source read. Use an explicit start_line/end_line on an already identified file to obtain exact edit context, then edit immediately. Do not restart broad repository exploration.',
