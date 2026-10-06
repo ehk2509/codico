@@ -283,13 +283,18 @@ const ACTION_DISCOVERY = new Set<ToolCall['type']>([
 export function restrictNativeToolsForAction(
     tools: NativeToolDefinition[],
     explorationClosed = false,
+    focusedReadExhausted = false,
 ): NativeToolDefinition[] {
     const priority: ToolCall['type'][] = explorationClosed
-        ? ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
+        ? focusedReadExhausted
+            ? ['edit_file', 'write_file', 'run_terminal', 'get_diagnostics']
+            : ['edit_file', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
         : ACTION_PRIORITY;
     const rank = new Map(priority.map((name, index) => [name, index]));
     const available = explorationClosed
-        ? tools.filter(tool => !ACTION_DISCOVERY.has(tool.name) || tool.name === 'read_file')
+        ? tools.filter(tool =>
+            (!ACTION_DISCOVERY.has(tool.name) || tool.name === 'read_file') &&
+            !(focusedReadExhausted && tool.name === 'read_file'))
         : tools;
 
     return available
@@ -409,6 +414,7 @@ export function nativeToolsForAgentPhase(
     verificationReadAllowed = true,
     integrationPending = false,
     explorationClosed = false,
+    focusedReadExhausted = false,
 ): NativeToolDefinition[] {
     if (verificationPending) {
         return restrictNativeToolsForVerification(
@@ -419,7 +425,9 @@ export function nativeToolsForAgentPhase(
         );
     }
 
-    if (explorationLocked) { return restrictNativeToolsForAction(tools, explorationClosed); }
+    if (explorationLocked) {
+        return restrictNativeToolsForAction(tools, explorationClosed, focusedReadExhausted);
+    }
     return tools;
 }
 
