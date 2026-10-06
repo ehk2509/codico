@@ -195,3 +195,26 @@ test('focused action tool surface removes broad discovery but keeps ranged read 
   assert.equal(names.has('fetch_url'), false);
   assert.match(focused.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
 });
+
+
+test('focused action removes read_file after its two-turn source budget', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+    true,
+  );
+
+  const names = new Set(tools.map(tool => tool.name));
+  assert.equal(tools[0].name, 'edit_file');
+  assert.equal(names.has('read_file'), false);
+  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('find_files'), false);
+  assert.equal(names.has('edit_file'), true);
+  assert.equal(names.has('write_file'), true);
+});
