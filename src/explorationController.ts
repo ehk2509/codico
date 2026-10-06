@@ -13,14 +13,6 @@ import {
 
 export interface ExplorationCheck { isExploration: boolean; guidance?: string; block?: string; }
 
-function normalizeWorkspacePath(value: string): string {
-    return value.replace(/\\/g, '/').replace(/^\.\//, '');
-}
-
-function isExactFileGlob(value: string | undefined): value is string {
-    return Boolean(value && !/[*?\[\]{}!]/.test(value));
-}
-
 /**
  * Exploration pressure is advisory, never a capability lock. A read-count
  * heuristic cannot prove that enough evidence exists for a safe mutation.
@@ -28,7 +20,6 @@ function isExactFileGlob(value: string | undefined): value is string {
 export class ExplorationController {
     private streak = 0;
     private readonly targetVisits = new Map<string, number>();
-    private readonly knownFiles = new Set<string>();
     private _locked = false;
     private _verificationPending = false;
     private _verificationFile?: string;
@@ -38,22 +29,14 @@ export class ExplorationController {
     private _iteration = 0;
     private _lastExplorationIteration = -1;
     private _lockedAtIteration = -1;
-    private _actionEscapeIterations = 0;
-    private _lastActionEscapeIteration = -1;
-    private _integrationRecoveryIterations = 0;
-    private _lastIntegrationRecoveryIteration = -1;
-    private _focusedAction = false;
-    private _focusedReadIterations = 0;
-    private _lastFocusedReadIteration = -1;
     private _lastMutationIteration = 0;
     private readonly taskContract: string;
     private readonly mutationRequired: boolean;
-    private readonly normalIterationBudget: number;
 
     constructor(rawTask = '', normalIterationBudget = 0) {
         this.taskContract = buildTaskAcceptanceContract(rawTask);
         this.mutationRequired = taskLikelyRequiresMutation(rawTask);
-        this.normalIterationBudget = Math.max(0, Math.floor(normalIterationBudget));
+        void normalIterationBudget; // Kept for API compatibility; never used as a capability limit.
     }
 
     /** Called exactly once for each model/agent turn. */
@@ -62,31 +45,18 @@ export class ExplorationController {
         // Exploration pressure must never become a capability lock before the first
         // successful mutation. Iteration count is not evidence that the model has
         // enough source context to edit safely.
-        const broadBudget = this._lastMutationIteration > 0 && this.normalIterationBudget > 0
-            ? Math.ceil(this.normalIterationBudget / 2)
-            : 0;
-        if (
-            broadBudget > 0 &&
-            this.mutationRequired &&
-            this._locked &&
-            !this._verificationPending &&
-            !this._focusedAction &&
-            this._iteration > broadBudget
-        ) {
-            this._focusedAction = true;
-            this._focusedReadIterations = 0;
-            this._lastFocusedReadIteration = -1;
-        }
+        // Iteration/read-count heuristics are advisory only. They may change the
+        // prompt priority, but must never remove evidence access or force a mutation.
     }
 
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
     public get verificationFile(): string | undefined { return this._verificationFile; }
-    public get focusedAction(): boolean { return this._focusedAction; }
-    public get focusedReadExhausted(): boolean { return this._focusedReadIterations >= 2; }
+    public get focusedAction(): boolean { return false; }
+    public get focusedReadExhausted(): boolean { return false; }
     public get lastMutationIteration(): number { return this._lastMutationIteration; }
     public get mutationGracePending(): boolean {
-        return this.mutationRequired && this._focusedAction && this.focusedReadExhausted && !this._verificationPending;
+        return this.mutationRequired && this._lastMutationIteration === 0;
     }
 
     /**
@@ -99,10 +69,8 @@ export class ExplorationController {
 
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) {
-            if (this._focusedAction && this.mutationRequired) {
-                return this.focusedReadExhausted
-                    ? '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Focused source reading is complete. Do not finish yet: make the smallest evidence-backed edit now.'
-                    : '[System Action] The request explicitly requires a code change, but no mutation has succeeded. Use at most the remaining bounded focused read, then edit. Do not finish with analysis only.';
+            if (this.mutationRequired && this._lastMutationIteration === 0) {
+                return '[System Action] This request requires a code change, but no mutation has succeeded yet. Continue gathering only the evidence needed for correctness, then make the smallest evidence-backed edit. Do not finish with analysis only.';
             }
             return undefined;
         }
@@ -131,8 +99,8 @@ export class ExplorationController {
             this._verificationFile,
             this.taskContract,
             this.verificationReadAllowed,
-            this._focusedAction,
-            this.focusedReadExhausted,
+            false,
+            false,
         );
         if (!prompt) { return prompt; }
         if (this._unwiredImports.size === 0) { return prompt; }
@@ -152,8 +120,8 @@ export class ExplorationController {
             this._verificationFile,
             this.verificationReadAllowed,
             this._unwiredImports.size > 0,
-            this._focusedAction,
-            this.focusedReadExhausted,
+            false,
+            false,
         );
     }
 
@@ -164,22 +132,12 @@ export class ExplorationController {
             if (tool.type === 'get_diagnostics') { return { isExploration: false }; }
 
             if (this._unwiredImports.size > 0) {
-                if (tool.type !== 'read_file') {
-                    return {
-                        isExploration: true,
-                        block: '[System Integration] A helper import is still unwired. Broad discovery is blocked until you wire that helper into the current consumer or remove the import.',
-                    };
-                }
-                if (this._lastIntegrationRecoveryIteration !== this._iteration) {
-                    this._lastIntegrationRecoveryIteration = this._iteration;
-                    this._integrationRecoveryIterations++;
-                }
-                if (this._integrationRecoveryIterations > 1) {
-                    return {
-                        isExploration: true,
-                        block: '[System Integration] You already used the one targeted recovery read for this unwired helper. Edit the consumer now using the fresh source you have, or remove the import.',
-                    };
-                }
+                // Keep evidence access open. The completion gate below still prevents
+                // success until the helper is wired or removed.
+                return {
+                    isExploration: true,
+                    guidance: '[System Integration] A helper import is still unwired. Inspect only the caller/dependency evidence needed to wire it, then edit and verify. Do not finish while the import remains unused.',
+                };
             }
 
             if (tool.type === 'read_file') {
@@ -208,90 +166,8 @@ export class ExplorationController {
 
         if (!isExplorationTool(tool)) { return { isExploration: false }; }
 
-        if (this._focusedAction) {
-            const consumeFocusedEvidenceTurn = (): boolean => {
-                if (this._lastFocusedReadIteration !== this._iteration) {
-                    this._lastFocusedReadIteration = this._iteration;
-                    this._focusedReadIterations++;
-                }
-                return this._focusedReadIterations <= 2;
-            };
-
-            if (tool.type === 'search_files') {
-                const exactFile = isExactFileGlob(tool.glob)
-                    ? normalizeWorkspacePath(tool.glob)
-                    : '';
-                if (!exactFile || !this.knownFiles.has(exactFile)) {
-                    return {
-                        isExploration: true,
-                        block: '[System Focused Action] Repo-wide search is closed. search_files is allowed only with glob set to one exact file that has already been read.',
-                    };
-                }
-                if (!consumeFocusedEvidenceTurn()) {
-                    return {
-                        isExploration: true,
-                        block: '[System Focused Action] The two focused locator/read turns are exhausted. Make the smallest evidence-backed edit now.',
-                    };
-                }
-                return {
-                    isExploration: true,
-                    guidance: this.focusedReadExhausted
-                        ? '[System Focused Action] This exact-file search is the final focused evidence turn. Use its line matches to edit next.'
-                        : '[System Focused Action] Use this exact-file search only to locate the relevant lines, then take at most one bounded read before editing.',
-                };
-            }
-
-            if (tool.type === 'read_file') {
-                const bounded = tool.startLine !== undefined || tool.endLine !== undefined;
-                if (!bounded) {
-                    return {
-                        isExploration: true,
-                        block: '[System Focused Action] Broad reads are closed. Use explicit start_line/end_line on an identified file, or edit now.',
-                    };
-                }
-                if (!consumeFocusedEvidenceTurn()) {
-                    return {
-                        isExploration: true,
-                        block: '[System Focused Action] The two focused locator/read turns are exhausted. Make the smallest evidence-backed edit now.',
-                    };
-                }
-                return {
-                    isExploration: true,
-                    guidance: this.focusedReadExhausted
-                        ? '[System Focused Action] This is the final focused evidence turn. Use this source range as exact edit context and mutate next.'
-                        : '[System Focused Action] Use this bounded source range as exact edit context, then mutate. Do not restart broad discovery.',
-                };
-            }
-            return {
-                isExploration: true,
-                block: '[System Focused Action] Broad discovery is closed. Use an exact-file search_files locator or a bounded read_file range only if exact edit text is missing; otherwise edit now.',
-            };
-        }
-
-        if (this._locked && this._iteration > this._lockedAtIteration) {
-            if (this._lastActionEscapeIteration !== this._iteration) {
-                this._lastActionEscapeIteration = this._iteration;
-                this._actionEscapeIterations++;
-            }
-            if (this._lastMutationIteration > 0 && this._actionEscapeIterations > 4) {
-                this._focusedAction = true;
-                this._focusedReadIterations = 0;
-                this._lastFocusedReadIteration = -1;
-                if (tool.type === 'read_file' && (tool.startLine !== undefined || tool.endLine !== undefined)) {
-                    this._focusedReadIterations = 1;
-                    this._lastFocusedReadIteration = this._iteration;
-                    return {
-                        isExploration: true,
-                        guidance: '[System Focused Action] Broad discovery is now closed. Use this bounded range as exact edit context; one additional focused read turn remains before you must mutate.',
-                    };
-                }
-                return {
-                    isExploration: true,
-                    block: '[System Focused Action] Broad discovery is now closed. Use explicit read_file start_line/end_line on an identified file, or edit now.',
-                };
-            }
-        }
-
+        // Focus/action pressure never blocks exploration tools. The model still receives
+        // ACTION_PHASE guidance through systemPrompt() once exploration is repetitive.
         const target = explorationTarget(tool);
         const targetVisits = target ? (this.targetVisits.get(target) ?? 0) + 1 : 1;
         if (this._lastExplorationIteration !== this._iteration) {
@@ -303,23 +179,16 @@ export class ExplorationController {
         if (decision.lock && !this._locked) {
             this._locked = true;
             this._lockedAtIteration = this._iteration;
-            this._actionEscapeIterations = 0;
-            this._lastActionEscapeIteration = -1;
         }
         return { isExploration: true, guidance: decision.guidance };
     }
 
     public blocksTerminal(tool: ToolCall): boolean {
         if (tool.type !== 'run_terminal' || !isExploratoryTerminalCommand(tool.command)) { return false; }
-        if (this._unwiredImports.size > 0) { return true; }
-        return this._focusedAction;
+        return false;
     }
 
     public after(tool: ToolCall, result = ''): string | undefined {
-        if (tool.type === 'read_file' && !/\bERROR\b/.test(result)) {
-            this.knownFiles.add(normalizeWorkspacePath(tool.filepath));
-        }
-
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
             if (!/\b(?:Edit applied successfully|Written successfully)\b/.test(result)) {
                 return '[System Follow-through] The edit was not applied. Resolve the tool failure before counting this as a code change.';
@@ -342,13 +211,6 @@ export class ExplorationController {
             this._verificationFile = tool.filepath;
             this._verificationAuditSeen = result.includes('[Local invariant audit]');
             this._verificationAuditReads = 0;
-            this._integrationRecoveryIterations = 0;
-            this._lastIntegrationRecoveryIteration = -1;
-            this._actionEscapeIterations = 0;
-            this._lastActionEscapeIteration = -1;
-            this._focusedAction = false;
-            this._focusedReadIterations = 0;
-            this._lastFocusedReadIteration = -1;
             this._lockedAtIteration = -1;
             this._lastExplorationIteration = -1;
             this.targetVisits.clear();
@@ -423,7 +285,5 @@ export class ExplorationController {
         this._verificationFile = undefined;
         this._verificationAuditSeen = false;
         this._verificationAuditReads = 0;
-        this._integrationRecoveryIterations = 0;
-        this._lastIntegrationRecoveryIteration = -1;
     }
 }
