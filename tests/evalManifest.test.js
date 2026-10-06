@@ -5,17 +5,18 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const suite = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks.json'), 'utf8'));
+const v5 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v5.json'), 'utf8'));
 const v4 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v4.json'), 'utf8'));
 const v3 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v3.json'), 'utf8'));
 const v2 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v2.json'), 'utf8'));
 const v1 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v1.json'), 'utf8'));
 
-test('coding holdout v5 is frozen, non-trivial, and internally consistent', () => {
-  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v5');
+test('coding holdout v6 is frozen, non-trivial, and internally consistent', () => {
+  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v6');
   assert.equal(suite.frozen, true);
   assert.ok(Array.isArray(suite.tasks));
   assert.ok(suite.tasks.length >= 25);
-  assert.equal(suite.maxTotalTokens, 400000);
+  assert.equal(suite.maxTotalTokens, 0);
   assert.equal(suite.maxTaskMinutes, 0);
 
   const ids = new Set();
@@ -40,18 +41,21 @@ test('coding holdout v5 is frozen, non-trivial, and internally consistent', () =
   }
 });
 
-test('burned v1-v4 suites remain archived', () => {
+test('burned v1-v5 suites remain archived', () => {
   assert.equal(v1.suiteVersion, 'codico-coding-holdout-v1');
   assert.equal(v2.suiteVersion, 'codico-coding-holdout-v2');
   assert.equal(v3.suiteVersion, 'codico-coding-holdout-v3');
   assert.equal(v4.suiteVersion, 'codico-coding-holdout-v4');
-  for (const archived of [v1, v2, v3, v4]) {
+  assert.equal(v5.suiteVersion, 'codico-coding-holdout-v5');
+  assert.equal(v5.maxTotalTokens, 400000);
+  assert.equal(v5.maxTaskMinutes, 15);
+  for (const archived of [v1, v2, v3, v4, v5]) {
     assert.equal(archived.frozen, true);
     assert.equal(archived.tasks.length, suite.tasks.length);
   }
 });
 
-test('v5 requires resume overlap logic to be invoked, not merely exported or imported', () => {
+test('v6 retains integrated resume-overlap scoring from v5', () => {
   const task = suite.tasks.find(t => t.id === 'stream-resume-overlap');
   assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.verifier.js');
   const source = fs.readFileSync(path.join(root, task.verifierPath), 'utf8');
@@ -59,7 +63,7 @@ test('v5 requires resume overlap logic to be invoked, not merely exported or imp
   assert.match(source, /must be called by the agent resume path/);
 });
 
-test('v5 retains behavior-level fingerprint and EOF verifiers', () => {
+test('v6 retains behavior-level fingerprint and EOF verifiers', () => {
   assert.equal(
     suite.tasks.find(t => t.id === 'stream-unexpected-eof').verifierPath,
     'eval/verifiers/streamUnexpectedEof.verifier.js',
