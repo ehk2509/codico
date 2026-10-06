@@ -33,7 +33,7 @@ export class ExplorationController {
     private _lastActionEscapeIteration = -1;
     private _integrationRecoveryIterations = 0;
     private _lastIntegrationRecoveryIteration = -1;
-    private _actionExplorationClosed = false;
+    private _focusedAction = false;
     private readonly taskContract: string;
 
     constructor(rawTask = '') { this.taskContract = buildTaskAcceptanceContract(rawTask); }
@@ -44,6 +44,7 @@ export class ExplorationController {
     public get locked(): boolean { return this._locked; }
     public get verificationPending(): boolean { return this._verificationPending; }
     public get verificationFile(): string | undefined { return this._verificationFile; }
+    public get focusedAction(): boolean { return this._focusedAction; }
 
     /**
      * True means the edited file still needs an explicit post-edit control-flow
@@ -80,12 +81,9 @@ export class ExplorationController {
             this._verificationFile,
             this.taskContract,
             this.verificationReadAllowed,
+            this._focusedAction,
         );
         if (!prompt) { return prompt; }
-        if (this._actionExplorationClosed && this._unwiredImports.size === 0) {
-            return prompt + '\n\n## Discovery phase closed\n' +
-                'The bounded evidence window is exhausted. Do not request more source discovery. Make the smallest evidence-backed edit now; use the edit failure context if an exact replacement misses.';
-        }
         if (this._unwiredImports.size === 0) { return prompt; }
         return prompt + '\n\n## Blocking integration issue\n' +
             'A local helper is imported but still unused in: ' +
@@ -103,7 +101,7 @@ export class ExplorationController {
             this._verificationFile,
             this.verificationReadAllowed,
             this._unwiredImports.size > 0,
-            this._actionExplorationClosed,
+            this._focusedAction,
         );
     }
 
@@ -158,16 +156,41 @@ export class ExplorationController {
 
         if (!isExplorationTool(tool)) { return { isExploration: false }; }
 
+        if (this._focusedAction) {
+            if (tool.type === 'read_file') {
+                const bounded = tool.startLine !== undefined || tool.endLine !== undefined;
+                return bounded
+                    ? {
+                        isExploration: true,
+                        guidance: '[System Focused Action] Use this bounded source range as exact edit context, then mutate. Do not restart broad discovery.',
+                    }
+                    : {
+                        isExploration: true,
+                        block: '[System Focused Action] Broad reads are closed. Use explicit start_line/end_line on an identified file, or edit now.',
+                    };
+            }
+            return {
+                isExploration: true,
+                block: '[System Focused Action] Broad discovery is closed. Use a bounded read_file range only if exact edit text is missing; otherwise edit now.',
+            };
+        }
+
         if (this._locked && this._iteration > this._lockedAtIteration) {
             if (this._lastActionEscapeIteration !== this._iteration) {
                 this._lastActionEscapeIteration = this._iteration;
                 this._actionEscapeIterations++;
             }
             if (this._actionEscapeIterations > 4) {
-                this._actionExplorationClosed = true;
+                this._focusedAction = true;
+                if (tool.type === 'read_file' && (tool.startLine !== undefined || tool.endLine !== undefined)) {
+                    return {
+                        isExploration: true,
+                        guidance: '[System Focused Action] Broad discovery is now closed. Use this bounded range as final edit context, then mutate.',
+                    };
+                }
                 return {
                     isExploration: true,
-                    block: '[System Action] Open-ended exploration is closed after four targeted escape-hatch turns. You have enough source evidence now. Make the smallest evidence-backed edit; if it misses, edit_file will return fresh recovery context.',
+                    block: '[System Focused Action] Broad discovery is now closed. Use explicit read_file start_line/end_line on an identified file, or edit now.',
                 };
             }
         }
@@ -192,7 +215,7 @@ export class ExplorationController {
     public blocksTerminal(tool: ToolCall): boolean {
         if (tool.type !== 'run_terminal' || !isExploratoryTerminalCommand(tool.command)) { return false; }
         if (this._unwiredImports.size > 0) { return true; }
-        return this._actionExplorationClosed;
+        return this._focusedAction;
     }
 
     public after(tool: ToolCall, result = ''): string | undefined {
@@ -221,7 +244,7 @@ export class ExplorationController {
             this._lastIntegrationRecoveryIteration = -1;
             this._actionEscapeIterations = 0;
             this._lastActionEscapeIteration = -1;
-            this._actionExplorationClosed = false;
+            this._focusedAction = false;
             this._lockedAtIteration = -1;
             this._lastExplorationIteration = -1;
             this.targetVisits.clear();
