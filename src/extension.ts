@@ -16,8 +16,43 @@ import { DIRECT_PROVIDERS, directSecretKey } from './directProviderClient';
 let _provider: AgentProvider | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-    const provider = new AgentProvider(context.extensionUri, context);
+    const evaluationMode =
+        context.extensionMode === vscode.ExtensionMode.Test &&
+        process.env.CODICO_EVAL_MODE === '1';
+    const provider = new AgentProvider(context.extensionUri, context, evaluationMode);
     _provider = provider;
+
+    if (evaluationMode) {
+        context.subscriptions.push(
+            vscode.commands.registerCommand('codico.__evalConfigure', async (options: {
+                openRouterApiKey: string;
+                model: string;
+                maxIterations?: number;
+                maxTotalTokens?: number;
+            }) => {
+                if (!options?.openRouterApiKey?.trim()) {
+                    throw new Error('Evaluation requires an OpenRouter API key.');
+                }
+                await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
+                const cfg = vscode.workspace.getConfiguration('codico');
+                await cfg.update('model', options.model, vscode.ConfigurationTarget.Global);
+                await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
+                await cfg.update('verificationGraceIterations', 4, vscode.ConfigurationTarget.Global);
+                await cfg.update('mutationGraceIterations', 3, vscode.ConfigurationTarget.Global);
+                provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 0);
+                await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Global);
+                await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Global);
+                await cfg.update('autoIndex', false, vscode.ConfigurationTarget.Global);
+            }),
+            vscode.commands.registerCommand('codico.__evalRunTask', async (prompt: string) => {
+                if (!prompt?.trim()) { throw new Error('Evaluation prompt is required.'); }
+                return provider.runEvaluationTask(prompt);
+            }),
+            vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
+        );
+    }
 
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(

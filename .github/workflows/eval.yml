@@ -1,0 +1,62 @@
+name: Coding Holdout
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: OpenRouter model ID used by Codico
+        required: true
+        default: deepseek/deepseek-v4-flash
+        type: string
+      filter:
+        description: Regex matched against task id or category
+        required: true
+        default: .*
+        type: string
+      limit:
+        description: Max tasks to run (0 = all frozen tasks)
+        required: true
+        default: '4'
+        type: string
+      repetitions:
+        description: Trials per selected task
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  coding-holdout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run frozen historical coding holdout
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
+          xvfb-run -a npm run eval:coding -- \
+            --model "${{ inputs.model }}" \
+            --filter "${{ inputs.filter }}" \
+            --limit "${{ inputs.limit }}" \
+            --repetitions "${{ inputs.repetitions }}"
+
+      - name: Upload holdout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codico-coding-holdout
+          path: eval/results/
+          if-no-files-found: warn

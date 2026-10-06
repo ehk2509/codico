@@ -21,6 +21,14 @@ test('Ask mode exposes only read-only native tools', () => {
 test('native calls map onto the same internal ToolCall contract', () => {
   assert.deepEqual(
     nativeToolCallToToolCall({
+      name: 'read_file',
+      arguments: { filepath: 'src/a.ts', start_line: 10, end_line: 25 },
+    }),
+    { type: 'read_file', filepath: 'src/a.ts', startLine: 10, endLine: 25 },
+  );
+
+  assert.deepEqual(
+    nativeToolCallToToolCall({
       name: 'edit_file',
       arguments: { filepath: 'src/a.ts', old_str: 'a', new_str: 'b' },
     }),
@@ -57,4 +65,158 @@ test('malformed native arguments remain pending instead of executing', () => {
   assert.equal(acc.hasPending, true);
   assert.deepEqual(acc.flushReady(), []);
   assert.deepEqual(acc.pendingNames(), ['run_terminal']);
+});
+
+
+test('action guidance keeps discovery available but prioritizes mutation', () => {
+  const { getNativeToolDefinitions, restrictNativeToolsForAction } = require('../out/nativeTools.js');
+  const action = restrictNativeToolsForAction(getNativeToolDefinitions(false));
+  const names = new Set(action.map(tool => tool.name));
+
+  for (const name of ['read_file', 'search_files', 'list_directory', 'edit_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+    assert.equal(names.has(name), true, `expected ${name} to remain available`);
+  }
+
+  assert.equal(action[0].name, 'edit_file');
+  assert.equal(action[1].name, 'write_file');
+  assert.match(action.find(tool => tool.name === 'read_file').description, /escape hatch/i);
+  assert.match(action.find(tool => tool.name === 'edit_file').description, /preferred action-phase tool/i);
+});
+
+test('post-edit verification keeps dependencies but prioritizes audit then tests', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const beforeRead = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    true,
+  );
+
+  const names = new Set(beforeRead.map(tool => tool.name));
+  for (const name of ['read_file', 'search_files', 'list_directory', 'fetch_url', 'edit_file', 'write_file', 'run_terminal']) {
+    assert.equal(names.has(name), true, `expected ${name} during verification`);
+  }
+
+  assert.equal(beforeRead[0].name, 'read_file');
+  assert.match(beforeRead.find(tool => tool.name === 'read_file').description, /Verification priority/i);
+  assert.match(beforeRead.find(tool => tool.name === 'get_diagnostics').description, /Static verification only/i);
+
+  const afterRead = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    false,
+  );
+  assert.equal(afterRead[0].name, 'run_terminal');
+  assert.match(afterRead.find(tool => tool.name === 'run_terminal').description, /Preferred verification tool/i);
+});
+
+test('read capability is never withdrawn by an arbitrary audit count', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const verification = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/a.ts',
+    false,
+  );
+
+  const names = new Set(verification.map(tool => tool.name));
+  assert.equal(names.has('read_file'), true);
+  assert.equal(names.has('search_files'), true);
+});
+
+
+test('unresolved integration makes edit_file the verification priority', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    false,
+    true,
+    'src/consumer.ts',
+    false,
+    true,
+  );
+
+  assert.equal(tools[0].name, 'edit_file');
+  assert.match(tools.find(tool => tool.name === 'edit_file').description, /Blocking integration fix/i);
+  assert.match(tools.find(tool => tool.name === 'read_file').description, /Integration recovery/i);
+});
+
+
+test('focused action phase keeps ranged reads but withdraws broad discovery tools', () => {
+  const {
+    getNativeToolDefinitions,
+    nativeToolsForAgentPhase,
+  } = require('../out/nativeTools.js');
+
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+  );
+  const names = new Set(tools.map(tool => tool.name));
+
+  for (const name of ['edit_file', 'search_files', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']) {
+    assert.equal(names.has(name), true, 'expected ' + name + ' in focused action');
+  }
+  for (const name of ['find_files', 'list_directory', 'fetch_url', 'lsp_symbol']) {
+    assert.equal(names.has(name), false, 'did not expect ' + name + ' in focused action');
+  }
+  assert.match(tools.find(tool => tool.name === 'search_files').description, /glob to exactly one file/i);
+  assert.match(tools.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
+});
+
+
+test('focused action tool surface removes broad discovery but keeps ranged read capability', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const focused = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+  );
+
+  const names = new Set(focused.map(tool => tool.name));
+  assert.equal(focused[0].name, 'edit_file');
+  assert.equal(focused[1].name, 'search_files');
+  assert.equal(focused[2].name, 'read_file');
+  assert.equal(names.has('read_file'), true);
+  assert.equal(names.has('search_files'), true);
+  assert.equal(names.has('find_files'), false);
+  assert.equal(names.has('list_directory'), false);
+  assert.equal(names.has('fetch_url'), false);
+  assert.match(focused.find(tool => tool.name === 'read_file').description, /explicit start_line\/end_line/i);
+});
+
+
+test('focused action removes read_file after its two-turn source budget', () => {
+  const { getNativeToolDefinitions, nativeToolsForAgentPhase } = require('../out/nativeTools.js');
+  const tools = nativeToolsForAgentPhase(
+    getNativeToolDefinitions(false),
+    true,
+    false,
+    undefined,
+    true,
+    false,
+    true,
+    true,
+  );
+
+  const names = new Set(tools.map(tool => tool.name));
+  assert.equal(tools[0].name, 'edit_file');
+  assert.equal(names.has('read_file'), false);
+  assert.equal(names.has('search_files'), false);
+  assert.equal(names.has('find_files'), false);
+  assert.equal(names.has('edit_file'), true);
+  assert.equal(names.has('write_file'), true);
 });

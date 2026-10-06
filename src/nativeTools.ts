@@ -26,10 +26,14 @@ const noArgs: JsonSchema = {
 const ALL_TOOLS: NativeToolDefinition[] = [
     {
         name: 'read_file',
-        description: 'Read a workspace file by relative path.',
+        description: 'Read a workspace file by relative path. Prefer start_line/end_line around search matches for large files.',
         inputSchema: {
             type: 'object',
-            properties: { filepath: { type: 'string', description: 'Workspace-relative file path.' } },
+            properties: {
+                filepath: { type: 'string', description: 'Workspace-relative file path.' },
+                start_line: { type: 'integer', minimum: 1, description: 'Optional 1-based first line.' },
+                end_line: { type: 'integer', minimum: 1, description: 'Optional 1-based last line. Reads are capped to a safe window.' },
+            },
             required: ['filepath'],
             additionalProperties: false,
         },
@@ -59,7 +63,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
     },
     {
         name: 'edit_file',
-        description: 'Replace one exact string occurrence in a workspace file.',
+        description: 'Replace one uniquely identifiable string occurrence. Exact matching is preferred; a unique whitespace-only variation is accepted safely.',
         inputSchema: {
             type: 'object',
             properties: {
@@ -246,6 +250,203 @@ export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition
     return ALL_TOOLS.filter(tool => !readOnly || READ_ONLY.has(tool.name));
 }
 
+/**
+ * Phase policies are advisory. Fixed exploration/read counts must not remove
+ * capabilities that may be required for correctness.
+ */
+const ACTION_PRIORITY: ToolCall['type'][] = [
+    'edit_file',
+    'write_file',
+    'run_terminal',
+    'get_diagnostics',
+    'read_file',
+    'search_files',
+    'find_files',
+    'list_directory',
+];
+
+const ACTION_DISCOVERY = new Set<ToolCall['type']>([
+    'read_file',
+    'search_files',
+    'find_files',
+    'list_directory',
+    'fetch_url',
+    'lsp_symbol',
+    'browser_get_text',
+]);
+
+/**
+ * Action phase keeps every capability but makes the native-tool surface reflect
+ * the phase: mutation/verification tools come first, while discovery tools are
+ * explicitly described as a narrow escape hatch for one missing fact.
+ */
+export function restrictNativeToolsForAction(
+    tools: NativeToolDefinition[],
+    explorationClosed = false,
+    focusedReadExhausted = false,
+): NativeToolDefinition[] {
+    const priority: ToolCall['type'][] = explorationClosed
+        ? focusedReadExhausted
+            ? ['edit_file', 'write_file', 'run_terminal', 'get_diagnostics']
+            : ['edit_file', 'search_files', 'read_file', 'write_file', 'run_terminal', 'get_diagnostics']
+        : ACTION_PRIORITY;
+    const rank = new Map(priority.map((name, index) => [name, index]));
+    const available = explorationClosed
+        ? tools.filter(tool =>
+            (
+                !ACTION_DISCOVERY.has(tool.name) ||
+                tool.name === 'read_file' ||
+                tool.name === 'search_files'
+            ) &&
+            !(focusedReadExhausted && (tool.name === 'read_file' || tool.name === 'search_files')))
+        : tools;
+
+    return available
+        .map(tool => {
+            if (tool.name === 'search_files' && explorationClosed) {
+                return {
+                    ...tool,
+                    description: 'Focused action locator. Set glob to exactly one file that you already read (for example src/agentProvider.ts); use the search only to find relevant line locations. Repo-wide globs are blocked. Then use at most one bounded read_file range before editing.',
+                };
+            }
+
+            if (tool.name === 'read_file' && explorationClosed) {
+                return {
+                    ...tool,
+                    description: 'Focused action source read. Use an explicit start_line/end_line on an already identified file to obtain exact edit context, then edit immediately. Do not restart broad repository exploration.',
+                };
+            }
+
+            if (ACTION_DISCOVERY.has(tool.name)) {
+                return {
+                    ...tool,
+                    description: `Action phase escape hatch: use ${tool.name} only when one concrete missing fact prevents a safe edit. Do not repeat evidence already inspected; close that fact, then edit immediately. ${tool.description}`,
+                };
+            }
+
+            if (tool.name === 'edit_file') {
+                return {
+                    ...tool,
+                    description: 'Preferred action-phase tool. Make the smallest exact code change supported by the evidence already gathered.',
+                };
+            }
+
+            if (tool.name === 'write_file') {
+                return {
+                    ...tool,
+                    description: 'Action-phase mutation tool for complete-file rewrites when a precise edit_file replacement is not appropriate.',
+                };
+            }
+
+            if (tool.name === 'run_terminal') {
+                return {
+                    ...tool,
+                    description: 'Run the narrowest test/build/diagnostics command after a code change. Before editing, use terminal inspection only for one concrete missing fact.',
+                };
+            }
+
+            return tool;
+        })
+        .sort((a, b) => (rank.get(a.name) ?? 100) - (rank.get(b.name) ?? 100));
+}
+
+export function restrictNativeToolsForVerification(
+    tools: NativeToolDefinition[],
+    filepath?: string,
+    readNeeded = true,
+    integrationPending = false,
+): NativeToolDefinition[] {
+    const priority: ToolCall['type'][] = integrationPending
+        ? ['edit_file', 'read_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
+        : readNeeded
+            ? ['read_file', 'edit_file', 'run_terminal', 'get_diagnostics', 'search_files', 'find_files', 'list_directory']
+            : ['run_terminal', 'edit_file', 'read_file', 'get_diagnostics', 'search_files', 'find_files', 'list_directory'];
+    const rank = new Map(priority.map((name, index) => [name, index]));
+
+    return tools
+        .map(tool => {
+            if (tool.name === 'read_file') {
+                return {
+                    ...tool,
+                    description: integrationPending
+                        ? `Integration recovery: inspect only the exact current range in ${filepath ?? 'the edited file'} needed to wire the unresolved imported helper, then edit immediately.`
+                        : readNeeded
+                            ? filepath
+                                ? `Verification priority: re-read edited file ${filepath} and reconcile its changed control flow with normal success/completion/terminal/cancellation paths. Dependency reads remain available when needed.`
+                                : 'Verification priority: re-read the edited control flow and reconcile its invariants.'
+                            : 'Verification discovery: read only a concrete unresolved range/dependency. The edited control-flow audit is already complete.',
+                };
+            }
+
+            if (tool.name === 'edit_file') {
+                return {
+                    ...tool,
+                    description: integrationPending
+                        ? `Blocking integration fix: wire the newly imported helper into the real behavior path in ${filepath ?? 'the edited file'}, or remove the import. Prefer this tool now.`
+                        : filepath
+                            ? `Verification mutation: revise ${filepath} first if its acceptance or preservation invariant is wrong. Avoid mutating sibling files until this edit is verified.`
+                            : 'Verification mutation: revise the current edited component before broadening.',
+                };
+            }
+
+            if (tool.name === 'write_file') {
+                return {
+                    ...tool,
+                    description: 'Verification mutation for a necessary complete-file rewrite. Keep focus on the current edited component until verified.',
+                };
+            }
+
+            if (tool.name === 'run_terminal') {
+                return {
+                    ...tool,
+                    description: readNeeded
+                        ? 'Verification command. For lifecycle/state edits, first audit the edited control flow; then run the narrowest behavior-level test. Static builds alone do not prove terminal semantics.'
+                        : 'Preferred verification tool. Run the narrowest behavior-level test for lifecycle/state edits; diagnostics/build/lint are static evidence only.',
+                };
+            }
+
+            if (tool.name === 'get_diagnostics') {
+                return {
+                    ...tool,
+                    description: 'Static verification only. Useful for compile/type errors, but it does not prove runtime lifecycle or terminal-state behavior.',
+                };
+            }
+
+            return tool;
+        })
+        .sort((a, b) => (rank.get(a.name) ?? 100) - (rank.get(b.name) ?? 100));
+}
+
+export function nativeToolsForAgentPhase(
+    tools: NativeToolDefinition[],
+    explorationLocked: boolean,
+    verificationPending: boolean,
+    verificationFile?: string,
+    verificationReadAllowed = true,
+    integrationPending = false,
+    explorationClosed = false,
+    focusedReadExhausted = false,
+): NativeToolDefinition[] {
+    if (verificationPending) {
+        return restrictNativeToolsForVerification(
+            tools,
+            verificationFile,
+            verificationReadAllowed,
+            integrationPending,
+        );
+    }
+
+    if (explorationLocked) {
+        return restrictNativeToolsForAction(tools, explorationClosed, focusedReadExhausted);
+    }
+    return tools;
+}
+
+function positiveIntArg(args: Record<string, unknown>, key: string): number | undefined {
+    const value = args[key];
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
 function stringArg(args: Record<string, unknown>, key: string, allowEmpty = false): string | undefined {
     const value = args[key];
     if (typeof value !== 'string') { return undefined; }
@@ -258,7 +459,12 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
     switch (call.name) {
         case 'read_file': {
             const filepath = stringArg(args, 'filepath');
-            return filepath ? { type: 'read_file', filepath } : null;
+            return filepath ? {
+                type: 'read_file',
+                filepath,
+                startLine: positiveIntArg(args, 'start_line'),
+                endLine: positiveIntArg(args, 'end_line'),
+            } : null;
         }
         case 'list_directory': {
             const dirpath = stringArg(args, 'dirpath') ?? '.';

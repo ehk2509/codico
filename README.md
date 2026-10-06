@@ -537,7 +537,11 @@ Or click the Codico icon in the Activity Bar.
 codico/
 ├── src/
 │   ├── extension.ts                 # Activation, command registration
-│   ├── agentProvider.ts             # WebviewViewProvider, agentic loop, tool handlers, thread management
+│   ├── agentProvider.ts             # Agent orchestration loop, workspace tools, thread/session coordination
+│   ├── externalToolRuntime.ts       # Browser/network/MCP/LSP/debug tool handlers
+│   ├── chatProtocol.ts              # Shared extension↔webview message contracts
+│   ├── webviewAssets.ts             # Webview asset preload, CSP and URI rendering
+│   ├── evaluationMetrics.ts         # Test-host coding benchmark metrics contract
 │   ├── agentRouter.ts               # @workspace / @terminal / @vscode / @github context builders
 │   ├── openRouterClient.ts          # OpenRouter SSE streaming client + system prompt
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
@@ -571,11 +575,16 @@ codico/
 │   ├── editProposalManager.ts       # Edits Mode diff queue
 │   ├── symbolProvider.ts            # LSP symbol context builder
 │   └── ignoreRules.ts               # .copilotignore watcher
-├── tests/                           # node:test regression suite (runs against out/)
+├── tests/                           # node:test regression + architecture/holdout integrity tests
+├── eval/                            # Frozen historical coding holdout + VS Code benchmark driver
+├── scripts/eval/run.js              # Worktree runner, hidden verifier injection, scorecard output
 ├── .github/workflows/ci.yml         # CI: compile/tests on 3 OSes + VSIX packaging gate
 ├── .github/workflows/release.yml    # Tag/manual GitHub/Marketplace/Open VSX release workflow
+├── .github/workflows/eval.yml       # Manual-only frozen coding holdout
 ├── media/
-│   ├── chat.html                    # Main vanilla-JS webview UI
+│   ├── chat.html                    # Small structural webview shell
+│   ├── chat.css                     # Webview presentation layer
+│   ├── chat.js                      # Main webview behavior
 │   ├── markdown.js                  # Extracted Markdown/tool-fence renderer
 │   ├── streamNotices.js             # Extracted cutoff/error/continue UI
 │   ├── models.json                  # Model list for the dropdown (free / premium / direct / local)
@@ -601,6 +610,14 @@ codico/
 - **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
 ---
+
+## Validation
+
+Every pull request runs the regression suite on **Ubuntu, Windows, and macOS**, activates Codico inside a real VS Code Extension Host, packages a VSIX, and smoke-installs that packaged extension into a clean VS Code profile.
+
+For autonomous coding quality, Codico also ships a frozen **26-task historical coding holdout**. The current agent is run against exact pre-fix Codico commits and the relevant regression test is injected only after the agent finishes, so the verifier is hidden during the task. The holdout records success, duration, agent steps, tool calls, changed files, and provider token usage.
+
+The coding holdout is intentionally **manual-only** and never consumes model credits on ordinary pushes or pull requests. See [eval/README.md](eval/README.md) for the frozen-v1 methodology and reproduction commands.
 
 ## Development
 

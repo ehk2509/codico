@@ -9,6 +9,8 @@ export interface WriteFileTool {
 export interface ReadFileTool {
     type: 'read_file';
     filepath: string;
+    startLine?: number;
+    endLine?: number;
 }
 
 export interface ListDirectoryTool {
@@ -255,7 +257,19 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
         }
         case 'read_file': {
             const fp = extractField(body, 'filepath');
-            if (fp) { tools.push({ type: 'read_file', filepath: fp }); }
+            if (fp) {
+                const startRaw = extractField(body, 'start_line');
+                const endRaw = extractField(body, 'end_line');
+                const startLine = startRaw ? parseInt(startRaw, 10) : undefined;
+                const endLine = endRaw ? parseInt(endRaw, 10) : undefined;
+                const tool: ReadFileTool = {
+                    type: 'read_file',
+                    filepath: fp,
+                };
+                if (startLine && startLine > 0) { tool.startLine = startLine; }
+                if (endLine && endLine > 0) { tool.endLine = endLine; }
+                tools.push(tool);
+            }
             break;
         }
         case 'list_directory': {

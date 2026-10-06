@@ -1,65 +1,39 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
-import { streamOpenRouter, ChatMessage, MessageContentPart, CHAT_SYSTEM_PROMPT } from './openRouterClient';
+import { streamOpenRouter, ChatMessage, MessageContentPart } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
 import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
-import { BrowserManager } from './browserManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
 import { WorkspaceIndex } from './workspaceIndex';
-import { buildSymbolContext, resolveSymbol } from './symbolProvider';
+import { buildSymbolContext } from './symbolProvider';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { fetchPublicText } from './urlFetcher';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
-
-function getNonce(): string {
-    return nodeCrypto.randomBytes(24).toString('base64url');
-}
+import { ExternalToolRuntime } from './externalToolRuntime';
+import { WebviewAssets } from './webviewAssets';
+import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
+import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
+import { projectHistoryForModel } from './contextProjection';
+import { evaluationToolTarget } from './evaluationTrace';
+import { ExplorationController } from './explorationController';
+import { sliceFileByLines } from './fileReadWindow';
+import { buildLocalInvariantAudit } from './localInvariantAudit';
+import { shouldRunAgentIteration } from './iterationBudget';
+import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
-
-interface ThreadEntry {
-    id: string;
-    name: string;
-    createdAt: number;
-    updatedAt: number;
-    messageCount: number;
-    preview: string;
-    hasBeenNamed?: boolean;
-}
-
-/** A webview event recorded while an assistant reply streamed, without its message id. */
-type ReplayEvent = { type: string; text?: string; diff?: string; [key: string]: unknown };
-
-interface DisplayMessage {
-    role: 'user' | 'assistant';
-    /** Plain-text summary, used for search and for threads saved before events were recorded. */
-    text: string;
-    /** Events that rebuild the full reply (text, reasoning, tool steps, terminal output). */
-    events?: ReplayEvent[];
-}
-
-/** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
-const REPLAY_TYPES = new Set([
-    'appendThinking', 'appendContent', 'toolStart', 'toolResult', 'fileWriteResult',
-    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError',
-]);
-/** Approximate characters of streamed text stored per reply. */
-const REPLAY_BUDGET = 400_000;
-const REPLAY_DIFF_LIMIT = 20_000;
 
 export class AgentProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'codico.chatView';
@@ -69,12 +43,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Expose undo/redo stack so extension.ts can register commands against it. */
     public get undoRedo(): UndoRedoStack { return this._undoRedo; }
     /** Called by extension deactivate() to cleanly shut down the browser process. */
-    public async closeBrowser(): Promise<void> { await this._browser.close(); }
+    public async closeBrowser(): Promise<void> { await this._external.closeBrowser(); }
 
     private _view?: vscode.WebviewView;
     private readonly _fileManager = new FileManager();
-    private readonly _browser = new BrowserManager();
     private readonly _mcp = new McpManager();
+    private readonly _external = new ExternalToolRuntime(this._mcp, msg => this._post(msg));
+    private readonly _webviewAssets: WebviewAssets;
     private readonly _undoRedo = new UndoRedoStack();
     private readonly _editProposals = new EditProposalManager();
     private _editsMode = false;
@@ -104,8 +79,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
     private _allowAllWrites = false;
     private _allowAllTerminal = false;
-    /** External/MCP side effects approved for the current user turn only. */
-    private _allowAllExternal = false;
     /** Auto-commit: when true, stage+commit all changes after each agent turn */
     private _autoCommit = false;
     /** Count of files actually written/edited during the current agent turn */
@@ -116,13 +89,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _autoCompact = true;
     /** Prompt token count from the most recent API response; used for auto-compact threshold. */
     private _lastPromptTokens = 0;
-
-    /** Allowlist of valid model IDs sourced from models.json at build time. */
-    private _validModelIds: Set<string> | null = null;
-    /** Raw models.json content cached for injection into the webview HTML. */
-    private _cachedModelsJson: string | null = null;
-    /** Rendered chat.html template cached so _buildHtml never blocks the UI thread. */
-    private _cachedHtml: string | null = null;
+    /** Test-only autonomous coding benchmark mode. Never enabled in production extension mode. */
+    private readonly _evaluationMode: boolean;
+    private _evalSteps = 0;
+    private _evalToolCalls = 0;
+    private _evalPromptTokens = 0;
+    private _evalCompletionTokens = 0;
+    private _evaluationTokenBudget = 0;
+    private _evalBudgetExceeded = false;
+    private _evalProjectedCharsOmitted = 0;
+    private _evalTrace: EvaluationToolTraceEvent[] = [];
+    private _evalTaskStartedAt = 0;
 
     // Cancelled on extension deactivation — passed to long-running directSingleCompletion calls
     // in fire-and-forget methods (_runAutoCommit, _compactHistory) that have no other cancel path.
@@ -130,14 +107,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     constructor(
         private readonly _extensionUri: vscode.Uri,
-        private readonly _context: vscode.ExtensionContext
+        private readonly _context: vscode.ExtensionContext,
+        evaluationMode = false,
     ) {
+        this._evaluationMode = evaluationMode;
+        this._external.setEvaluationMode(evaluationMode);
         this._workspaceIndex = new WorkspaceIndex(_context);
+        this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
         this._initThreadsSync();
-        // Pre-load bundled media files async so _buildHtml and _isValidModelId
-        // never need to call readFileSync on the extension host's UI thread.
-        void this._preloadMediaFiles();
+        // Pre-load webview assets so first render does not block the extension host.
+        void this._webviewAssets.preload();
         // Abort in-flight requests when the extension deactivates.
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
@@ -152,25 +132,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
         }, undefined, _context.subscriptions);
-    }
-
-    private async _preloadMediaFiles(): Promise<void> {
-        const media = this._extensionUri.fsPath + '/media';
-        try {
-            this._cachedModelsJson = await fs.promises.readFile(media + '/models.json', 'utf8');
-            const groups = JSON.parse(this._cachedModelsJson) as Array<{
-                models?: Array<{ id?: string }>;
-            }>;
-            this._validModelIds = new Set(
-                groups
-                    .flatMap(group => group.models ?? [])
-                    .map(model => model.id)
-                    .filter((id): id is string => Boolean(id))
-            );
-        } catch { /* models.json missing — _validModelIds stays null → skip validation */ }
-        try {
-            this._cachedHtml = await fs.promises.readFile(media + '/chat.html', 'utf8');
-        } catch { /* chat.html missing — _buildHtml falls back to sync read */ }
     }
 
     // ── History / thread persistence helpers ─────────────────────────────────
@@ -203,7 +164,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri],
         };
 
-        webviewView.webview.html = this._buildHtml(webviewView.webview);
+        webviewView.webview.html = this._webviewAssets.buildHtml(webviewView.webview);
 
         // Inform the webview of the currently configured model
         const currentModel = vscode.workspace
@@ -346,7 +307,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._pendingTerminalPermissions.clear();
                     this._allowAllWrites = false;
                     this._allowAllTerminal = false;
-                    this._allowAllExternal = false;
+                    this._external.resetTurnPermissions();
                     break;
                 case 'writePermissionResponse': {
                     const resolve = this._pendingWritePermissions.get(msg.permId);
@@ -392,7 +353,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 case 'changeModel': {
                     // Validate against known model IDs before persisting
-                    if (!this._isValidModelId(msg.model)) {
+                    if (!this._webviewAssets.isValidModelId(msg.model)) {
                         this._post({ type: 'error', message: `Unknown model ID rejected: "${msg.model}"` });
                         break;
                     }
@@ -659,6 +620,38 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._handleUserMessage(text);
     }
 
+    /**
+     * Test-only entrypoint used by the frozen coding-task benchmark.
+     * Production activation never enables evaluation mode.
+     */
+    public setEvaluationTokenBudget(maxTotalTokens: number): void {
+        if (!this._evaluationMode) {
+            throw new Error('Evaluation token budgets are test-only.');
+        }
+        this._evaluationTokenBudget = Math.max(0, Math.floor(maxTotalTokens));
+    }
+
+    public getEvaluationSnapshot(): EvaluationRunMetrics {
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
+        return buildEvaluationRunMetrics({
+            startedAt: this._evalTaskStartedAt, steps: this._evalSteps, toolCalls: this._evalToolCalls,
+            filesWritten: this._filesWrittenThisTurn, promptTokens: this._evalPromptTokens,
+            completionTokens: this._evalCompletionTokens, historyMessages: this._history.length,
+            budgetExceeded: this._evalBudgetExceeded, projectedCharsOmitted: this._evalProjectedCharsOmitted,
+            trace: this._evalTrace,
+        });
+    }
+
+    public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
+        this._evalSteps = this._evalToolCalls = this._evalPromptTokens = this._evalCompletionTokens = 0;
+        this._evalBudgetExceeded = false; this._evalProjectedCharsOmitted = 0; this._evalTrace = [];
+        this._evalTaskStartedAt = Date.now();
+        await vscode.commands.executeCommand('workbench.view.extension.codico-container');
+        await this._handleUserMessage(text);
+        return this.getEvaluationSnapshot();
+    }
+
     // ── Session resume detection ──────────────────────────────────────────────
 
     private _isSessionInterrupted(): boolean {
@@ -708,6 +701,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._busy = true;
         const _taskStartMs = Date.now();
         this._filesWrittenThisTurn = 0;
+        this._evalSteps = 0;
+        this._evalToolCalls = 0;
+        this._evalPromptTokens = 0;
+        this._evalCompletionTokens = 0;
+        this._evalBudgetExceeded = false;
+        this._evalProjectedCharsOmitted = 0;
+        this._evalTrace = [];
         // Dismiss any pending proactive offer now that the user is sending a message
         this._post({ type: 'proactiveOffer', filename: '', errorCount: 0, warningCount: 0 });
         try {
@@ -732,9 +732,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Reset per-response allow-all flags at the start of every new user turn
-        this._allowAllWrites  = false;
-        this._allowAllTerminal = false;
-        this._allowAllExternal = false;
+        this._allowAllWrites  = this._evaluationMode;
+        this._allowAllTerminal = this._evaluationMode;
+        this._external.resetTurnPermissions();
 
         // Cancel any ongoing stream
         this._abortController?.abort();
@@ -787,6 +787,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const autoInject = config.get<boolean>('autoInjectContext', true);
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
+        const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
@@ -878,29 +879,39 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._followUpAbortController?.abort();
         this._followUpAbortController = null;
 
-        const MAX_ITERATIONS = maxIterations > 0 ? maxIterations : Infinity;
         const MAX_STREAM_RECOVERY_ATTEMPTS = 5;
         let streamRecoveryAttempts = 0;
         // Visible text just before a cutoff; the resumed response is checked against it
         // so any restarted sentence is dropped and the seam stays invisible.
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
-        const MAX_ACTION_NUDGES = 2;
-        let actionNudges = 0;
+        const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
+        const MAX_VERIFICATION_NUDGES = 2; let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
             : [];
-
 
         // Circuit breaker: track how many times each unique tool call has been issued
         // across all iterations. If the same call fires 3 times the model is looping —
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
-
+        const exploration = new ExplorationController(rawText, maxIterations);
         try {
-            for (let i = 0; i < MAX_ITERATIONS; i++) {
+            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
                 if (signal.aborted) { break; }
+                if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
+                    this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) {
+                    this._evalBudgetExceeded = true;
+                    this._post({
+                        type: 'appendContent',
+                        id: msgId,
+                        text: `\n\n⚠ Evaluation token budget reached (${this._evaluationTokenBudget.toLocaleString()} cumulative tokens).\n`,
+                    });
+                    break;
+                }
+                this._evalSteps = Math.max(this._evalSteps, i + 1);
+                exploration.beginIteration();
                 this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
 
                 let fullContent = '';
@@ -942,9 +953,64 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
+                    const explorationCheck = exploration.before(tool, this._chatMode);
+                    if (explorationCheck.block) {
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: 'exploration_block',
+                                target: evaluationToolTarget(tool),
+                            });
+                        }
+                        inlineToolResults.push(explorationCheck.block);
+                        return { keepGoing: true, result: explorationCheck.block };
+                    }
+
+                    if (explorationCheck.isExploration) {
+                        this._evalToolCalls++;
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: tool.type,
+                                target: evaluationToolTarget(tool),
+                            });
+                        }
+                        await this._dispatchTool(tool, msgId, signal);
+                        let result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                        this._lastInlineResult = undefined;
+                        if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
+                        inlineToolResults.push(result);
+                        return { keepGoing: true, result };
+                    }
+
+                    if (exploration.blocksTerminal(tool)) {
+                        const result = '[System] Source-inspection terminal commands are disabled in the current focused phase. ' +
+                            'Use the edited-file read tool, edit/write tools, or tests/builds/diagnostics for verification.';
+                        if (this._evaluationMode) {
+                            this._evalTrace.push({
+                                step: this._evalSteps,
+                                tool: 'exploration_block',
+                                target: evaluationToolTarget(tool),
+                            });
+                        }
+                        inlineToolResults.push(result);
+                        return { keepGoing: true, result };
+                    }
+
+                    this._evalToolCalls++;
+                    if (this._evaluationMode) {
+                        this._evalTrace.push({
+                            step: this._evalSteps,
+                            tool: tool.type,
+                            target: evaluationToolTarget(tool),
+                        });
+                    }
                     await this._dispatchTool(tool, msgId, signal);
-                    const result = this._lastInlineResult ?? `[${tool.type}] completed`;
+                    let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
+                    const followThrough = exploration.after(tool, result);
+                    if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
+                    if (followThrough) { result += `\n\n${followThrough}`; }
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
                 };
@@ -1019,12 +1085,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const chatModeOverride = this._chatMode ? CHAT_SYSTEM_PROMPT : undefined;
+                const systemPromptOverride = exploration.systemPrompt(this._chatMode);
+                const projectedHistory = projectHistoryForModel(this._history);
+                if (this._evaluationMode) {
+                    this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
+                }
+                const iterationNativeTools = exploration.nativeTools(nativeTools);
                 for await (const chunk of isOllama
-                    ? streamOllama(ollamaBaseUrl, this._history, ollamaModel, effectivePrefix, signal, chatModeOverride)
+                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, this._history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)
-                        : streamOpenRouter(apiKey, this._history, model, effectivePrefix, signal, this._thinkingEffort, chatModeOverride, nativeTools)) {
+                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1062,6 +1133,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         nativeToolExecutions.push({ call, result: dispatched.result });
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
+                        this._evalPromptTokens += chunk.promptTokens;
+                        this._evalCompletionTokens += chunk.completionTokens;
+                        if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
                         this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
@@ -1212,8 +1286,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 streamRecoveryAttempts = 0;
-
                 if (inlineToolResults.length === 0) {
+                    const verificationGuidance = exploration.completionGuidance();
+                    if (verificationGuidance && verificationNudges++ < MAX_VERIFICATION_NUDGES) {
+                        this._history.push({ role: 'user', content: verificationGuidance });
+                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
+                    }
                     // Some models announce an action ("I'll locate the file.") and end the
                     // turn without emitting the tool fence. Ask them to issue it rather than
                     // treating the announcement as the final answer. Bounded per request.
@@ -1251,7 +1329,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
-                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && i < MAX_ITERATIONS - 1) {
+                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
                     const keepGoing = await new Promise<boolean>((resolve) => {
                         this._checkpointResolver = resolve;
                         signal.addEventListener('abort', () => resolve(false), { once: true });
@@ -1262,8 +1340,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 // Warn the user when the iteration cap is about to be hit on the last loop
-                if (i === MAX_ITERATIONS - 1) {
-                    this._post({ type: 'iterationLimit', id: msgId, limit: MAX_ITERATIONS });
+                if (!shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
+                    this._post({ type: 'iterationLimit', id: msgId, limit: maxIterations });
                 }
             }
         } catch (err: unknown) {
@@ -1633,7 +1711,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (tool.type.startsWith('browser_')) {
             const allowPrivate = vscode.workspace.getConfiguration('codico')
                 .get<boolean>('browserAllowPrivateNetwork', false);
-            this._browser.setAllowPrivateNetwork(allowPrivate);
+            this._external.setAllowPrivateNetwork(allowPrivate);
         }
 
         // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
@@ -1688,69 +1766,69 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'get_diagnostics': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'get_diagnostics', label: tool.filepath || 'workspace' });
-                result = await this._handleGetDiagnostics(tool, msgId);
+                result = await this._external._handleGetDiagnostics(tool, msgId);
                 break;
             }
             case 'fetch_url': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'fetch_url', label: tool.url });
-                result = await this._handleFetchUrl(tool, msgId);
+                result = await this._external._handleFetchUrl(tool, msgId);
                 break;
             }
             case 'browser_navigate': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_navigate', label: tool.url });
-                result = await this._handleBrowserNavigate(tool, msgId);
+                result = await this._external._handleBrowserNavigate(tool, msgId);
                 break;
             }
             case 'browser_click': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_click', label: tool.selector });
-                result = await this._handleBrowserClick(tool, msgId);
+                result = await this._external._handleBrowserClick(tool, msgId);
                 break;
             }
             case 'browser_type': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_type', label: tool.selector });
-                result = await this._handleBrowserType(tool, msgId);
+                result = await this._external._handleBrowserType(tool, msgId);
                 break;
             }
             case 'browser_get_text': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page' });
-                result = await this._handleBrowserGetText(tool, msgId);
+                result = await this._external._handleBrowserGetText(tool, msgId);
                 break;
             }
             case 'browser_screenshot': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_screenshot', label: 'screenshot' });
-                result = await this._handleBrowserScreenshot(msgId);
+                result = await this._external._handleBrowserScreenshot(msgId);
                 break;
             }
             case 'browser_close': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_close', label: 'browser' });
-                await this._browser.close();
+                await this._external.closeBrowser();
                 this._post({ type: 'toolResult', id: msgId, tool: 'browser_close', label: 'Browser closed', success: true });
                 result = '[browser_close] Browser closed.';
                 break;
             }
             case 'mcp_call': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'mcp_call', label: `${tool.server}/${tool.tool}` });
-                result = await this._handleMcpCall(tool, msgId);
+                result = await this._external._handleMcpCall(tool, msgId);
                 break;
             }
             case 'lsp_symbol': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'lsp_symbol', label: tool.query });
-                result = await this._handleLspSymbol(tool, msgId);
+                result = await this._external._handleLspSymbol(tool, msgId);
                 break;
             }
             case 'debug_get_variables': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'debug_get_variables', label: `frame ${tool.frameId ?? 0}` });
-                result = await this._handleDebugGetVariables(tool, msgId);
+                result = await this._external._handleDebugGetVariables(tool, msgId);
                 break;
             }
             case 'debug_get_callstack': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'debug_get_callstack', label: 'call stack' });
-                result = await this._handleDebugGetCallstack(msgId);
+                result = await this._external._handleDebugGetCallstack(msgId);
                 break;
             }
             case 'debug_list_breakpoints': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'debug_list_breakpoints', label: 'breakpoints' });
-                result = await this._handleDebugListBreakpoints(msgId);
+                result = await this._external._handleDebugListBreakpoints(msgId);
                 break;
             }
             case 'update_todo': {
@@ -1825,7 +1903,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
                 this._filesWrittenThisTurn++;
                 const lineCount = contentToWrite.split('\n').length;
-                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.`;
+                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
             }
         } catch (err: unknown) {
             errorMsg = err instanceof Error ? err.message : String(err);
@@ -1861,8 +1939,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const content = new TextDecoder().decode(bytes);
-            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: true });
-            return `[read_file: ${tool.filepath}]\n\`\`\`\n${content}\n\`\`\``;
+            const window = sliceFileByLines(content, tool.startLine, tool.endLine);
+            const label = window.truncated
+                ? `${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}`
+                : tool.filepath;
+            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label, success: true });
+            const continuation = window.endLine < window.totalLines
+                ? `\n… (bounded read; use start_line: ${window.endLine + 1} and end_line to continue, or search_files to target a symbol)\n`
+                : '';
+            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}]\n\`\`\`\n${window.text}\n\`\`\`${continuation}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
@@ -2059,7 +2144,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
         this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
         return matches.length > 0
-            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}`
+            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
             : `[search_files: ${label}] No matches found`;
     }
 
@@ -2123,34 +2208,33 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const hasCRLF = rawContent.includes('\r\n');
             const content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
 
-            const occurrences = content.split(tool.oldStr).length - 1;
-            if (occurrences === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: 'old_str not found' });
-                return `[edit_file: ${tool.filepath}] ERROR: old_str not found in file`;
+            const resolved = resolveEditMatch(content, tool.oldStr);
+            if (!resolved.match) {
+                const err = resolved.error === 'ambiguous'
+                    ? `old_str matches ${resolved.candidates}+ locations after safe normalization — provide more context`
+                    : 'old_str not found, including safe whitespace-tolerant matching';
+                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
+                const fresh = editFailureContext(content, tool.oldStr);
+                return `[edit_file: ${tool.filepath}] ERROR: ${err}${fresh ? `\nCurrent source near the closest requested anchor:\n\`\`\`\n${fresh}\n\`\`\`` : ''}`;
             }
-            if (occurrences > 1) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: `old_str found ${occurrences} times — must be unique` });
-                return `[edit_file: ${tool.filepath}] ERROR: old_str matches ${occurrences} locations — must be unique. Provide more context.`;
-            }
+            const editMatch = resolved.match;
 
-            // Use replacer function to avoid $& / $` / $' / $n pattern interpretation in newStr.
-            // Restore original line endings after replacement so the file's style is preserved.
-            const applyEdit = (src: string): string => {
-                const replaced = src.replace(tool.oldStr, () => tool.newStr);
-                // Use a negative lookbehind so existing \r\n pairs in newStr are not
+            const applyEdit = (replacement: string): string => {
+                const replaced = applyEditMatch(content, editMatch, replacement);
+                // Use a negative lookbehind so existing \r\n pairs in replacement are not
                 // double-converted to \r\r\n when restoring the file's original line endings.
                 return hasCRLF ? replaced.replace(/(?<!\r)\n/g, '\r\n') : replaced;
             };
 
             // ── Edits Mode: queue proposal instead of writing immediately ──────
             if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, originalContent: bytes, proposedContent: applyEdit(content), label: `edit ${tool.filepath}` });
+                this._editProposals.queue({ filepath: tool.filepath, originalContent: bytes, proposedContent: applyEdit(tool.newStr), label: `edit ${tool.filepath}` });
                 this._post({ type: 'proposalQueued', filepath: tool.filepath });
                 return `[edit_file: ${tool.filepath}] Queued as edit proposal`;
             }
 
             // Full-file diff gives the reviewer complete context (before → proposed file)
-            const proposedLF = content.replace(tool.oldStr, () => tool.newStr);
+            const proposedLF = applyEditMatch(content, editMatch, tool.newStr);
             const editDiff = this._computeLineDiff(content, proposedLF);
 
             let editResult: { granted: boolean; editedContent?: string };
@@ -2169,7 +2253,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
 
             const effectiveNewStr = editResult.editedContent ?? tool.newStr;
-            const newContentLF = content.replace(tool.oldStr, () => effectiveNewStr);
+            const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr);
             const finalEditDiff = editResult.editedContent ? this._computeLineDiff(content, newContentLF) : editDiff;
             const newContent = hasCRLF ? newContentLF.replace(/(?<!\r)\n/g, '\r\n') : newContentLF;
             const before = new TextEncoder().encode(rawContent);
@@ -2191,348 +2275,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             // confirm the result without issuing a follow-up read_file call.
             const editedLines = newContentLF.split('\n');
             const insertedLines = effectiveNewStr.split('\n');
-            const insertStart = newContentLF.indexOf(effectiveNewStr);
-            const linesBefore = newContentLF.slice(0, insertStart).split('\n').length - 1;
+            const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
             const CONTEXT = 3;
             const from = Math.max(0, linesBefore - CONTEXT);
             const to   = Math.min(editedLines.length, linesBefore + insertedLines.length + CONTEXT);
             const snippet = editedLines.slice(from, to).join('\n');
-            return `[edit_file: ${tool.filepath}] Edit applied successfully.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\``;
+            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr);
+            const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
+            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\`${invariantAudit}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });
             return `[edit_file: ${tool.filepath}] ERROR: ${message}`;
-        }
-    }
-
-    private async _confirmExternalAction(action: string, detail: string): Promise<boolean> {
-        if (this._allowAllExternal) { return true; }
-
-        const choice = await vscode.window.showWarningMessage(
-            `Codico wants to ${action}.`,
-            {
-                modal: true,
-                detail: `${detail}\n\nThis action can affect systems outside the current workspace.`,
-            },
-            'Allow Once',
-            'Allow External Actions This Turn'
-        );
-
-        if (choice === 'Allow External Actions This Turn') {
-            this._allowAllExternal = true;
-            return true;
-        }
-        return choice === 'Allow Once';
-    }
-
-    private async _handleBrowserNavigate(tool: BrowserNavigateTool, msgId: string): Promise<string> {
-        if (!await this._confirmExternalAction('navigate the browser', tool.url)) {
-            return `[browser_navigate: ${tool.url}] Denied by user`;
-        }
-        try {
-            const result = await this._browser.navigate(tool.url);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_navigate', label: result.title || tool.url, success: true });
-            // Take and send a screenshot automatically after navigation
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_navigate] ${result.text}. Page title: "${result.title}"\nCurrent URL: ${result.currentUrl}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_navigate', label: tool.url, success: false, error: message });
-            return `[browser_navigate: ${tool.url}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleBrowserClick(tool: BrowserClickTool, msgId: string): Promise<string> {
-        if (!await this._confirmExternalAction('click in the browser', tool.selector)) {
-            return `[browser_click: ${tool.selector}] Denied by user`;
-        }
-        try {
-            const result = await this._browser.click(tool.selector);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_click', label: tool.selector, success: true });
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_click] ${result}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_click', label: tool.selector, success: false, error: message });
-            return `[browser_click: ${tool.selector}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleBrowserType(tool: BrowserTypeTool, msgId: string): Promise<string> {
-        const preview = tool.text.length > 120 ? tool.text.slice(0, 120) + '…' : tool.text;
-        if (!await this._confirmExternalAction('type into the browser', `${tool.selector} → "${preview}"`)) {
-            return `[browser_type: ${tool.selector}] Denied by user`;
-        }
-        try {
-            const result = await this._browser.typeText(tool.selector, tool.text, tool.submit ?? false);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_type', label: `${tool.selector} → "${tool.text}"`, success: true });
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_type] ${result}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_type', label: tool.selector, success: false, error: message });
-            return `[browser_type: ${tool.selector}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleBrowserGetText(tool: BrowserGetTextTool, msgId: string): Promise<string> {
-        try {
-            const text = await this._browser.getText(tool.selector);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page', success: true });
-            return `[browser_get_text: ${tool.selector ?? 'page'}]\n${text}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page', success: false, error: message });
-            return `[browser_get_text] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleBrowserScreenshot(msgId: string): Promise<string> {
-        try {
-            await this._sendBrowserScreenshot(msgId);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_screenshot', label: 'screenshot', success: true });
-            return `[browser_screenshot] Screenshot captured and displayed in chat.`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'browser_screenshot', label: 'screenshot', success: false, error: message });
-            return `[browser_screenshot] ERROR: ${message}`;
-        }
-    }
-
-    private async _sendBrowserScreenshot(msgId: string): Promise<void> {
-        const buf = await this._browser.screenshot();
-        const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
-        this._post({ type: 'browserScreenshot', id: msgId, dataUrl, url: this._browser.currentUrl });
-    }
-
-    private async _handleFetchUrl(tool: FetchUrlTool, msgId: string): Promise<string> {
-        if (!await this._confirmExternalAction('fetch a URL', tool.url)) {
-            return `[fetch_url: ${tool.url}] Denied by user`;
-        }
-
-        try {
-            const text = await fetchPublicText(tool.url);
-            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
-            return `[fetch_url: ${tool.url}]\n${text}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
-            return `[fetch_url: ${tool.url}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleGetDiagnostics(tool: GetDiagnosticsTool, msgId: string): Promise<string> {
-        try {
-            let pairs: [vscode.Uri, readonly vscode.Diagnostic[]][];
-
-            if (tool.filepath) {
-                const folders = vscode.workspace.workspaceFolders;
-                if (!folders || folders.length === 0) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: 'workspace', success: false, error: 'No workspace folder open' });
-                    return '[get_diagnostics] ERROR: No workspace folder open';
-                }
-                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-                if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
-                    return `[get_diagnostics: ${tool.filepath}] ERROR: Unsafe path rejected`;
-                }
-                const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
-                pairs = [[fileUri, vscode.languages.getDiagnostics(fileUri)]];
-            } else {
-                pairs = vscode.languages.getDiagnostics();
-            }
-
-            const lines: string[] = [];
-            let count = 0;
-            for (const [uri, diags] of pairs) {
-                const relPath = vscode.workspace.asRelativePath(uri);
-                for (const d of diags) {
-                    if (count >= 50) { lines.push('… (truncated at 50)'); break; }
-                    const sev = ['🔴 ERROR', '⚠️ WARN', 'ℹ️ INFO', '💡 HINT'][d.severity] ?? 'DIAG';
-                    lines.push(`${relPath}:${d.range.start.line + 1}:${d.range.start.character + 1}: ${sev}: ${d.message}`);
-                    count++;
-                }
-                if (count >= 50) { break; }
-            }
-
-            const label = tool.filepath ?? 'workspace';
-            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label, success: true });
-            return lines.length === 0
-                ? `[get_diagnostics: ${label}] No diagnostics — workspace is clean!`
-                : `[get_diagnostics: ${label}]\n${lines.join('\n')}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath ?? 'workspace', success: false, error: message });
-            return `[get_diagnostics] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleMcpCall(tool: McpCallTool, msgId: string): Promise<string> {
-        const label = `${tool.server}/${tool.tool}`;
-        if (!await this._confirmExternalAction('call an MCP tool', label)) {
-            return `[mcp_call: ${label}] Denied by user`;
-        }
-        try {
-            const result = await this._mcp.callTool(tool.server, tool.tool, tool.args);
-            // Flatten content parts to a single string
-            const text = (result.content ?? [])
-                .map(part => {
-                    if (part.type === 'text') { return part.text ?? ''; }
-                    if (part.type === 'image') { return `[image: ${part.mimeType ?? 'unknown'}]`; }
-                    return `[${part.type}]`;
-                })
-                .join('\n');
-            const isError = result.isError === true;
-            this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: !isError, error: isError ? text : undefined });
-            return isError
-                ? `[mcp_call: ${label}] ERROR:\n${text}`
-                : `[mcp_call: ${label}]\n${text}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: false, error: message });
-            return `[mcp_call: ${label}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleLspSymbol(tool: LspSymbolTool, msgId: string): Promise<string> {
-        const label = `lsp: ${tool.query}`;
-        try {
-            const symbols = await resolveSymbol(tool.query, 8);
-            if (symbols.length === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'lsp_symbol', label, success: true });
-                return `[lsp_symbol: "${tool.query}"] No symbols found.`;
-            }
-            const lines = symbols.map(s => {
-                const parts = [`### ${s.kind} \`${s.name}\`  —  ${s.definedIn}:${s.definedAtLine}`];
-                if (s.typeInfo) { parts.push(s.typeInfo); }
-                if (s.definitionSnippet) { parts.push(`\`\`\`\n${s.definitionSnippet}\n\`\`\``); }
-                return parts.join('\n');
-            });
-            this._post({ type: 'toolResult', id: msgId, tool: 'lsp_symbol', label, success: true });
-            return `[lsp_symbol: "${tool.query}"]\n${lines.join('\n\n')}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'lsp_symbol', label, success: false, error: message });
-            return `[lsp_symbol: "${tool.query}"] ERROR: ${message}`;
-        }
-    }
-
-    // ── Debug tools ───────────────────────────────────────────────────────────
-
-    private async _handleDebugGetVariables(tool: DebugGetVariablesTool, msgId: string): Promise<string> {
-        const session = vscode.debug.activeDebugSession;
-        if (!session) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_variables', label: 'variables', success: false, error: 'No active debug session' });
-            return '[debug_get_variables] No active debug session. Start a debug session first.';
-        }
-
-        try {
-            // Get stack frames for the current thread
-            const threadsResp = await session.customRequest('threads', {}) as { threads: Array<{ id: number; name: string }> };
-            if (!threadsResp.threads || threadsResp.threads.length === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_variables', label: 'variables', success: false, error: 'No threads' });
-                return '[debug_get_variables] No threads found in the current debug session.';
-            }
-
-            const threadId = threadsResp.threads[0].id;
-            const stackResp = await session.customRequest('stackTrace', { threadId, startFrame: 0, levels: 20 }) as { stackFrames: Array<{ id: number; name: string; source?: { name?: string }; line: number }> };
-            const frames = stackResp.stackFrames ?? [];
-            // DAP frameIds are opaque identifiers, not array indices — find by id, fall back to top frame
-            const targetFrame = (tool.frameId != null ? frames.find(f => f.id === tool.frameId) : undefined) ?? frames[0];
-            if (!targetFrame) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_variables', label: 'variables', success: false, error: 'No stack frames' });
-                return '[debug_get_variables] No stack frames available.';
-            }
-
-            // Get scopes for the selected frame
-            const scopesResp = await session.customRequest('scopes', { frameId: targetFrame.id }) as { scopes: Array<{ name: string; variablesReference: number; expensive: boolean }> };
-            const scopes = scopesResp.scopes ?? [];
-
-            const lines: string[] = [`Frame: ${targetFrame.name} (${targetFrame.source?.name ?? '?'}:${targetFrame.line})`];
-
-            for (const scope of scopes) {
-                if (scope.expensive) { continue; } // skip large scopes like Globals
-                const varsResp = await session.customRequest('variables', { variablesReference: scope.variablesReference }) as { variables: Array<{ name: string; value: string; type?: string; variablesReference: number }> };
-                const vars = varsResp.variables ?? [];
-                if (vars.length === 0) { continue; }
-                lines.push(`\n[${scope.name}]`);
-                for (const v of vars.slice(0, 50)) {
-                    const typeTag = v.type ? ` (${v.type})` : '';
-                    lines.push(`  ${v.name}${typeTag} = ${v.value}`);
-                }
-            }
-
-            const output = lines.join('\n');
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_variables', label: 'variables', success: true });
-            return `[debug_get_variables]\n${output}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_variables', label: 'variables', success: false, error: message });
-            return `[debug_get_variables] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleDebugGetCallstack(msgId: string): Promise<string> {
-        const session = vscode.debug.activeDebugSession;
-        if (!session) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_callstack', label: 'call stack', success: false, error: 'No active debug session' });
-            return '[debug_get_callstack] No active debug session.';
-        }
-
-        try {
-            const threadsResp = await session.customRequest('threads', {}) as { threads: Array<{ id: number; name: string }> };
-            const lines: string[] = [];
-
-            for (const thread of threadsResp.threads ?? []) {
-                lines.push(`Thread ${thread.id}: ${thread.name}`);
-                const stackResp = await session.customRequest('stackTrace', { threadId: thread.id, startFrame: 0, levels: 30 }) as { stackFrames: Array<{ id: number; name: string; source?: { name?: string; path?: string }; line: number; column: number }> };
-                for (let i = 0; i < (stackResp.stackFrames ?? []).length; i++) {
-                    const f = stackResp.stackFrames[i];
-                    const loc = f.source?.name ? `${f.source.name}:${f.line}:${f.column}` : `frame ${f.id}`;
-                    lines.push(`  #${i}  ${f.name}  —  ${loc}`);
-                }
-            }
-
-            const output = lines.join('\n') || '(no stack frames)';
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_callstack', label: 'call stack', success: true });
-            return `[debug_get_callstack]\n${output}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_get_callstack', label: 'call stack', success: false, error: message });
-            return `[debug_get_callstack] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleDebugListBreakpoints(msgId: string): Promise<string> {
-        try {
-            const breakpoints = vscode.debug.breakpoints;
-            if (breakpoints.length === 0) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'debug_list_breakpoints', label: 'breakpoints', success: true });
-                return '[debug_list_breakpoints] No breakpoints set.';
-            }
-
-            const lines: string[] = [];
-            for (const bp of breakpoints) {
-                if (bp instanceof vscode.SourceBreakpoint) {
-                    const rel = vscode.workspace.asRelativePath(bp.location.uri);
-                    const line = bp.location.range.start.line + 1;
-                    const col = bp.location.range.start.character + 1;
-                    const cond = bp.condition ? `  condition: ${bp.condition}` : '';
-                    const hitCond = bp.hitCondition ? `  hitCondition: ${bp.hitCondition}` : '';
-                    const enabled = bp.enabled ? '' : '  [DISABLED]';
-                    lines.push(`${rel}:${line}:${col}${enabled}${cond}${hitCond}`);
-                } else if (bp instanceof vscode.FunctionBreakpoint) {
-                    const enabled = bp.enabled ? '' : '  [DISABLED]';
-                    lines.push(`function: ${bp.functionName}${enabled}`);
-                }
-            }
-
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_list_breakpoints', label: `${breakpoints.length} breakpoint(s)`, success: true });
-            return `[debug_list_breakpoints] ${breakpoints.length} breakpoint(s):\n${lines.join('\n')}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'debug_list_breakpoints', label: 'breakpoints', success: false, error: message });
-            return `[debug_list_breakpoints] ERROR: ${message}`;
         }
     }
 
@@ -3137,137 +2891,8 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
 
     // ─── HTML ────────────────────────────────────────────────────────────────
 
-    private _isValidModelId(id: string): boolean {
-        // _validModelIds is populated async by _preloadMediaFiles at construction time.
-        // If the async load hasn't completed yet (very early first call) or if models.json
-        // was unavailable, _validModelIds is null — allow all models rather than blocking.
-        if (!this._validModelIds || this._validModelIds.size === 0) { return true; }
-        return this._validModelIds.has(id);
-    }
 
-    private _buildHtml(_webview: vscode.Webview): string {
-        const nonce = getNonce();
-        const media = this._extensionUri.fsPath + '/media';
-        // Use async-preloaded cache. Fall back to sync only if resolveWebviewView fires
-        // before _preloadMediaFiles completes (extremely rare on normal activation paths).
-        const rawHtml       = this._cachedHtml      ?? fs.readFileSync(media + '/chat.html',   'utf8');
-        const rawModelsJson = this._cachedModelsJson ?? fs.readFileSync(media + '/models.json', 'utf8');
-        // Replace all nonce placeholders
-        let html = rawHtml.split('{{NONCE}}').join(nonce);
-        // Inject models data — escape </script> sequences to prevent breakout.
-        // Use a replacer function to avoid $& / $' / $` special replacement patterns
-        // in safeModelsJson corrupting the HTML (e.g. a model name containing "$&").
-        const safeModelsJson = rawModelsJson.replace(/<\/script>/gi, '<\\/script>');
-        html = html.replace('{{MODELS_JSON}}', () => safeModelsJson);
-        const markdownUri = _webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'markdown.js')
-        ).toString();
-        html = html.replace('{{MARKDOWN_JS_URI}}', markdownUri);
-        const streamNoticesUri = _webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'streamNotices.js')
-        ).toString();
-        html = html.replace('{{STREAM_NOTICES_JS_URI}}', streamNoticesUri);
-        return html;
-    }
 
 }
 
 
-// ─── Message type contracts ──────────────────────────────────────────────────
-
-type WebviewMessage =
-    | { type: 'sendMessage'; text: string; contentParts?: Array<{ type: string; [key: string]: unknown }>; injectActiveDiagnostics?: boolean }
-    | { type: 'clearChat' }
-    | { type: 'openProblems' }
-    | { type: 'setApiKey' }
-    | { type: 'openSettings' }
-    | { type: 'closePanel' }
-    | { type: 'abortStream' }
-    | { type: 'checkpointResponse'; continue: boolean }
-    | { type: 'killBackgroundProcesses' }
-    | { type: 'changeModel'; model: string }
-    | { type: 'changeEffort'; effort: 'high' | 'medium' | 'low' }
-    | { type: 'requestContext'; kind: 'file' | 'selection' | 'diagnostics' | 'files-pick' }
-    | { type: 'startReview'; target: 'file' | 'selection' }
-    | { type: 'startPlan'; goal: string }
-    | { type: 'approvePlan'; executionPrompt: string }
-    | { type: 'clarifyResponse'; text: string }
-    | { type: 'refreshMcp' }
-    | { type: 'undo' }
-    | { type: 'redo' }
-    | { type: 'toggleEditsMode'; enabled: boolean }
-    | { type: 'previewEditDiff'; filepath: string }
-    | { type: 'acceptEdit'; filepath: string }
-    | { type: 'rejectEdit'; filepath: string }
-    | { type: 'acceptAllEdits' }
-    | { type: 'rejectAllEdits' }
-    | { type: 'sendFollowUp'; text: string }
-    | { type: 'generateTestsFromCoverage' }
-    | { type: 'runAndFixTests' }
-    | { type: 'createThread'; name?: string }
-    | { type: 'switchThread'; id: string }
-    | { type: 'renameThread'; id: string; name: string }
-    | { type: 'deleteThread'; id: string }
-    | { type: 'threadContextMenu'; id: string }
-    | { type: 'searchThreads'; query: string }
-    | { type: 'resumeSession' }
-    | { type: 'writePermissionResponse'; permId: string; granted: boolean }
-    | { type: 'terminalPermissionResponse'; permId: string; granted: boolean }
-    | { type: 'allowAllWrites'; permId: string }
-    | { type: 'allowAllTerminal'; permId: string }
-    | { type: 'writePermissionEdit'; permId: string; content: string }
-    | { type: 'toggleAutoCommit'; enabled: boolean }
-    | { type: 'compactChat' }
-    | { type: 'toggleAutoCompact'; enabled: boolean }
-    | { type: 'toggleChatMode'; chatMode: boolean };
-
-type ExtensionMessage =
-    | { type: 'startMessage'; id: string }
-    | { type: 'appendThinking'; id: string; text: string }
-    | { type: 'appendContent'; id: string; text: string }
-    | { type: 'endMessage'; id: string }
-    | { type: 'fileWriteResult'; id: string; filepath: string; granted: boolean; error?: string; diff?: string }
-    | { type: 'toolStart'; id: string; tool: string; label: string }
-    | { type: 'toolResult'; id: string; tool: string; label: string; success: boolean; error?: string; diff?: string }
-    | { type: 'tokenUsage'; promptTokens: number; completionTokens: number; totalTokens: number }
-    | { type: 'streamFinishReason'; id: string; reason: string }
-    | { type: 'streamError'; id: string; message: string }
-    | { type: 'contextSnippet'; kind: string; label: string; text: string }
-    | { type: 'reviewReady'; label: string; error: string | undefined }
-    | { type: 'planReady'; goal: string; error: string | undefined }
-    | { type: 'browserScreenshot'; id: string; dataUrl: string; url: string }
-    | { type: 'setEffort'; effort: 'high' | 'medium' | 'low' }
-    | { type: 'error'; message: string }
-    | { type: 'setModel'; model: string }
-    | { type: 'agentActive'; agent: string }
-    | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }
-    | { type: 'undoRedoState'; canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }
-    | { type: 'proposalQueued'; filepath: string }
-    | { type: 'proposalsReady'; proposals: Array<{ filepath: string; label: string; isNew: boolean; lines: number }> }
-    | { type: 'proposalAccepted'; filepath: string }
-    | { type: 'proposalRejected'; filepath: string }
-    | { type: 'allProposalsResolved' }
-    | { type: 'followUps'; id: string; suggestions: string[] }
-    | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
-    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[] }
-    | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
-    | { type: 'threadContextMenuRequest'; id: string; name: string }
-    | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
-    | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string }
-    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string }
-    | { type: 'terminalChunk'; id: string; text: string }
-    | { type: 'stepProgress'; id: string; step: number }
-    | { type: 'activity'; text: string | null }
-    | { type: 'checkpoint'; id: string; steps: number }
-    | { type: 'backgroundProcesses'; processes: { command: string; startedAt: number }[] }
-    | { type: 'autoCommitDone'; message: string }
-    | { type: 'autoCommitError'; message: string }
-    | { type: 'proactiveOffer'; filename: string; errorCount: number; warningCount: number }
-    | { type: 'resumeOffer'; summary: string }
-    | { type: 'focusInput' }
-    | { type: 'todoUpdate'; id: string; items: Array<{ status: 'pending' | 'active' | 'done' | 'failed'; text: string }> }
-    | { type: 'compactStart' }
-    | { type: 'compactDone'; messageCount: number }
-    | { type: 'compactError'; message: string }
-    | { type: 'iterationLimit'; id: string; limit: number }
-    | { type: 'selectionBadge'; label: string };

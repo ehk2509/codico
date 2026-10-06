@@ -249,7 +249,21 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Maximum number of agentic loop iterations before stopping (0 = no limit)"
+          "description": "Maximum normal agentic loop iterations before stopping (0 = no limit). Bounded mutation/verification grace may extend a capped coding task without reopening exploration."
+        },
+        "codico.verificationGraceIterations": {
+          "type": "number",
+          "default": 4,
+          "minimum": 0,
+          "maximum": 12,
+          "description": "Extra iterations allowed only when maxIterations is reached while a code edit is still awaiting acceptance verification. Pure exploration never receives this grace."
+        },
+        "codico.mutationGraceIterations": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Extra iterations allowed only when maxIterations is reached after an explicit coding task has finished focused source reading but still has no successful mutation. Discovery remains closed during this grace."
         },
         "codico.checkpointSteps": {
           "type": "number",
@@ -407,7 +421,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test",
-    "check": "npm test"
+    "check": "npm test",
+    "eval:coding": "node scripts/eval/run.js"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",

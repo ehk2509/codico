@@ -1,0 +1,270 @@
+{
+  "suiteVersion": "codico-coding-holdout-v2",
+  "frozen": true,
+  "description": "Historical Codico regressions with hidden semantic or fix-era verifiers. v2 replaces implementation-string assertions in the EOF task with observable stream-completion behavior while keeping the same bounded evaluation protocol.",
+  "tasks": [
+    {
+      "id": "stream-unexpected-eof",
+      "category": "streaming",
+      "baseCommit": "486bf7638a39c517ed273a4313238b47c2a73d81",
+      "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker emits a stream_error describing the premature interruption instead of being silently accepted as complete. Keep normally completed streams unchanged.",
+      "verifierFile": "streamCompletion.test.js",
+      "testNamePattern": "unexpected provider EOF is reported without flagging normal completion",
+      "maxIterations": 16,
+      "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281",
+      "verifierPath": "eval/verifiers/streamUnexpectedEof.verifier.js"
+    },
+    {
+      "id": "stream-resume-overlap",
+      "category": "streaming",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "When an interrupted model stream resumes, prevent text from the end of the partial response from being repeated at the seam. Add a general overlap calculation rather than hard-coded string trimming.",
+      "verifierFile": "streamCompletion.test.js",
+      "testNamePattern": "drops text a resumed response repeats from before the cutoff",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "stream-recoverable-classification",
+      "category": "streaming",
+      "baseCommit": "486bf7638a39c517ed273a4313238b47c2a73d81",
+      "prompt": "Separate recoverable transport interruptions from ordinary provider or application errors so only genuine connection/stream interruptions trigger automatic continuation.",
+      "verifierFile": "streamCompletion.test.js",
+      "testNamePattern": "only transport interruptions are auto-recoverable",
+      "maxIterations": 16,
+      "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281"
+    },
+    {
+      "id": "stream-finish-normalization",
+      "category": "streaming",
+      "baseCommit": "486bf7638a39c517ed273a4313238b47c2a73d81",
+      "prompt": "Normalize provider-specific finish reasons so output-length cutoffs are consistently recognized while normal completion reasons remain normal.",
+      "verifierFile": "streamCompletion.test.js",
+      "testNamePattern": "provider-specific cutoff reasons normalize for the UI",
+      "maxIterations": 16,
+      "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281"
+    },
+    {
+      "id": "agent-unfulfilled-action",
+      "category": "agent-loop",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Prevent the agent from stopping when it merely announces an action such as reading or searching a file but emits no tool call. Detect this stalled-turn pattern conservatively so normal final answers are not treated as stalled.",
+      "verifierFile": "streamCompletion.test.js",
+      "testNamePattern": "detects action announcements that were never followed by a tool call",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-unclosed-fence",
+      "category": "tool-parser",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Make tool parsing recover a tool call when the model reaches a clean end of response without writing the final closing fence. Do not execute genuinely incomplete streaming drafts early.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "finds a tool fence the model never closed",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-fingerprint-arguments",
+      "category": "agent-loop",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Improve repeated-tool loop detection so fingerprints include the tool arguments. Calls to the same tool with different paths, commands, or values must not be mistaken for identical repetitions.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "tool fingerprints distinguish calls by their arguments",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-write-nested-fences",
+      "category": "tool-parser",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Allow write_file content to contain Markdown code fences without truncating or corrupting the outer tool call. Preserve the exact inner content.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "write_file content may contain its own code blocks",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-four-backtick-envelope",
+      "category": "tool-parser",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Support a four-backtick outer tool fence so file content containing ordinary triple-backtick Markdown fences is parsed as content rather than as the end of the tool call.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "four-backtick tool fences treat inner fences as content",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-edit-nested-fences",
+      "category": "tool-parser",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Make edit_file parsing preserve old/new strings that themselves contain Markdown code fences. The nested fences must not terminate the tool call.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "edit_file strings may contain code blocks",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "tools-stream-closing-line",
+      "category": "tool-parser",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "During streaming, do not consider a tool fence complete until its closing fence line is actually complete. Avoid premature execution when a closing delimiter is still fragmented.",
+      "verifierFile": "toolParser.test.js",
+      "testNamePattern": "scanner waits for a complete closing line while streaming",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "terminal-timeout",
+      "category": "terminal",
+      "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
+      "prompt": "Harden terminal execution so hung commands are terminated after the configured timeout and return a clear timed-out result instead of leaving a child process behind.",
+      "verifierFile": "terminalProcess.test.js",
+      "testNamePattern": "terminal runner times out hung commands",
+      "maxIterations": 16,
+      "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
+    },
+    {
+      "id": "native-fragmented-arguments",
+      "category": "native-tools",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Add provider-native tool-call parsing for OpenAI-style streamed tool calls where function arguments can arrive in arbitrary SSE fragments. Emit one structured call only after the arguments are complete.",
+      "verifierFile": "nativeTools.test.js",
+      "testNamePattern": "OpenAI tool-call fragments survive arbitrary SSE chunking",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "native-malformed-arguments",
+      "category": "native-tools",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Ensure malformed or incomplete native tool arguments are never executed. Keep them pending or reject them safely until a valid complete JSON argument object exists.",
+      "verifierFile": "nativeTools.test.js",
+      "testNamePattern": "malformed native arguments remain pending instead of executing",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "network-block-private",
+      "category": "security",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Harden outbound URL fetching against SSRF. Reject loopback, private, link-local, cloud metadata, reserved, and documentation-only address ranges while still permitting public addresses.",
+      "verifierFile": "networkSecurity.test.js",
+      "testNamePattern": "blocks loopback, private, link-local, metadata and reserved addresses",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "network-dns-private",
+      "category": "security",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Prevent SSRF through hostnames that resolve to private infrastructure. Validate every DNS answer, not just the literal hostname or first result.",
+      "verifierFile": "networkSecurity.test.js",
+      "testNamePattern": "rejects DNS names that resolve to private infrastructure",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "network-dns-pinning",
+      "category": "security",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Close the DNS-rebinding gap in public URL fetching by connecting to the already validated DNS result instead of performing a second uncontrolled resolution at connect time.",
+      "verifierFile": "networkSecurity.test.js",
+      "testNamePattern": "pins requests to the validated DNS result",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "mcp-environment-secrets",
+      "category": "security",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Stop MCP child processes from inheriting the extension host's entire environment. Pass only a minimal safe runtime environment plus variables explicitly configured for that MCP server.",
+      "verifierFile": "mcpEnvironment.test.js",
+      "testNamePattern": "MCP children do not inherit arbitrary parent secrets",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "terminal-user-abort",
+      "category": "terminal",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Make the terminal process runner honor AbortSignal cancellation promptly and clean up the spawned process rather than waiting for natural exit.",
+      "verifierFile": "terminalProcess.test.js",
+      "testNamePattern": "terminal runner honors user abort",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "url-html-sanitization",
+      "category": "security",
+      "baseCommit": "7d1b9498408896be4ff844c9150eac993cfbae6f",
+      "prompt": "Normalize fetched HTML into readable text without leaking script/style executable content, and decode common HTML entities correctly.",
+      "verifierFile": "urlFetcher.test.js",
+      "testNamePattern": "HTML normalization strips executable/style content and decodes common entities",
+      "maxIterations": 16,
+      "verifierCommit": "21803efd082ef934e69e97b01e6d9251efa8990c"
+    },
+    {
+      "id": "history-openai-tool-linkage",
+      "category": "native-history",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "Preserve provider-native tool calls and results in conversation history for OpenAI-compatible providers. The assistant tool call id and subsequent tool result tool_call_id must remain linked across turns.",
+      "verifierFile": "providerConversation.test.js",
+      "testNamePattern": "OpenAI history preserves tool call id and tool result linkage",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    },
+    {
+      "id": "history-anthropic-tool-linkage",
+      "category": "native-history",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "Preserve Anthropic native tool history across turns using tool_use followed by the matching tool_result instead of flattening completed calls into fake user text.",
+      "verifierFile": "providerConversation.test.js",
+      "testNamePattern": "Anthropic history emits tool_use followed by tool_result",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    },
+    {
+      "id": "history-gemini-tool-linkage",
+      "category": "native-history",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "Preserve Gemini native function call history across turns using functionCall and matching functionResponse structures.",
+      "verifierFile": "providerConversation.test.js",
+      "testNamePattern": "Gemini history emits functionCall followed by functionResponse",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    },
+    {
+      "id": "history-compatibility-flattening",
+      "category": "native-history",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "When a provider is using fenced compatibility mode, convert prior native tool turns into readable compatibility text instead of sending unsupported native structures.",
+      "verifierFile": "providerConversation.test.js",
+      "testNamePattern": "compatibility transports flatten native tool turns to readable text",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    },
+    {
+      "id": "browser-private-network-policy",
+      "category": "security",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "Apply the public-network safety policy to browser automation requests so private, loopback, link-local, metadata, redirect, and subresource HTTP(S) requests are validated by default.",
+      "verifierFile": "browserNetworkPolicy.test.js",
+      "testNamePattern": "browser policy validates every HTTP(S) request when private access is disabled",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    },
+    {
+      "id": "browser-private-network-optin",
+      "category": "security",
+      "baseCommit": "f255da7990acb747245607f73de3021a4d5a11ab",
+      "prompt": "Add an explicit opt-in that lets browser automation bypass public-network validation only when the private-network setting is enabled. The secure default must remain blocked.",
+      "verifierFile": "browserNetworkPolicy.test.js",
+      "testNamePattern": "browser policy bypasses public-network validation only after explicit opt in",
+      "maxIterations": 16,
+      "verifierCommit": "14f1eb4a20e1083b36089e56fd0effedc29797bf"
+    }
+  ],
+  "maxTotalTokens": 400000,
+  "maxTaskMinutes": 10
+}
