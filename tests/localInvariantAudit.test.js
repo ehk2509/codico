@@ -37,3 +37,21 @@ test('ordinary non-state edits do not add invariant noise', () => {
   const audit = buildLocalInvariantAudit('const sum = a + b;\nreturn sum;', 'const sum = a + b;');
   assert.equal(audit, '');
 });
+
+
+test('new callable abstractions carry a behavior-integration reminder', () => {
+  const changed = [
+    'export function computeOverlap(previous, next) {',
+    '  return Math.min(previous.length, next.length);',
+    '}',
+  ].join('\n');
+  const audit = buildLocalInvariantAudit(changed, changed);
+  assert.match(audit, /Post-edit behavior integration reminder/);
+  assert.match(audit, /production caller\/path actually invokes it/i);
+  assert.match(audit, /helper definition alone is not sufficient/i);
+});
+
+test('ordinary expressions do not get helper-integration reminders', () => {
+  const audit = buildLocalInvariantAudit('const sum = a + b;\nreturn sum;', 'const sum = a + b;');
+  assert.doesNotMatch(audit, /behavior integration reminder/i);
+});
