@@ -1,6 +1,9 @@
 name: Coding Holdout
 
 on:
+  push:
+    branches:
+      - eval/pr16-failed-task-rerun
   workflow_dispatch:
     inputs:
       model:
@@ -40,23 +43,43 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - run: npm ci
+
+      - name: Install and start ACCO SDK service
+        run: |
+          python -m pip install --upgrade acco
+          acco sdk-serve . > /tmp/acco-sdk.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8770/v1/health >/tmp/acco-health.json; then
+              cat /tmp/acco-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/acco-sdk.log
+          exit 1
 
       - name: Run frozen historical coding holdout
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CODICO_EVAL_ACCO_ENABLED: '1'
+          CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
         run: |
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
+            --model "deepseek/deepseek-v4-flash" \
+            --filter "stream-resume-overlap" \
+            --limit "1" \
+            --repetitions "3"
 
       - name: Upload holdout evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-coding-holdout
+          name: codico-pr16-failed-task-rerun
           path: eval/results/
           if-no-files-found: warn
