@@ -340,7 +340,12 @@ export function streamOpenRouter(
                 attempt++;
                 let requestBody = buildBody();
                 if (requestOptimizer) {
-                    requestBody = await requestOptimizer.optimize('openai', requestBody);
+                    try {
+                        requestBody = await requestOptimizer.optimize('openai', requestBody);
+                    } catch {
+                        // Provider optimization is strictly fail-open. An unavailable or
+                        // buggy optional optimizer must never prevent the model request.
+                    }
                 }
                 if (signal?.aborted) { push(null); return; }
                 const body = JSON.stringify(requestBody);
