@@ -13,6 +13,8 @@ export interface HistoryProjectionOptions {
     preserveNewestLargeResults?: number;
     preserveNewestTargetResults?: number;
     maxWorkingSetChars?: number;
+    deduplicateExactResults?: boolean;
+    minDuplicateChars?: number;
 }
 
 function compactMarker(label: string, omittedChars: number): string {
@@ -126,6 +128,8 @@ export function projectHistoryForModel(
     const preserveNewestTargetResults = Math.max(0, options.preserveNewestTargetResults ?? 6);
     const maxWorkingSetChars = Math.max(maxLargeResultChars, options.maxWorkingSetChars ?? 80_000);
     const recentStart = Math.max(0, history.length - recentMessages);
+    const deduplicateExactResults = options.deduplicateExactResults ?? true;
+    const minDuplicateChars = Math.max(1000, options.minDuplicateChars ?? 2000);
     const targetsByCallId = callTargets(history);
 
     let omittedMessages = 0;
@@ -135,6 +139,9 @@ export function projectHistoryForModel(
     let preservedLargeResults = 0;
     let preservedTargetResults = 0;
     const seenTargets = new Set<string>();
+    // Only remove a result when an identical, target-matched copy remains verbatim.
+    // This is lossless at the provider evidence level; canonical history is unchanged.
+    const latestExactResults = new Map<string, string>();
     const projected = [...history];
 
     for (let index = history.length - 1; index >= 0; index--) {
@@ -147,9 +154,26 @@ export function projectHistoryForModel(
         if (!isNativeTool && !isCompatibilityTool) { continue; }
 
         const content = message.content as string;
-        if (content.length <= largeResultChars) { continue; }
+        if (content.length <= largeResultChars && !deduplicateExactResults) { continue; }
 
         const target = resultTarget(message, targetsByCallId);
+        if (deduplicateExactResults && target && content.length >= minDuplicateChars &&
+            latestExactResults.get(target) === content) {
+            omittedMessages++;
+            omittedChars += content.length;
+            projected[index] = {
+                ...message,
+                content: compactMarker(`repeated ${isNativeTool ? message.toolName : 'compatibility tool'} result (identical newer evidence retained)`, content.length),
+            } as ChatMessage;
+            continue;
+        }
+        if (content.length <= largeResultChars) {
+            if (target && content.length >= minDuplicateChars && !latestExactResults.has(target)) {
+                latestExactResults.set(target, content);
+            }
+            continue;
+        }
+        // Only a verbatim retained result can serve as an exact deduplication anchor.
         const newestForTarget = Boolean(target && !seenTargets.has(target));
         if (target) { seenTargets.add(target); }
 
@@ -163,6 +187,7 @@ export function projectHistoryForModel(
             retainedLargeChars + content.length <= maxLargeResultChars;
 
         if (preserveNewest || preserveTarget || withinRecentBudget) {
+            if (target && content.length >= minDuplicateChars) { latestExactResults.set(target, content); }
             preservedLargeResults++;
             retainedLargeChars += content.length;
             if (preserveTarget) {
