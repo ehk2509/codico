@@ -411,6 +411,23 @@
               }
             }
           }
+        },
+        "codico.accoEnabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Optimize OpenRouter provider-facing request copies through a local ACCO SDK service. Codico's canonical history and agent/verification loop remain unchanged; failures fall back to the original request."
+        },
+        "codico.accoBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8770",
+          "description": "Loopback URL of the local ACCO sdk-serve service (for example: acco sdk-serve .). Non-loopback URLs are rejected."
+        },
+        "codico.accoTimeoutMs": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 100,
+          "maximum": 30000,
+          "description": "Maximum time to wait for local ACCO provider optimization before failing open to the original OpenRouter request."
         }
       }
     }
