@@ -11,6 +11,30 @@ export interface AccoProviderOptimizerOptions {
     timeoutMs?: number;
 }
 
+export interface AccoProviderTelemetry {
+    attempts: number;
+    changed: number;
+    failOpen: number;
+    inputChars: number;
+    outputChars: number;
+    charsSaved: number;
+    totalLatencyMs: number;
+}
+
+const telemetry: AccoProviderTelemetry = {
+    attempts: 0,
+    changed: 0,
+    failOpen: 0,
+    inputChars: 0,
+    outputChars: 0,
+    charsSaved: 0,
+    totalLatencyMs: 0,
+};
+
+export function getAccoProviderTelemetry(): AccoProviderTelemetry {
+    return { ...telemetry };
+}
+
 /**
  * Minimal client for ACCO's /v1/provider/optimize boundary.
  *
@@ -34,10 +58,17 @@ export class AccoProviderOptimizer implements ProviderRequestOptimizer {
     }
 
     async optimize(provider: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+        const startedAt = Date.now();
+        const originalJson = JSON.stringify(body);
+        telemetry.attempts++;
+        telemetry.inputChars += originalJson.length;
         try {
             const payload = JSON.stringify({ provider, body, options: {} });
             const response = await this.post(payload);
-            if (!response || typeof response !== 'object' || Array.isArray(response)) { return body; }
+            if (!response || typeof response !== 'object' || Array.isArray(response)) {
+                telemetry.outputChars += originalJson.length;
+                return body;
+            }
             const optimized = (response as { body?: unknown; metadata?: unknown }).body;
             const metadata = (response as { metadata?: unknown }).metadata;
             const changed = Boolean(
@@ -46,11 +77,22 @@ export class AccoProviderOptimizer implements ProviderRequestOptimizer {
                 !Array.isArray(metadata) &&
                 (metadata as Record<string, unknown>).changed === true
             );
-            return changed && optimized && typeof optimized === 'object' && !Array.isArray(optimized)
-                ? optimized as Record<string, unknown>
-                : body;
-        } catch {
+            if (changed && optimized && typeof optimized === 'object' && !Array.isArray(optimized)) {
+                const optimizedBody = optimized as Record<string, unknown>;
+                const optimizedJson = JSON.stringify(optimizedBody);
+                telemetry.changed++;
+                telemetry.outputChars += optimizedJson.length;
+                telemetry.charsSaved += Math.max(0, originalJson.length - optimizedJson.length);
+                return optimizedBody;
+            }
+            telemetry.outputChars += originalJson.length;
             return body;
+        } catch {
+            telemetry.failOpen++;
+            telemetry.outputChars += originalJson.length;
+            return body;
+        } finally {
+            telemetry.totalLatencyMs += Math.max(0, Date.now() - startedAt);
         }
     }
 
