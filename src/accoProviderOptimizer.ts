@@ -1,5 +1,6 @@
 import * as http from 'http';
 import * as https from 'https';
+import type * as vscode from 'vscode';
 
 export interface ProviderRequestOptimizer {
     optimize(provider: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -95,5 +96,21 @@ export class AccoProviderOptimizer implements ProviderRequestOptimizer {
             req.write(payload);
             req.end();
         });
+    }
+}
+
+
+export function accoOptimizerFromConfiguration(
+    config: vscode.WorkspaceConfiguration,
+    openRouterPath: boolean,
+): ProviderRequestOptimizer | undefined {
+    if (!openRouterPath || !config.get<boolean>('accoEnabled', false)) { return undefined; }
+    try {
+        return new AccoProviderOptimizer({
+            baseUrl: config.get<string>('accoBaseUrl', 'http://127.0.0.1:8770'),
+            timeoutMs: config.get<number>('accoTimeoutMs', 3000),
+        });
+    } catch {
+        return undefined;
     }
 }
