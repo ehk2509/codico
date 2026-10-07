@@ -1,6 +1,9 @@
 name: Coding Holdout
 
 on:
+  push:
+    branches:
+      - eval/pr16-acco-off-control
   workflow_dispatch:
     inputs:
       model:
@@ -45,18 +48,19 @@ jobs:
       - name: Run frozen historical coding holdout
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CODICO_EVAL_ACCO_ENABLED: '0'
         run: |
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
+            --model "deepseek/deepseek-v4-flash" \
+            --filter "stream-resume-overlap" \
+            --limit "1" \
+            --repetitions "6"
 
       - name: Upload holdout evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-coding-holdout
+          name: codico-pr16-acco-off-control
           path: eval/results/
           if-no-files-found: warn
