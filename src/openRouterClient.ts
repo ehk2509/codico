@@ -3,6 +3,7 @@ import * as https from 'https';
 import { StreamCompletionGuard } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toOpenAIMessages } from './providerConversation';
+import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
 
 export type StreamChunk =
     | { type: 'thinking'; text: string }
@@ -229,7 +230,8 @@ export function streamOpenRouter(
     thinkingEffort: 'high' | 'medium' | 'low' = 'high',
     overrideSystemPrompt?: string,
     nativeTools: NativeToolDefinition[] = [],
-    endpoint: OpenRouterEndpoint = { protocol: 'https:', hostname: 'openrouter.ai', path: '/api/v1/chat/completions' }
+    endpoint: OpenRouterEndpoint = { protocol: 'https:', hostname: 'openrouter.ai', path: '/api/v1/chat/completions' },
+    requestOptimizer?: ProviderRequestOptimizer
 ): AsyncIterable<StreamChunk> {
     const basePrompt = overrideSystemPrompt ?? SYSTEM_PROMPT;
 
@@ -302,12 +304,12 @@ export function streamOpenRouter(
             let useNativeTools = nativeTools.length > 0;
             let nativeFallbackUsed = false;
 
-            function buildBody(): string {
+            function buildBody(): Record<string, unknown> {
                 const messages = toOpenAIMessages([
                     { role: 'system', content: systemPrompt(useNativeTools) },
                     ...history,
                 ], useNativeTools);
-                return JSON.stringify({
+                return {
                     model,
                     messages,
                     stream: true,
@@ -326,17 +328,22 @@ export function streamOpenRouter(
                         })),
                         tool_choice: 'auto',
                     } : {}),
-                });
+                };
             }
 
             let attempt = 0;
             const MAX_RETRIES = 3;
             const BASE_DELAY_MS = 5000;
 
-            function doRequest(): void {
+            async function doRequest(): Promise<void> {
                 if (signal?.aborted) { push(null); return; }
                 attempt++;
-                const body = buildBody();
+                let requestBody = buildBody();
+                if (requestOptimizer) {
+                    requestBody = await requestOptimizer.optimize('openai', requestBody);
+                }
+                if (signal?.aborted) { push(null); return; }
+                const body = JSON.stringify(requestBody);
                 const transport = endpoint.protocol === 'http:' ? http : https;
                 const req = transport.request(
                 {
@@ -367,7 +374,7 @@ export function streamOpenRouter(
                             : Math.min(BASE_DELAY_MS * Math.pow(2, attempt - 1), 60_000);
                         push({ type: 'thinking', text: `\n[Rate limited — retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt}/${MAX_RETRIES})…]\n` });
                         res.resume(); // drain so socket is freed
-                        setTimeout(() => { if (!signal?.aborted) { doRequest(); } else { push(null); } }, waitMs);
+                        setTimeout(() => { if (!signal?.aborted) { void doRequest(); } else { push(null); } }, waitMs);
                         return;
                     }
 
@@ -385,7 +392,7 @@ export function streamOpenRouter(
                                     type: 'thinking',
                                     text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n',
                                 });
-                                doRequest();
+                                void doRequest();
                                 return;
                             }
                             push(new Error(
@@ -515,7 +522,7 @@ export function streamOpenRouter(
                 req.end();
             }
 
-            doRequest();
+            void doRequest();
 
             // ── Async iterator implementation ─────────────────────────────
             return {
