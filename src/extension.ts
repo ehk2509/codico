@@ -29,6 +29,8 @@ export function activate(context: vscode.ExtensionContext): void {
                 model: string;
                 maxIterations?: number;
                 maxTotalTokens?: number;
+                accoEnabled?: boolean;
+                accoBaseUrl?: string;
             }) => {
                 if (!options?.openRouterApiKey?.trim()) {
                     throw new Error('Evaluation requires an OpenRouter API key.');
@@ -39,6 +41,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
                 await cfg.update('verificationGraceIterations', 4, vscode.ConfigurationTarget.Global);
                 await cfg.update('mutationGraceIterations', 3, vscode.ConfigurationTarget.Global);
+                await cfg.update('accoEnabled', options.accoEnabled === true, vscode.ConfigurationTarget.Global);
+                if (options.accoBaseUrl) {
+                    await cfg.update('accoBaseUrl', options.accoBaseUrl, vscode.ConfigurationTarget.Global);
+                }
                 provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 0);
                 await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Global);
                 await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Global);
