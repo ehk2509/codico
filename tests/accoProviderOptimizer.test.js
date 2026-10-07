@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 
-const { AccoProviderOptimizer } = require('../out/accoProviderOptimizer.js');
+const { AccoProviderOptimizer, getAccoProviderTelemetry, resetAccoProviderTelemetry } = require('../out/accoProviderOptimizer.js');
 
 async function withServer(handler, run) {
   const server = http.createServer(handler);
@@ -19,6 +19,7 @@ async function withServer(handler, run) {
 }
 
 test('ACCO bridge returns optimized provider body when metadata marks it changed', async () => {
+  resetAccoProviderTelemetry();
   const original = { model: 'test', messages: [{ role: 'user', content: 'hello' }] };
   await withServer((req, res) => {
     let raw = '';
@@ -41,14 +42,25 @@ test('ACCO bridge returns optimized provider body when metadata marks it changed
     const result = await acco.optimize('openai', original);
     assert.equal(result.acco_marker, true);
     assert.deepEqual(original, { model: 'test', messages: [{ role: 'user', content: 'hello' }] });
+    const stats = getAccoProviderTelemetry();
+    assert.equal(stats.attempts, 1);
+    assert.equal(stats.changed, 1);
+    assert.equal(stats.failOpen, 0);
+    assert.ok(stats.inputChars > 0);
+    assert.ok(stats.outputChars > 0);
   });
 });
 
 test('ACCO bridge fails open when local service is unavailable', async () => {
+  resetAccoProviderTelemetry();
   const original = { model: 'test', messages: [] };
   const acco = new AccoProviderOptimizer({ baseUrl: 'http://127.0.0.1:9', timeoutMs: 100 });
   const result = await acco.optimize('openai', original);
   assert.equal(result, original);
+  const stats = getAccoProviderTelemetry();
+  assert.equal(stats.attempts, 1);
+  assert.equal(stats.changed, 0);
+  assert.equal(stats.failOpen, 1);
 });
 
 test('ACCO bridge ignores unchanged or malformed optimization responses', async () => {
