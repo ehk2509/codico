@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - eval/pr15-safe-dedup-holdout
+# PR15 frozen cost-per-success gate
   workflow_dispatch:
     inputs:
       model:
