@@ -168,8 +168,8 @@ test('OpenRouter request optimizer can transform only the provider-facing reques
 
 test('OpenRouter request continues unchanged when optimizer fails open', async () => {
   const optimizer = {
-    async optimize(_provider, body) {
-      return body;
+    async optimize() {
+      throw new Error('ACCO unavailable');
     },
   };
 
