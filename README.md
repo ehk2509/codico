@@ -36,6 +36,28 @@ Access hundreds of models through a single API key — including free-tier model
 ### Local Models (Ollama)
 Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.5-coder:7b`. No API key required.
 
+### ACCO context optimization (optional)
+
+Codico can send its **provider-facing OpenRouter request copy** through a local
+[ACCO — AI Coding Context Optimizer](https://github.com/ehk2509/ai-coding-context-optimizer)
+service before the request reaches OpenRouter. Codico keeps the canonical chat
+history, agent loop, file mutations, and verification state unchanged.
+
+```bash
+python -m pip install --upgrade acco
+cd /path/to/your/project
+acco sdk-serve .
+```
+
+Then enable **`codico.accoEnabled`** in VS Code. The default service URL is
+`http://127.0.0.1:8770` and can be changed with `codico.accoBaseUrl`.
+`codico.accoTimeoutMs` controls how long Codico waits for local optimization.
+
+The integration is deliberately fail-open: if ACCO is unavailable, times out, or
+declines a transform, Codico sends the original request unchanged. Non-loopback
+ACCO URLs are rejected. The first integration targets the benchmarked OpenRouter
+path; direct-provider and Ollama requests are unchanged.
+
 ---
 
 ## Features
