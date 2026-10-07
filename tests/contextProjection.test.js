@@ -94,3 +94,47 @@ test('recent or small tool results are preserved verbatim', () => {
   assert.equal(result.omittedMessages, 0);
   assert.equal(result.history[0].content, 'small result');
 });
+
+
+test('identical repeated tool evidence is omitted only from provider copy', () => {
+  const value = '[read_file: src/a.ts]\n' + 'identical '.repeat(400);
+  const history = [
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'old', name: 'read_file', arguments: { filepath: 'src/a.ts' } }] },
+    { role: 'tool', content: value, toolCallId: 'old', toolName: 'read_file' },
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'new', name: 'read_file', arguments: { filepath: 'src/a.ts' } }] },
+    { role: 'tool', content: value, toolCallId: 'new', toolName: 'read_file' },
+  ];
+  const result = projectHistoryForModel(history, { recentMessages: 8, largeResultChars: 6000 });
+  assert.equal(result.omittedMessages, 1);
+  assert.match(result.history[1].content, /identical newer evidence retained/);
+  assert.equal(result.history[3].content, value);
+  assert.equal(history[1].content, value, 'canonical tool history remains unchanged');
+});
+
+test('changed evidence or distinct read ranges are never deduplicated', () => {
+  const a = 'a'.repeat(3000);
+  const b = 'b'.repeat(3000);
+  const history = [
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'a', name: 'read_file', arguments: { filepath: 'src/a.ts', start_line: 1, end_line: 50 } }] },
+    { role: 'tool', content: a, toolCallId: 'a', toolName: 'read_file' },
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'b', name: 'read_file', arguments: { filepath: 'src/a.ts', start_line: 51, end_line: 100 } }] },
+    { role: 'tool', content: a, toolCallId: 'b', toolName: 'read_file' },
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'c', name: 'read_file', arguments: { filepath: 'src/a.ts', start_line: 1, end_line: 50 } }] },
+    { role: 'tool', content: b, toolCallId: 'c', toolName: 'read_file' },
+  ];
+  const result = projectHistoryForModel(history, { recentMessages: 8 });
+  assert.equal(result.omittedMessages, 0);
+  assert.equal(result.history[1].content, a);
+  assert.equal(result.history[3].content, a);
+});
+
+test('deduplication can be disabled without changing large-result policy', () => {
+  const value = 'same'.repeat(800);
+  const history = [
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'a', name: 'read_file', arguments: { filepath: 'a' } }] },
+    { role: 'tool', content: value, toolCallId: 'a', toolName: 'read_file' },
+    { role: 'assistant', content: '', nativeToolCalls: [{ id: 'b', name: 'read_file', arguments: { filepath: 'a' } }] },
+    { role: 'tool', content: value, toolCallId: 'b', toolName: 'read_file' },
+  ];
+  assert.equal(projectHistoryForModel(history, { deduplicateExactResults: false }).omittedMessages, 0);
+});
