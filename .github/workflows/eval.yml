@@ -1,6 +1,9 @@
 name: Coding Holdout
 
 on:
+  push:
+    branches:
+      - eval/pr15-safe-dedup-holdout
   workflow_dispatch:
     inputs:
       model:
@@ -48,15 +51,15 @@ jobs:
         run: |
           test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
+            --model "deepseek/deepseek-v4-flash" \
+            --filter "stream-resume-overlap" \
+            --limit "1" \
+            --repetitions "3"
 
       - name: Upload holdout evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codico-coding-holdout
+          name: codico-pr15-safe-dedup
           path: eval/results/
           if-no-files-found: warn
