@@ -32,7 +32,7 @@ import { sliceFileByLines } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
-import { AccoProviderOptimizer } from './accoProviderOptimizer';
+import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -792,13 +792,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
-        const accoEnabled = config.get<boolean>('accoEnabled', false);
-        const accoOptimizer = accoEnabled && !isOllama && !isDirect
-            ? new AccoProviderOptimizer({
-                baseUrl: config.get<string>('accoBaseUrl', 'http://127.0.0.1:8770'),
-                timeoutMs: config.get<number>('accoTimeoutMs', 3000),
-            })
-            : undefined;
+        const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
