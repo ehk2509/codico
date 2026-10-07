@@ -35,6 +35,11 @@ export function getAccoProviderTelemetry(): AccoProviderTelemetry {
     return { ...telemetry };
 }
 
+export function resetAccoProviderTelemetry(): void {
+    telemetry.attempts = telemetry.changed = telemetry.failOpen = 0;
+    telemetry.inputChars = telemetry.outputChars = telemetry.charsSaved = telemetry.totalLatencyMs = 0;
+}
+
 /**
  * Minimal client for ACCO's /v1/provider/optimize boundary.
  *
