@@ -14,6 +14,8 @@ async function run() {
   const model = process.env.CODICO_EVAL_MODEL || 'deepseek/deepseek-v4-flash';
   const maxIterations = Number(process.env.CODICO_EVAL_MAX_ITERATIONS || '16');
   const maxTotalTokens = Number(process.env.CODICO_EVAL_MAX_TOTAL_TOKENS || '400000');
+  const accoEnabled = process.env.CODICO_EVAL_ACCO_ENABLED === '1';
+  const accoBaseUrl = process.env.CODICO_EVAL_ACCO_BASE_URL || 'http://127.0.0.1:8770';
 
   try {
     const extension = vscode.extensions.getExtension('codico.codico');
@@ -32,6 +34,8 @@ async function run() {
       model,
       maxIterations,
       maxTotalTokens,
+      accoEnabled,
+      accoBaseUrl,
     });
     await vscode.commands.executeCommand('codico.openChat');
     await new Promise(resolve => setTimeout(resolve, 500));
