@@ -1763,9 +1763,10 @@
     scrollBottom();
   }
 
-  function showTerminalPermCard(msgId, permId, command) {
-    // If the user already clicked "Allow All" this turn, auto-grant silently
-    if (_allowAllTerminal) {
+  function showTerminalPermCard(msgId, permId, command, note) {
+    // If the user already clicked "Allow All" this turn, auto-grant silently, unless
+    // the extension asks again (the agent read external content this turn)
+    if (_allowAllTerminal && !note) {
       vscode.postMessage({ type: 'allowAllTerminal', permId: permId });
       return;
     }
@@ -1786,6 +1787,14 @@
     pre.className = 'write-perm-preview';
     pre.textContent = command;
     card.appendChild(pre);
+
+    if (note) {
+      var noteEl = document.createElement('div');
+      noteEl.className = 'write-perm-preview';
+      noteEl.style.color = 'var(--vscode-editorWarning-foreground, #d4a017)';
+      noteEl.textContent = '\u26A0 ' + note;
+      card.appendChild(noteEl);
+    }
 
     var actions = document.createElement('div');
     actions.className = 'write-perm-actions';
@@ -2549,7 +2558,7 @@
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
       case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent); break;
-      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command); break;
+      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note); break;
       case 'fileWriteResult': showFileResult(data.id, data.filepath, data.granted, data.error, data.diff); break;
       case 'toolStart':      showToolPending(data.id, data.tool, data.label); break;
       case 'toolResult':      showToolResult(data.id, data.tool, data.label, data.success, data.error, data.diff); break;

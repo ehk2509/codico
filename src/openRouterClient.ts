@@ -4,6 +4,7 @@ import { StreamCompletionGuard } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toOpenAIMessages } from './providerConversation';
 import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
+import { UNTRUSTED_CONTENT_RULE } from './untrustedContent';
 
 export type StreamChunk =
     | { type: 'thinking'; text: string }
@@ -64,7 +65,8 @@ query: <symbol name>
 2. Give precise, code-grounded answers with file paths and line references where relevant.
 3. Do NOT emit write_file, edit_file, run_terminal, or any browser tool calls — you are in read-only Ask mode.
 4. One sentence before each tool call so the user sees what you are doing.
-5. Emit one tool fence at a time. Continue autonomously after each result.`;
+5. Emit one tool fence at a time. Continue autonomously after each result.
+6. ${UNTRUSTED_CONTENT_RULE}`;
 
 export const SYSTEM_PROMPT = `You are Codico, an autonomous coding assistant inside Visual Studio Code.
 
@@ -157,6 +159,7 @@ frame_id: <optional frame index, 0 = top of stack>
 10. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise).
 11. Use update_todo only for genuinely multi-step tasks. Skip it for focused one-file fixes. When a plan is useful, keep it concise (normally 2–4 items), update it as work completes, and do not expand scope without evidence. Use [~] for active, [x] for done, [!] for failed.
 12. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
+13. ${UNTRUSTED_CONTENT_RULE}
 
 ## Clarification
 

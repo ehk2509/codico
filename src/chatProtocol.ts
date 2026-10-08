@@ -112,7 +112,7 @@ export type ExtensionMessage =
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
     | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string }
-    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string }
+    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Set when the request must be shown even under Allow All. */ note?: string }
     | { type: 'terminalChunk'; id: string; text: string }
     | { type: 'stepProgress'; id: string; step: number }
     | { type: 'activity'; text: string | null }

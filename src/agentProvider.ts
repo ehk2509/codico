@@ -1918,14 +1918,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             ? tool.command.slice(0, 80) + '\u2026'
             : tool.command;
 
+        // After the agent has read external content this turn, Allow All no longer covers
+        // commands: a prompt-injected page must not be able to run them unattended.
+        const askAgain = this._allowAllTerminal && !this._evaluationMode && this._external.untrustedContentSeen;
         let granted: boolean;
-        if (this._allowAllTerminal) {
+        if (this._allowAllTerminal && !askAgain) {
             granted = true;
         } else {
             const permId = nodeCrypto.randomBytes(8).toString('hex');
             granted = await new Promise<boolean>((resolve) => {
                 this._pendingTerminalPermissions.set(permId, resolve);
-                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command });
+                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command,
+                    note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined });
             });
         }
 
