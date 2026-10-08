@@ -611,7 +611,7 @@ codico/
 ├── eval/                            # Frozen historical coding holdout + VS Code benchmark driver
 ├── scripts/eval/run.js              # Worktree runner, hidden verifier injection, scorecard output
 ├── .github/workflows/ci.yml         # CI: compile/tests on 3 OSes + VSIX packaging gate
-├── .github/workflows/release.yml    # Tag/manual GitHub/Marketplace/Open VSX release workflow
+├── .github/workflows/release.yml    # Tag/release-branch GitHub release + manual Marketplace/Open VSX publishing
 ├── .github/workflows/eval.yml       # Manual-only frozen coding holdout
 ├── media/
 │   ├── chat.html                    # Small structural webview shell
@@ -678,6 +678,6 @@ npx @vscode/vsce package --out codico.vsix
 - **0.2.0** is the current minor release line, covering reliability/holdout hardening, optional ACCO provider-boundary optimization, and the new workspace/browser/terminal security boundaries.
 - Push a tag matching the package version (for example `v0.2.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
 - Maintainers can also create a `release/vX.Y.Z` branch at the validated release commit. The workflow validates the package version, creates the matching tag, packages the VSIX, and creates/updates the GitHub Release.
-- Release-branch runs publish to the Visual Studio Marketplace and Open VSX when their repository secrets are configured; otherwise those publication steps are skipped with a warning.
-- Manual workflow dispatch remains available for explicit Marketplace/Open VSX publication.
+- Release-branch runs create the validated Git tag and GitHub Release from the exact release commit.
+- Manual workflow dispatch remains the explicit path for Visual Studio Marketplace (`VSCE_PAT`) and Open VSX (`OVSX_PAT`) publication.
 - Release automation rejects a version/ref mismatch instead of publishing an ambiguously versioned package.
