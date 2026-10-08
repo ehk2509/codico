@@ -4,6 +4,7 @@
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
   "version": "0.2.2",
   "publisher": "codico",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.85.0"
   },

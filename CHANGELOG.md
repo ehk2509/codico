@@ -2,6 +2,25 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Status bar shows the running token total for the current task and, with OpenRouter, its provider-reported cost.
+- `codico.taskTokenBudget` (default 0 = off): pause with Continue / Stop each time a task uses that many more tokens.
+- Panel UI test suite (`npm run test:ui`) and live scenarios for native tool calls and browser automation.
+
+### Security
+- Web pages, browser text and MCP tool output reach the model inside a delimited `<untrusted_content>` block, and the system prompt declares such blocks to be data, never instructions.
+- After the agent reads external content in a turn, Allow All no longer auto-approves terminal commands; each is shown again with a note.
+
+### Fixed
+- Replies started by the extension (CodeLens, editor commands, `/test`, …) now show the Stop button and a working status.
+
+### Changed
+- Activation is much faster: `playwright-core` is loaded only on first browser use, and the extension is bundled with esbuild (load time ~0.7 s to ~0.05 s).
+- The VSIX ships only the bundle and its one runtime dependency: 121 files / 2.9 MB, down from about 1,280 files / 9 MB (earlier releases also picked up test-harness packages from the build machine).
+- Licensed under MIT.
+
 ## 0.2.2 - 2026-10-08
 
 ### Fixed
