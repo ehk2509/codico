@@ -1,8 +1,8 @@
 {
   "name": "codico",
   "displayName": "Codico",
-  "description": "Autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, browser/MCP automation, and local Ollama.",
-  "version": "0.1.1",
+  "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
+  "version": "0.2.0",
   "publisher": "codico",
   "engines": {
     "vscode": "^1.85.0"
