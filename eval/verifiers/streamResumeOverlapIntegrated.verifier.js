@@ -69,6 +69,88 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&');
 }
 
+function exportedFunctionBodies(source) {
+  const bodies = new Map();
+  const declaration = /export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
+  let match;
+
+  while ((match = declaration.exec(source)) !== null) {
+    const name = match[1];
+    const openBrace = source.indexOf('{', declaration.lastIndex);
+    if (openBrace < 0) { continue; }
+
+    let depth = 0;
+    let quote = null;
+    let escaped = false;
+
+    for (let i = openBrace; i < source.length; i++) {
+      const ch = source[i];
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (ch === quote) { quote = null; }
+        continue;
+      }
+
+      if (ch === "'" || ch === '"' || ch === '`') {
+        quote = ch;
+        continue;
+      }
+      if (ch === '{') { depth++; }
+      if (ch === '}') {
+        depth--;
+        if (depth === 0) {
+          bodies.set(name, source.slice(openBrace + 1, i));
+          declaration.lastIndex = i + 1;
+          break;
+        }
+      }
+    }
+  }
+
+  return bodies;
+}
+
+function integratedRecoveryCall(providerSource, streamSource, candidateName) {
+  const accepted = new Set([candidateName]);
+  const bodies = exportedFunctionBodies(streamSource);
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [name, body] of bodies) {
+      if (accepted.has(name)) { continue; }
+      for (const dependency of accepted) {
+        const dependencyCall = new RegExp('\\b' + escapeRegex(dependency) + '\\s*\\(');
+        if (dependencyCall.test(body)) {
+          accepted.add(name);
+          changed = true;
+          break;
+        }
+      }
+    }
+  }
+
+  for (const name of accepted) {
+    const callPattern = new RegExp('\\b' + escapeRegex(name) + '\\s*\\(');
+    const callIndex = providerSource.search(callPattern);
+    if (callIndex < 0) { continue; }
+
+    const nearby = providerSource.slice(Math.max(0, callIndex - 1200), callIndex + 1600);
+    if (/resume|recover|cutoff|partial|continuation|buffer|overlap/i.test(nearby)) {
+      return name;
+    }
+  }
+
+  return null;
+}
+
 test('resume overlap calculation is applied at the recovery seam', () => {
   const candidate = findOverlapCandidate();
   assert.ok(candidate, 'expected a reusable exported overlap calculation in streamCompletion');
@@ -77,19 +159,14 @@ test('resume overlap calculation is applied at the recovery seam', () => {
     path.join(__dirname, '..', 'src', 'agentProvider.ts'),
     'utf8',
   );
-
-  const callPattern = new RegExp('\\b' + escapeRegex(candidate.name) + '\\s*\\(');
-  assert.match(
-    providerSource,
-    callPattern,
-    'the overlap calculation must be called by the agent resume path, not merely imported',
+  const streamSource = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'streamCompletion.ts'),
+    'utf8',
   );
 
-  const callIndex = providerSource.search(callPattern);
-  const nearby = providerSource.slice(Math.max(0, callIndex - 1200), callIndex + 1600);
-  assert.match(
-    nearby,
-    /resume|recover|cutoff|partial|continuation|buffer|overlap/i,
-    'the overlap call must be part of stream recovery/resume handling',
+  const integratedName = integratedRecoveryCall(providerSource, streamSource, candidate.name);
+  assert.ok(
+    integratedName,
+    'the overlap calculation must be used directly or through an exported streamCompletion recovery helper called by the agent resume path',
   );
 });
