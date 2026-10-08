@@ -8,7 +8,7 @@ import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
 export type StreamChunk =
     | { type: 'thinking'; text: string }
     | { type: 'content'; text: string }
-    | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number }
+    | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number; /** Provider-reported cost in USD, when available (OpenRouter). */ costUsd?: number }
     | { type: 'finish'; reason: string }       // non-'stop' finish_reason from the model
     | { type: 'native_tool'; call: NativeToolCall }
     | { type: 'stream_error'; message: string }; // error object inside an SSE event
@@ -317,6 +317,8 @@ export function streamOpenRouter(
                     include_reasoning: true,
                     reasoning: { effort: thinkingEffort },
                     stream_options: { include_usage: true },
+                    // OpenRouter usage accounting: adds the request's actual cost to the final usage report
+                    usage: { include: true },
                     ...(useNativeTools ? {
                         tools: nativeTools.map(tool => ({
                             type: 'function',
@@ -468,13 +470,14 @@ export function streamOpenRouter(
                                     push({ type: 'finish', reason: finishReason });
                                 }
                             }
-                            const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
+                            const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: unknown } | undefined;
                             if (usage?.total_tokens) {
                                 push({
                                     type: 'usage',
                                     promptTokens: usage.prompt_tokens ?? 0,
                                     completionTokens: usage.completion_tokens ?? 0,
                                     totalTokens: usage.total_tokens,
+                                    ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? { costUsd: usage.cost } : {}),
                                 });
                             }
                         } catch { /* ignore malformed SSE frames */ }

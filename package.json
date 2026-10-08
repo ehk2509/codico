@@ -271,6 +271,12 @@
           "minimum": 0,
           "description": "Pause and ask whether to continue every N agent steps (0 = never pause)"
         },
+        "codico.taskTokenBudget": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Pause and ask whether to continue each time a task uses this many more tokens (prompt + completion across all steps). 0 = no budget."
+        },
         "codico.terminalTimeoutSeconds": {
           "type": "number",
           "default": 300,

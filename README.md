@@ -74,6 +74,8 @@ After each response the agent executes any tool calls, feeds the results back to
 
 - **No step limit by default** (`codico.maxIterations`, `0` = unlimited). The status bar shows the current step.
 - **Checkpoints** — every `codico.checkpointSteps` steps (default 50) the agent pauses and asks **▶ Continue** or **Stop here**, so a run that has gone off track can't spend tokens indefinitely.
+- **Token and cost tracking** — the status bar shows the last request's tokens plus the running total for the current task. With OpenRouter it also shows the task's actual cost as reported by OpenRouter; other providers report tokens only.
+- **Token budget** — set `codico.taskTokenBudget` (default `0` = off) to pause with **▶ Continue** / **Stop here** each time a task uses that many more tokens.
 - **Loop detection** — a tool call repeated with identical arguments more than 3 times is blocked and the model is told to try a different approach.
 - **Automatic recovery** — if a response is cut off (output-token limit or dropped connection), the agent resumes in the same message: half-written tool calls are re-issued, repeated text is trimmed, and up to 5 retries are made with backoff. The status bar shows *Reconnecting…* meanwhile.
 - **Stalled turns** — if the model announces an action ("I'll read the file…") but emits no tool call, or forgets to close its last tool call, the agent recovers instead of stopping.
@@ -538,6 +540,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.autoInjectContext` | `boolean` | `true` | Auto-include active file path as context |
 | `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |
 | `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
+| `codico.taskTokenBudget` | `number` | `0` | Pause and ask whether to continue each time a task uses this many more tokens (`0` = no budget) |
 | `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
 | `codico.nativeToolCalling` | `boolean` | `true` | Prefer provider-native structured tools; disable to force fenced compatibility mode |
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |

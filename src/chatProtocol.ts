@@ -87,7 +87,7 @@ export type ExtensionMessage =
     | { type: 'fileWriteResult'; id: string; filepath: string; granted: boolean; error?: string; diff?: string }
     | { type: 'toolStart'; id: string; tool: string; label: string }
     | { type: 'toolResult'; id: string; tool: string; label: string; success: boolean; error?: string; diff?: string }
-    | { type: 'tokenUsage'; promptTokens: number; completionTokens: number; totalTokens: number }
+    | { type: 'tokenUsage'; promptTokens: number; completionTokens: number; totalTokens: number; /** Tokens used by the current task so far. */ taskTokens?: number; /** Provider-reported cost of the task so far (USD), when known. */ taskCostUsd?: number }
     | { type: 'streamFinishReason'; id: string; reason: string }
     | { type: 'streamError'; id: string; message: string }
     | { type: 'contextSnippet'; kind: string; label: string; text: string }
@@ -116,7 +116,7 @@ export type ExtensionMessage =
     | { type: 'terminalChunk'; id: string; text: string }
     | { type: 'stepProgress'; id: string; step: number }
     | { type: 'activity'; text: string | null }
-    | { type: 'checkpoint'; id: string; steps: number }
+    | { type: 'checkpoint'; id: string; steps: number; /** Overrides the default "N steps so far" prompt. */ reason?: string }
     | { type: 'backgroundProcesses'; processes: { command: string; startedAt: number }[] }
     | { type: 'autoCommitDone'; message: string }
     | { type: 'autoCommitError'; message: string }

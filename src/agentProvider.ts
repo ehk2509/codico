@@ -34,6 +34,7 @@ import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { TaskUsage } from './taskUsage';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -811,6 +812,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
+        const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
 
@@ -1168,7 +1170,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalPromptTokens += chunk.promptTokens;
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
+                        taskUsage.add(chunk.totalTokens, chunk.costUsd);
+                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1378,13 +1381,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
                 if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
-                    const keepGoing = await new Promise<boolean>((resolve) => {
-                        this._checkpointResolver = resolve;
-                        signal.addEventListener('abort', () => resolve(false), { once: true });
-                        this._post({ type: 'checkpoint', id: msgId, steps: i + 1 });
-                    });
-                    this._checkpointResolver = null;
-                    if (!keepGoing) { break; }
+                    if (!await this._awaitCheckpoint(msgId, i + 1, signal)) { break; }
+                }
+
+                // Token budget: pause each time the task crosses another budget's worth
+                if (taskUsage.budgetExceeded) {
+                    if (!await this._awaitCheckpoint(msgId, i + 1, signal, taskUsage.budgetPrompt())) { break; }
+                    taskUsage.extendBudget();
                 }
 
             }
@@ -1499,6 +1502,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         } finally {
             this._releaseBusy();
         }
+    }
+
+    /** Shows a Continue / Stop prompt and resolves with the user's choice (Stop or abort = false). */
+    private async _awaitCheckpoint(msgId: string, steps: number, signal: AbortSignal, reason?: string): Promise<boolean> {
+        const keepGoing = await new Promise<boolean>((resolve) => {
+            this._checkpointResolver = resolve;
+            signal.addEventListener('abort', () => resolve(false), { once: true });
+            this._post({ type: 'checkpoint', id: msgId, steps, reason });
+        });
+        this._checkpointResolver = null;
+        return keepGoing;
     }
 
     /** Marks the agent free and runs the next message that arrived while it was busy. */

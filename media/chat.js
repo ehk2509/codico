@@ -2189,6 +2189,14 @@
     scrollBottom();
   }
 
+  // 950 -> "950", 12345 -> "12.3k", 2400000 -> "2.4M"
+  function _fmtTokens(n) {
+    if (!n) { return '0'; }
+    if (n < 1000) { return String(n); }
+    if (n < 1000000) { return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, '') + 'k'; }
+    return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+
   function scrollBottom() { msgs.scrollTop = msgs.scrollHeight; }
 
   function _relativeTime(ts) {
@@ -2580,9 +2588,19 @@
         break;
       case 'tokenUsage':
         if (sTokens) {
-          sTokens.textContent = data.totalTokens
-            ? (data.promptTokens + '\u2191 ' + data.completionTokens + '\u2193 ' + data.totalTokens + ' tok')
+          var tokText = data.totalTokens
+            ? (_fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
             : '';
+          if (data.taskTokens) {
+            tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok';
+            if (typeof data.taskCostUsd === 'number') {
+              tokText += ' \u00b7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2);
+            }
+          }
+          sTokens.textContent = tokText;
+          sTokens.title = 'Last request: ' + data.promptTokens + ' prompt + ' + data.completionTokens + ' completion tokens' +
+            (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' : '') +
+            (typeof data.taskCostUsd === 'number' ? ' (provider-reported cost $' + data.taskCostUsd.toFixed(4) + ')' : '');
         }
         break;
       case 'compactStart': {
@@ -2671,7 +2689,7 @@
         var cpEl = document.createElement('div');
         cpEl.className = 'stream-stop-notice warn checkpoint-notice';
         var cpTxt = document.createElement('span');
-        cpTxt.textContent = '\u23F8 ' + data.steps + ' steps so far. Keep going?';
+        cpTxt.textContent = '\u23F8 ' + (data.reason || (data.steps + ' steps so far. Keep going?'));
         var cpGo = document.createElement('button');
         cpGo.className = 'continue-btn';
         cpGo.textContent = '\u25B6 Continue';
