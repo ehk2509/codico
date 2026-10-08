@@ -2081,7 +2081,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         const include = tool.glob?.trim() || '**/*';
         const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-        const uris = await vscode.workspace.findFiles(include, exclude, 600);
+        const uris = await filterAllowedWorkspaceUris(
+            await vscode.workspace.findFiles(include, exclude, 600)
+        );
         const matches: string[] = [];
 
         for (const uri of uris) {
@@ -2114,30 +2116,22 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleFindFiles(tool: FindFilesTool, msgId: string): Promise<string> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
-            return '[find_files] ERROR: No workspace folder open';
-        }
-
-        let dir = (tool.dirpath ?? '').trim().replace(/\\/g, '/');
-        if (dir === '.') { dir = ''; }
-        if (dir) {
-            dir = path.posix.normalize(dir);
-            if (dir.startsWith('..') || path.isAbsolute(dir)) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'Unsafe dirpath rejected' });
-                return '[find_files] ERROR: Unsafe dirpath rejected';
-            }
-        }
-
-        const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
-        const include = dir
-            ? `${dir}/**/${cleanPattern}`
-            : `**/${cleanPattern}`;
-        const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-
         try {
-            const uris = await vscode.workspace.findFiles(include, exclude, 200);
+            const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
+            let include: vscode.GlobPattern = `**/${cleanPattern}`;
+            const requestedDir = (tool.dirpath ?? '').trim();
+            if (requestedDir && requestedDir !== '.') {
+                const target = await resolveWorkspaceToolPath(requestedDir, true);
+                const scopedPattern = target.relativePath
+                    ? `${target.relativePath}/**/${cleanPattern}`
+                    : `**/${cleanPattern}`;
+                include = new vscode.RelativePattern(target.folder, scopedPattern);
+            }
+
+            const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
+            const uris = await filterAllowedWorkspaceUris(
+                await vscode.workspace.findFiles(include, exclude, 200)
+            );
             const result = uris.map(uri => vscode.workspace.asRelativePath(uri));
             this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${tool.pattern} — ${result.length} file(s)`, success: true });
             return result.length > 0
@@ -2152,19 +2146,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleEditFile(tool: EditFileTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-            if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                const err = `Unsafe path rejected: ${tool.filepath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
+            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const rawContent = new TextDecoder().decode(bytes);
 
