@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - 'release/v*'
   workflow_dispatch:
     inputs:
       publish_marketplace:
@@ -23,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v5
         with:
@@ -36,10 +40,43 @@ jobs:
       - name: Run Extension Host smoke test
         run: xvfb-run -a node tests/vscode/runTest.js
 
-      - name: Validate tag matches package version
+      - name: Resolve and validate release tag
+        id: release
         if: github.event_name == 'push'
+        shell: bash
         run: |
-          node -e "const v=require('./package.json').version; const expected='v'+v; if (process.env.GITHUB_REF_NAME!==expected) { console.error('Tag '+process.env.GITHUB_REF_NAME+' must match '+expected); process.exit(1); }"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          elif [[ "$GITHUB_REF_NAME" == release/v* ]]; then
+            tag="${GITHUB_REF_NAME#release/}"
+          else
+            echo "Unsupported release ref: $GITHUB_REF"
+            exit 1
+          fi
+          expected="v$(node -p "require('./package.json').version")"
+          if [[ "$tag" != "$expected" ]]; then
+            echo "Release ref $tag must match package version $expected"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag from validated release branch
+        if: startsWith(github.ref, 'refs/heads/release/v')
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git fetch --tags --force
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            existing="$(git rev-list -n 1 "$TAG")"
+            if [[ "$existing" != "$GITHUB_SHA" ]]; then
+              echo "Existing tag $TAG points to $existing, expected $GITHUB_SHA"
+              exit 1
+            fi
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
 
       - name: Package VSIX
         run: npx --yes @vscode/vsce package --out codico.vsix
@@ -51,11 +88,18 @@ jobs:
           name: codico-vsix
           path: codico.vsix
 
-      - name: Create GitHub release
+      - name: Create or update GitHub release
         if: github.event_name == 'push'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" codico.vsix --generate-notes --verify-tag
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" codico.vsix --clobber
+          else
+            gh release create "$TAG" codico.vsix --target "$GITHUB_SHA" --generate-notes --verify-tag
+          fi
 
       - name: Publish to Visual Studio Marketplace
         if: github.event_name == 'workflow_dispatch' && inputs.publish_marketplace
