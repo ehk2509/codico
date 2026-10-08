@@ -32,6 +32,7 @@ import { sliceFileByLines } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
+import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -791,6 +792,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
+        const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
@@ -1095,7 +1097,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
                         ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)) {
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools, undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;

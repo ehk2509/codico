@@ -124,3 +124,76 @@ test('native-tool capability errors retry once with fenced compatibility mode', 
     true,
   );
 });
+
+
+test('OpenRouter request optimizer can transform only the provider-facing request copy', async () => {
+  let optimizedCalls = 0;
+  const optimizer = {
+    async optimize(provider, body) {
+      optimizedCalls++;
+      assert.equal(provider, 'openai');
+      assert.equal(body.model, 'test-model');
+      assert.equal(Array.isArray(body.messages), true);
+      return { ...body, acco_marker: 'optimized' };
+    },
+  };
+
+  const chunks = await withFakeServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      const parsed = JSON.parse(raw);
+      assert.equal(parsed.acco_marker, 'optimized');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n');
+      res.end('data: [DONE]\n\n');
+    });
+  }, endpoint => collect(streamOpenRouter(
+    'test-key',
+    [{ role: 'user', content: 'hello' }],
+    'test-model',
+    undefined,
+    undefined,
+    'low',
+    undefined,
+    [],
+    endpoint,
+    optimizer,
+  )));
+
+  assert.equal(optimizedCalls, 1);
+  assert.equal(chunks.some(c => c.type === 'content' && c.text === 'ok'), true);
+});
+
+test('OpenRouter request continues unchanged when optimizer fails open', async () => {
+  const optimizer = {
+    async optimize() {
+      throw new Error('ACCO unavailable');
+    },
+  };
+
+  await withFakeServer((req, res) => {
+    let raw = '';
+    req.setEncoding('utf8');
+    req.on('data', chunk => { raw += chunk; });
+    req.on('end', () => {
+      const parsed = JSON.parse(raw);
+      assert.equal(parsed.acco_marker, undefined);
+      assert.equal(parsed.model, 'test-model');
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    });
+  }, endpoint => collect(streamOpenRouter(
+    'test-key',
+    [{ role: 'user', content: 'hello' }],
+    'test-model',
+    undefined,
+    undefined,
+    'low',
+    undefined,
+    [],
+    endpoint,
+    optimizer,
+  )));
+});

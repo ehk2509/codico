@@ -1,3 +1,4 @@
+import { getAccoProviderTelemetry, AccoProviderTelemetry } from './accoProviderOptimizer';
 export interface EvaluationToolTraceEvent {
     step: number;
     tool: string;
@@ -15,6 +16,7 @@ export interface EvaluationRunMetrics {
     historyMessages: number;
     budgetExceeded: boolean;
     projectedCharsOmitted: number;
+    acco: AccoProviderTelemetry;
     trace: EvaluationToolTraceEvent[];
 }
 
@@ -46,6 +48,7 @@ export function buildEvaluationRunMetrics(
         historyMessages: input.historyMessages,
         budgetExceeded: input.budgetExceeded,
         projectedCharsOmitted: input.projectedCharsOmitted,
+        acco: getAccoProviderTelemetry(),
         trace: [...input.trace],
     };
 }

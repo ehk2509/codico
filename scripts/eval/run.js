@@ -292,6 +292,10 @@ async function main() {
     medianTokensSuccessful: median(passed.map(r => r.metrics?.totalTokens || 0).filter(Boolean)),
     medianStepsSuccessful: median(passed.map(r => r.metrics?.steps || 0).filter(Boolean)),
     medianToolCallsSuccessful: median(passed.map(r => r.metrics?.toolCalls || 0).filter(Boolean)),
+    accoAttempts: valid.reduce((n, r) => n + (r.metrics?.acco?.attempts || 0), 0),
+    accoChanged: valid.reduce((n, r) => n + (r.metrics?.acco?.changed || 0), 0),
+    accoFailOpen: valid.reduce((n, r) => n + (r.metrics?.acco?.failOpen || 0), 0),
+    accoCharsSaved: valid.reduce((n, r) => n + (r.metrics?.acco?.charsSaved || 0), 0),
     maxTotalTokens,
     timeoutMinutes,
     generatedAt: new Date().toISOString(),
@@ -299,7 +303,7 @@ async function main() {
 
   fs.writeFileSync(path.join(resultDir, 'summary.json'), JSON.stringify(summary, null, 2));
   const rows = results.map(r =>
-    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.invalidVerifier ? 'INVALID' : (r.metrics && r.withinTokenBudget === false ? 'OVER_BUDGET' : (r.success ? 'PASS' : 'FAIL'))} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.changedFiles.length} |`
+    `| ${r.taskId}${repetitions > 1 ? ` r${r.repetition}` : ''} | ${r.category} | ${r.invalidVerifier ? 'INVALID' : (r.metrics && r.withinTokenBudget === false ? 'OVER_BUDGET' : (r.success ? 'PASS' : 'FAIL'))} | ${r.metrics?.steps ?? '-'} | ${r.metrics?.toolCalls ?? '-'} | ${r.metrics?.totalTokens ?? '-'} | ${r.metrics?.projectedCharsOmitted ?? '-'} | ${r.metrics?.acco?.changed ?? '-'} / ${r.metrics?.acco?.attempts ?? '-'} | ${r.metrics?.acco?.charsSaved ?? '-'} | ${r.metrics?.acco?.failOpen ?? '-'} | ${r.changedFiles.length} |`
   );
   const markdown = [
     `# Codico coding holdout — ${suite.suiteVersion}`,
@@ -310,9 +314,12 @@ async function main() {
     `Token ceiling: **${maxTotalTokens > 0 ? maxTotalTokens.toLocaleString() : 'none'}**`,
     `Over-budget valid tasks: **${overBudget.length}**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,
+    `ACCO changed requests: **${summary.accoChanged}/${summary.accoAttempts}**`,
+    `ACCO provider JSON chars saved: **${summary.accoCharsSaved.toLocaleString()}**`,
+    `ACCO fail-open requests: **${summary.accoFailOpen}**`,
     '',
-    '| Task | Category | Result | Steps | Tool calls | Tokens | Context chars omitted | Files changed |',
-    '|---|---|---:|---:|---:|---:|---:|---:|',
+    '| Task | Category | Result | Steps | Tool calls | Tokens | Context chars omitted | ACCO changed/attempts | ACCO chars saved | ACCO fail-open | Files changed |',
+    '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
     ...rows,
     '',
   ].join('\n');
