@@ -1,38 +1,27 @@
 /**
- * .copilotignore — file exclusion rules
+ * Workspace ignore rules.
  *
- * Reads `.copilotignore` from the workspace root (same gitignore-style syntax).
- * Exposes `shouldIgnore(relativePath)` used by:
- *   - WorkspaceIndex (skip ignored files during indexing)
- *   - agentProvider._buildContextPreamble (skip open tabs)
- *   - inlineCompletionProvider (skip ignored documents)
+ * .codicoignore is the Codico security boundary for agent-visible files.
+ * .copilotignore remains supported as a compatibility source. Rules are loaded
+ * per workspace folder so multi-root workspaces do not share exclusions.
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
 
-// ── Minimal gitignore-style pattern matcher ───────────────────────────────────
-
 interface CompiledRule {
     negate: boolean;
-    /** If set, only match at root of workspace (pattern started with /) */
     anchored: boolean;
-    /** Regex compiled from the glob pattern. */
     re: RegExp;
 }
 
 function _globToRegex(glob: string): RegExp {
-    // Escape regex specials except * and ?
-    let s = glob.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-    // **  →  match any path segment sequence
+    let s = glob.replace(/[.+^$\{\}()|[\]\\]/g, '\\$&');
     s = s.replace(/\*\*/g, '\x00');
-    // *   →  match within a single segment
     s = s.replace(/\*/g, '[^/]*');
-    // ?   →  match single char except /
     s = s.replace(/\?/g, '[^/]');
-    // restore **: **/  (followed by /) → optional path prefix; bare ** → any sequence
     s = s.replace(/\x00\//g, '(?:.+/)?').replace(/\x00/g, '.*');
-    return new RegExp(`^${s}$`, 'i');
+    return new RegExp('^' + s + '$', 'i');
 }
 
 function _compile(raw: string): CompiledRule | null {
@@ -41,66 +30,64 @@ function _compile(raw: string): CompiledRule | null {
 
     const negate = line.startsWith('!');
     if (negate) { line = line.slice(1); }
-
-    // Trailing slash → match directories; for our purposes treat same as file
     if (line.endsWith('/')) { line = line.slice(0, -1); }
 
     const anchored = line.startsWith('/');
     if (anchored) { line = line.slice(1); }
 
-    // If not anchored, prepend **/ so the pattern matches anywhere in the path.
-    // If anchored, also match any entry under that path (e.g. /dist matches dist/bundle.js).
     let re: RegExp;
     if (anchored) {
         const base = _globToRegex(line);
-        // Replace the trailing $ anchor with an optional trailing path so /dist also
-        // matches dist/sub/file — same semantics as gitignore directory patterns.
         re = new RegExp(base.source.replace(/\$$/, '(?:\\/.*)?$'), 'i');
     } else {
-        re = _globToRegex(`**/${line}`);
+        re = _globToRegex('**/' + line);
     }
     return { negate, anchored, re };
 }
 
-// ── IgnoreRules ───────────────────────────────────────────────────────────────
-
 export class IgnoreRules {
-    private _rules: CompiledRule[] = [];
-    private _loaded = false;
+    private readonly _rulesByFolder = new Map<string, CompiledRule[]>();
+    private readonly _loadedFolders = new Set<string>();
 
-    /** Load (or reload) rules from `.copilotignore` in the workspace root. */
-    async load(): Promise<void> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) { return; }
+    private _key(folder: vscode.WorkspaceFolder): string {
+        return folder.uri.toString();
+    }
 
-        const uri = vscode.Uri.joinPath(folders[0].uri, '.copilotignore');
+    private async _readRules(folder: vscode.WorkspaceFolder, filename: string): Promise<CompiledRule[]> {
         try {
-            const bytes = await vscode.workspace.fs.readFile(uri);
-            const text  = new TextDecoder().decode(bytes);
-            this._rules = text
+            const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folder.uri, filename));
+            return new TextDecoder().decode(bytes)
                 .split(/\r?\n/)
                 .map(_compile)
-                .filter((r): r is CompiledRule => r !== null);
-            this._loaded = true;
+                .filter((rule): rule is CompiledRule => rule !== null);
         } catch {
-            // File doesn't exist → no rules
-            this._rules = [];
-            this._loaded = true;
+            return [];
         }
     }
 
-    /**
-     * Returns true if the given workspace-relative path should be excluded.
-     * @param relativePath forward-slash-separated path relative to workspace root
-     */
-    shouldIgnore(relativePath: string): boolean {
-        if (!this._loaded || this._rules.length === 0) { return false; }
+    async load(folder?: vscode.WorkspaceFolder): Promise<void> {
+        const folders = folder ? [folder] : (vscode.workspace.workspaceFolders ?? []);
+        for (const current of folders) {
+            const legacy = await this._readRules(current, '.copilotignore');
+            const codico = await this._readRules(current, '.codicoignore');
+            this._rulesByFolder.set(this._key(current), [...legacy, ...codico]);
+            this._loadedFolders.add(this._key(current));
+        }
+    }
 
-        // Normalise separators
-        const rel = relativePath.split(path.sep).join('/');
+    async ensureLoaded(folder: vscode.WorkspaceFolder): Promise<void> {
+        if (!this._loadedFolders.has(this._key(folder))) {
+            await this.load(folder);
+        }
+    }
+
+    shouldIgnore(relativePath: string, folder?: vscode.WorkspaceFolder): boolean {
+        const current = folder ?? vscode.workspace.workspaceFolders?.[0];
+        if (!current) { return false; }
+        const rules = this._rulesByFolder.get(this._key(current)) ?? [];
+        const rel = relativePath.split(path.sep).join('/').replace(/^\.\//, '');
         let ignored = false;
-
-        for (const rule of this._rules) {
+        for (const rule of rules) {
             if (rule.re.test(rel)) {
                 ignored = !rule.negate;
             }
@@ -108,23 +95,26 @@ export class IgnoreRules {
         return ignored;
     }
 
-    get isLoaded(): boolean { return this._loaded; }
-}
+    isLoadedFor(folder: vscode.WorkspaceFolder): boolean {
+        return this._loadedFolders.has(this._key(folder));
+    }
 
-// ── Singleton used across providers ──────────────────────────────────────────
+    get isLoaded(): boolean {
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        return folders.length > 0 && folders.every(folder => this.isLoadedFor(folder));
+    }
+}
 
 export const ignoreRules = new IgnoreRules();
 
-/**
- * Watch `.copilotignore` for changes and reload automatically.
- */
 export function watchIgnoreFile(context: vscode.ExtensionContext): void {
-    // Initial load
     void ignoreRules.load();
 
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.copilotignore');
-    watcher.onDidChange(() => void ignoreRules.load());
-    watcher.onDidCreate(() => void ignoreRules.load());
-    watcher.onDidDelete(() => void ignoreRules.load());
-    context.subscriptions.push(watcher);
+    for (const pattern of ['**/.codicoignore', '**/.copilotignore']) {
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        watcher.onDidChange(() => void ignoreRules.load());
+        watcher.onDidCreate(() => void ignoreRules.load());
+        watcher.onDidDelete(() => void ignoreRules.load());
+        context.subscriptions.push(watcher);
+    }
 }
