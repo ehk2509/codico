@@ -73,6 +73,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _pendingWritePermissions = new Map<string, (result: { granted: boolean; editedContent?: string }) => void>();
     /** Resolves the pending step checkpoint: true = keep going, false = stop. */
     private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
+    /** Messages sent while the previous turn was still finishing; run in order once free. */
+    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean }> = [];
     /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
     private readonly _bgProcesses = new Map<number, { command: string; startedAt: number }>();
     private _bgPollTimer: ReturnType<typeof setInterval> | undefined;
@@ -262,6 +264,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             try {
             switch (msg.type) {
                 case 'sendMessage':
+                    if (this._busy) {
+                        // The previous turn has ended in the panel but is still finishing
+                        // (saving history, compacting…). Keep the message — typically a queued
+                        // follow-up — and run it as soon as the agent is free.
+                        this._pendingUserMessages.push({
+                            text: msg.text,
+                            contentParts: msg.contentParts as MessageContentPart[] | undefined,
+                            injectActiveDiagnostics: msg.injectActiveDiagnostics,
+                        });
+                        break;
+                    }
                     await this._handleUserMessage(msg.text, msg.contentParts as MessageContentPart[] | undefined, msg.injectActiveDiagnostics);
                     break;
                 case 'clearChat':
@@ -302,6 +315,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     break;
                 case 'abortStream':
                     this._abortController?.abort();
+                    // A message waiting for the previous turn to finish is cancelled too; the
+                    // panel already shows it as running, so end that state explicitly.
+                    if (this._pendingUserMessages.length > 0) {
+                        this._pendingUserMessages.length = 0;
+                        this._post({ type: 'endMessage', id: '' });
+                    }
                     // Resolve all pending permission dialogs as denied so their Promises unblock
                     for (const resolve of this._pendingWritePermissions.values()) { resolve({ granted: false }); }
                     this._pendingWritePermissions.clear();
@@ -519,7 +538,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     try {
                         await this._compactHistory(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
                     } finally {
-                        this._busy = false;
+                        this._releaseBusy();
                     }
                     break;
                 }
@@ -534,8 +553,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // Prevent unhandled promise rejections from silently killing the handler.
                 // If _busy was set before the error escaped, clear it so the UI isn't locked.
                 if (this._busy) {
-                    this._busy = false;
                     this._post({ type: 'endMessage', id: '' });
+                    this._releaseBusy();
                 }
                 const message = err instanceof Error ? err.message : String(err);
                 this._post({ type: 'error', message });
@@ -1384,13 +1403,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const elapsed = Date.now() - _taskStartMs;
             if (notifyEnabled && elapsed >= thresholdMs && !vscode.window.state.focused) {
                 const label = rawText.replace(/\s+/g, ' ').trim().slice(0, 60);
-                const action = await vscode.window.showInformationMessage(
+                // Not awaited: the notification can stay open indefinitely, and the agent
+                // must not stay busy (dropping queued messages) until it is dismissed.
+                void vscode.window.showInformationMessage(
                     `Codico finished: "${label}${label.length < rawText.trim().length ? '…' : ''}"`,
                     'Open Chat'
-                );
-                if (action === 'Open Chat') {
-                    await vscode.commands.executeCommand('workbench.view.extension.codico-container');
-                }
+                ).then(action => {
+                    if (action === 'Open Chat') {
+                        void vscode.commands.executeCommand('workbench.view.extension.codico-container');
+                    }
+                });
             }
         }
 
@@ -1459,8 +1481,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         } finally {
-            this._busy = false;
+            this._releaseBusy();
         }
+    }
+
+    /** Marks the agent free and runs the next message that arrived while it was busy. */
+    private _releaseBusy(): void {
+        this._busy = false;
+        const next = this._pendingUserMessages.shift();
+        if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics); }
     }
 
     private async _generateFollowUps(msgId: string, apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, signal: AbortSignal, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
