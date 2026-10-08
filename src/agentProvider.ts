@@ -1842,47 +1842,23 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleWriteFile(tool: WriteFileTool, msgId: string): Promise<string> {
-        // ── Edits Mode: queue proposal instead of writing immediately ──────────
-        if (this._editsMode) {
-            const norm = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-            if (norm.startsWith('..') || path.isAbsolute(norm)) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'write_file', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
-                return `[write_file: ${tool.filepath}] ERROR: Unsafe path rejected`;
-            }
-            let before: Uint8Array | null = null;
+        try {
+            const target = await resolveWorkspaceToolPath(tool.filepath);
+            let beforeBytes: Uint8Array | null = null;
+            let beforeText = '';
             try {
-                const folders = vscode.workspace.workspaceFolders;
-                if (folders?.length) {
-                    before = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folders[0].uri, norm));
-                }
+                beforeBytes = await vscode.workspace.fs.readFile(target.uri);
+                beforeText = new TextDecoder().decode(beforeBytes);
             } catch { /* new file */ }
-            this._editProposals.queue({ filepath: tool.filepath, originalContent: before, proposedContent: tool.content, label: `write ${tool.filepath}` });
-            this._post({ type: 'proposalQueued', filepath: tool.filepath });
-            return `[write_file: ${tool.filepath}] Queued as edit proposal`;
-        }
 
-        // ── Read existing content once (used for both diff preview and undo) ──
-        let beforeBytes: Uint8Array | null = null;
-        let beforeText = '';
-        try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (folders?.length) {
-                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-                if (!normalized.startsWith('..') && !path.isAbsolute(normalized)) {
-                    const uri = vscode.Uri.joinPath(folders[0].uri, normalized);
-                    beforeBytes = await vscode.workspace.fs.readFile(uri);
-                    beforeText = new TextDecoder().decode(beforeBytes);
-                }
+            if (this._editsMode) {
+                this._editProposals.queue({ filepath: tool.filepath, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
+                this._post({ type: 'proposalQueued', filepath: tool.filepath });
+                return `[write_file: ${tool.filepath}] Queued as edit proposal`;
             }
-        } catch { /* new file — beforeText stays '' */ }
 
-        // Pre-compute diff to show in the permission card preview
-        const diff = this._computeLineDiff(beforeText, tool.content);
-
-        let writeResult: { granted: boolean; editedContent?: string } = { granted: false };
-        let errorMsg: string | undefined;
-
-        try {
+            const diff = this._computeLineDiff(beforeText, tool.content);
+            let writeResult: { granted: boolean; editedContent?: string };
             if (this._allowAllWrites) {
                 writeResult = { granted: true };
             } else {
@@ -1892,25 +1868,28 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'writePermissionRequest', id: msgId, permId, filepath: tool.filepath, preview: '', diff, editableContent: tool.content });
                 });
             }
-            if (writeResult.granted) {
-                const contentToWrite = writeResult.editedContent ?? tool.content;
-                const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, writeResult.editedContent) : diff;
-                await this._fileManager.writeFile(tool.filepath, contentToWrite);
 
-                const after = new TextEncoder().encode(contentToWrite);
-                this._undoRedo.push({ filepath: tool.filepath, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
-                this._filesWrittenThisTurn++;
-                const lineCount = contentToWrite.split('\n').length;
-                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
+            if (!writeResult.granted) {
+                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false });
+                return `[write_file: ${tool.filepath}] Denied by user`;
             }
-        } catch (err: unknown) {
-            errorMsg = err instanceof Error ? err.message : String(err);
-        }
 
-        this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
-        return `[write_file: ${tool.filepath}] ${errorMsg ? `Error: ${errorMsg}` : 'Denied by user'}`;
+            const contentToWrite = writeResult.editedContent ?? tool.content;
+            const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, contentToWrite) : diff;
+            await this._fileManager.writeFile(tool.filepath, contentToWrite);
+
+            const after = new TextEncoder().encode(contentToWrite);
+            this._undoRedo.push({ filepath: tool.filepath, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
+            this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
+            this._filesWrittenThisTurn++;
+            const lineCount = contentToWrite.split('\n').length;
+            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
+        } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
+            return `[write_file: ${tool.filepath}] Error: ${errorMsg}`;
+        }
     }
 
     private async _handleReadFile(tool: ReadFileTool, msgId: string): Promise<string> {
