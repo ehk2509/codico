@@ -686,7 +686,7 @@ npx @vscode/vsce package --out codico.vsix
 
 ### Releases
 
-- **0.2.0** is the current minor release line, covering reliability/holdout hardening, optional ACCO provider-boundary optimization, and the new workspace/browser/terminal security boundaries.
+- **0.3.0** is the current minor release line, adding task token/cost tracking with an optional budget, untrusted handling of web/browser/MCP content, read-only Plan mode with reliable approval, and a bundled extension that activates much faster. See CHANGELOG.md for details.
 - Push a tag matching the package version (for example `v0.2.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
 - Maintainers can also create a `release/vX.Y.Z` branch at the validated release commit. The workflow validates the package version, creates the matching tag, packages the VSIX, and creates/updates the GitHub Release.
 - Release-branch runs create the validated Git tag and GitHub Release from the exact release commit.
