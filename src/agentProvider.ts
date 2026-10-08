@@ -33,6 +33,7 @@ import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
+import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -1914,28 +1915,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleReadFile(tool: ReadFileTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: err });
-                return `[read_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            // Trim whitespace and normalise to posix separators
-            let fp = tool.filepath.trim().replace(/\\/g, '/');
-            // Strip leading workspace-root prefix that models sometimes emit (e.g. "/src/foo.ts")
-            const wsRoot = folders[0].uri.fsPath.replace(/\\/g, '/').replace(/\/$/, '');
-            if (fp.startsWith(wsRoot + '/')) {
-                fp = fp.slice(wsRoot.length + 1);
-            }
-            // Strip a leading "/" so "/src/foo.ts" becomes "src/foo.ts"
-            fp = fp.replace(/^\/+/, '');
-            const normalized = path.posix.normalize(fp || '.');
-            if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                const err = `Unsafe path rejected: ${tool.filepath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: err });
-                return `[read_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
+            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const content = new TextDecoder().decode(bytes);
             const window = sliceFileByLines(content, tool.startLine, tool.endLine);
@@ -1956,23 +1936,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleListDirectory(tool: ListDirectoryTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: false, error: err });
-                return `[list_directory: ${tool.dirpath}] ERROR: ${err}`;
-            }
-            const rawPath = tool.dirpath === '.' ? '' : tool.dirpath.replace(/\\/g, '/');
-            const normalized = rawPath ? path.posix.normalize(rawPath) : '';
-            if (normalized && (normalized.startsWith('..') || path.isAbsolute(normalized))) {
-                const err = `Unsafe path rejected: ${tool.dirpath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: false, error: err });
-                return `[list_directory: ${tool.dirpath}] ERROR: ${err}`;
-            }
-            const dirUri = normalized
-                ? vscode.Uri.joinPath(folders[0].uri, normalized)
-                : folders[0].uri;
-            const entries = await vscode.workspace.fs.readDirectory(dirUri);
+            const target = await resolveWorkspaceToolPath(tool.dirpath, true);
+            const entries = (await vscode.workspace.fs.readDirectory(target.uri))
+                .filter(([name]) => !isIgnoredDirectoryEntry(target, name));
             const lines = entries.map(([name, type]) =>
                 type === vscode.FileType.Directory ? `[dir]  ${name}/` : `[file] ${name}`
             );
