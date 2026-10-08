@@ -2553,7 +2553,9 @@
 
   function handleExtMessage(data) {
     switch (data.type) {
-      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); break;
+      // setStreaming: replies the extension starts itself (CodeLens, editor commands, /test…)
+      // must also show Stop and a working status, not only ones sent from this panel
+      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); setStreaming(true); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
