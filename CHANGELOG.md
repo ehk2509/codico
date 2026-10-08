@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.0 - 2026-10-08
 
 ### Added
 - Status bar shows the running token total for the current task and, with OpenRouter, its provider-reported cost.
@@ -14,6 +14,9 @@ All notable changes to Codico will be documented in this file.
 - After the agent reads external content in a turn, Allow All no longer auto-approves terminal commands; each is shown again with a note.
 
 ### Fixed
+- Plan mode could change code before the plan was approved: plans are now generated under Ask-mode rules enforced in code (read-only tools, no "make a code change" reminders), and nothing changes until you click Approve & Execute.
+- Plan mode's Approve & Execute button could go missing, or appear on an unrelated reply. It is now tied to the plan's own reply, and is shown only when the plan has numbered steps.
+- Plan requests sent while the agent is finishing a turn are queued instead of dropped; Ask mode no longer gets "make a code change" reminders.
 - Replies started by the extension (CodeLens, editor commands, `/test`, …) now show the Stop button and a working status.
 
 ### Changed
