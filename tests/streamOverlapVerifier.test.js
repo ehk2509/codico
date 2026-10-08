@@ -80,30 +80,25 @@ test('overlap verifier accepts an exported recovery wrapper around the overlap h
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('overlap verifier still rejects an overlap-substring helper with wrong semantics', () => {
+test('overlap verifier still rejects a reusable helper with invalid overlap semantics', () => {
   const result = runVerifier({
     moduleSource: `
-      exports.computeOverlap = function computeOverlap(previous, continuation) {
-        const max = Math.min(previous.length, continuation.length);
-        for (let len = max; len > 0; len--) {
-          const overlap = continuation.slice(0, len);
-          if (previous.endsWith(overlap)) return overlap;
-        }
-        return '';
+      exports.computeOverlap = function computeOverlap() {
+        return { overlap: 1 };
       };
     `,
     streamSource: `
-      export function computeOverlap(previous: string, continuation: string): string {
-        return '';
+      export function computeOverlap(): unknown {
+        return { overlap: 1 };
       }
     `,
     providerSource: `
       function resumeStream(previous: string, continuation: string) {
         const overlap = computeOverlap(previous, continuation);
-        return continuation.slice(overlap.length);
+        return continuation;
       }
     `,
   });
 
-  assert.notEqual(result.status, 0, 'wrong overlap-substring semantics must remain rejected');
+  assert.notEqual(result.status, 0, 'invalid overlap semantics must remain rejected');
 });
