@@ -41,6 +41,22 @@ jobs:
       - name: Run Extension Host smoke test
         run: xvfb-run -a node tests/vscode/runTest.js
 
+  live-agent:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - name: Install VS Code test harness
+        run: npm install --no-save @vscode/test-electron@2.5.2
+      - name: Run live agent scenarios against a fake model server
+        run: xvfb-run -a npm run test:live
+
 
   vsix:
     needs: [test, extension-host]

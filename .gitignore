@@ -4,3 +4,4 @@ out/
 *.zip
 *.vsix
 eval/results/
+.vscode-test/
