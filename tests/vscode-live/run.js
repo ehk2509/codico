@@ -36,7 +36,7 @@ async function main() {
       version: '1.120.0',
       extensionDevelopmentPath: root,
       extensionTestsPath: path.join(__dirname, 'suite'),
-      extensionTestsEnv: { CODICO_EVAL_MODE: '1', LIVE_PORT: String(server.address().port), LIVE_OUT: results, LIVE_ONLY: process.env.LIVE_ONLY || '' },
+      extensionTestsEnv: { CODICO_EVAL_MODE: '1', CODICO_TEST_OPENROUTER_URL: `http://127.0.0.1:${server.address().port}/api/v1/chat/completions`, LIVE_PORT: String(server.address().port), LIVE_OUT: results, LIVE_ONLY: process.env.LIVE_ONLY || '' },
       launchArgs: [ws, '--disable-extensions', '--skip-welcome', '--skip-release-notes',
         '--user-data-dir', path.join(work, 'user-data'), '--extensions-dir', path.join(work, 'extensions')],
     });

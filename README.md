@@ -665,6 +665,14 @@ npm run watch
 # Run the compile + regression suite
 npm test
 
+# Chat panel UI tests in headless Chrome (set CHROME_PATH if Chrome isn't auto-detected)
+npm run test:ui
+
+# Live agent scenarios: the real agent loop in VS Code against a local fake model server
+# (no API key, no cost; Linux/macOS)
+npm install --no-save @vscode/test-electron@2.5.2
+npm run test:live
+
 # Press F5 in VS Code to launch the Extension Development Host
 ```
 

@@ -31,6 +31,27 @@ export interface OpenRouterEndpoint {
     path?: string;
 }
 
+/**
+ * Endpoint override for automated tests only. Callers must only use this in the
+ * VS Code test Extension Host (evaluation mode): a normal install never sends
+ * the API key anywhere but openrouter.ai.
+ */
+export function testOpenRouterEndpoint(raw: string | undefined): OpenRouterEndpoint | undefined {
+    if (!raw) { return undefined; }
+    try {
+        const url = new URL(raw);
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') { return undefined; }
+        return {
+            protocol: url.protocol,
+            hostname: url.hostname,
+            port: url.port ? Number(url.port) : undefined,
+            path: url.pathname === '/' ? undefined : url.pathname,
+        };
+    } catch {
+        return undefined;
+    }
+}
+
 export const CHAT_SYSTEM_PROMPT = `You are Codico, a helpful coding assistant inside Visual Studio Code.
 
 ## Tools (read-only)

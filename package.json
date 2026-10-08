@@ -445,6 +445,7 @@
     "pretest": "npm run compile",
     "test": "node --test",
     "test:live": "node tests/vscode-live/run.js",
+    "test:ui": "node --test tests/webview-ui/panel.ui.js",
     "check": "npm test",
     "eval:coding": "node scripts/eval/run.js"
   },

@@ -30,8 +30,12 @@ const SCRIPTS = (port) => ({
   http500: [{ status: 500 }],
   verify_ok: [tool('write_file', 'filepath: live/verified.js\ncontent:\nmodule.exports = 1;'), 'Done.'],
   stuck_verify: [tool('write_file', 'filepath: live/stuck.js\ncontent:\nmodule.exports = 2;'), 'Done.'],
+  // Native tool calling (OpenRouter path): replies may be streamed tool_calls
+  native_text: ['A plain native-mode answer.'],
+  native_read: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
+  native_clarify: [{ toolCalls: [{ name: 'clarify', args: { question: 'Which database?', options: ['Postgres', 'SQLite'] } }] }],
+  native_unknown: [{ toolCalls: [{ name: 'ask_user', args: { q: 'which?' } }] }, 'Understood.'],
 });
-const LOG_FILE = path.join(process.env.LIVE_WORK_DIR || __dirname, 'requests.log');
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.text || '').join('') : '';
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -42,6 +46,8 @@ function locate(messages) {
   return { scenario: null, step: 0 };
 }
 function start(port0) {
+  // Resolved at start, after the runner has set LIVE_WORK_DIR (never inside the repo)
+  const LOG_FILE = path.join(process.env.LIVE_WORK_DIR || require('node:os').tmpdir(), 'codico-live-requests.log');
   fs.writeFileSync(LOG_FILE, '');
   let port;
   const log = [];
@@ -54,7 +60,9 @@ function start(port0) {
       const messages = json.messages || [];
       const { scenario, step } = locate(messages);
       const lastUser = textOf((messages.filter(m => m.role === 'user').pop() || {}).content);
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000) };
+      const last = messages[messages.length - 1] || {};
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
+        native: Array.isArray(json.tools) && json.tools.length > 0, lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
       log.push(rec);
       fs.appendFileSync(LOG_FILE, JSON.stringify({ ...rec, lastUser: rec.lastUser.slice(0, 300) }) + '\n');
       if (json.stream === false) {
@@ -68,6 +76,19 @@ function start(port0) {
       const reply = typeof entry === 'string' ? { text: entry, finish: 'stop' } : entry;
       if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); return res.end('{"error":"simulated provider failure"}'); }
       res.writeHead(200, { 'content-type': 'text/event-stream' });
+      if (reply.toolCalls) {
+        // OpenAI/OpenRouter streaming format: name first, then arguments in fragments
+        reply.toolCalls.forEach((call, index) => {
+          const id = `call_${scenario}_${step}_${index}`;
+          res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, id, type: 'function', function: { name: call.name, arguments: '' } }] }, finish_reason: null }] }) + '\n\n');
+          for (const part of JSON.stringify(call.args).match(/[\s\S]{1,8}/g)) {
+            res.write('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{ index, function: { arguments: part } }] }, finish_reason: null }] }) + '\n\n');
+          }
+        });
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }) + '\n\n');
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
       const chunks = (reply.text || '').match(/[\s\S]{1,12}/g) || [''];
       let i = 0;
       const tick = () => {
