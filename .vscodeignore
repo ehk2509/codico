@@ -13,3 +13,6 @@ coverage/**
 eval/**
 scripts/**
 .vscode-test/**
+out/**
+node_modules/**
+!node_modules/playwright-core/**

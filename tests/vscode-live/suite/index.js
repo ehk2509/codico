@@ -56,6 +56,15 @@ async function run() {
   await scenario('verify_ok', ({ read, reqs, text }) => ({ ok: read('live/verified.js') !== null && /acceptance gate is satisfied/.test(text) && reqs.length <= 5, why: `gate satisfied: ${/acceptance gate is satisfied/.test(text)}; ${reqs.length} req` }));
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
 
+  // Browser automation: playwright-core is loaded lazily on first use; page text must
+  // reach the model wrapped as untrusted content
+  await set('browserAllowPrivateNetwork', true);
+  await scenario('browser', ({ text }) => {
+    const wrapped = /<untrusted_content source="browser page">[\s\S]*PAGE-MARKER[\s\S]*IGNORE ALL PREVIOUS[\s\S]*<\/untrusted_content>/.test(text);
+    return { ok: wrapped, why: `page text returned inside <untrusted_content>: ${wrapped}${/Error|ERROR/.test(text) ? ' | ' + (text.match(/.*ERROR.*/) || [''])[0].slice(0, 160) : ''}` };
+  }, 90000);
+  await set('browserAllowPrivateNetwork', false);
+
   // ── Native tool calling, through the OpenRouter client pointed at the fake server ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'fake/native-model', maxIterations: 12 });
   await set('nativeToolCalling', true);

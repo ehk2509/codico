@@ -5,3 +5,4 @@ out/
 *.vsix
 eval/results/
 .vscode-test/
+dist/
