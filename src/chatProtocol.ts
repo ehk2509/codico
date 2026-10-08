@@ -80,7 +80,7 @@ export type WebviewMessage =
     | { type: 'toggleChatMode'; chatMode: boolean };
 
 export type ExtensionMessage =
-    | { type: 'startMessage'; id: string }
+    | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string }
     | { type: 'appendThinking'; id: string; text: string }
     | { type: 'appendContent'; id: string; text: string }
     | { type: 'endMessage'; id: string }
@@ -92,7 +92,6 @@ export type ExtensionMessage =
     | { type: 'streamError'; id: string; message: string }
     | { type: 'contextSnippet'; kind: string; label: string; text: string }
     | { type: 'reviewReady'; label: string; error: string | undefined }
-    | { type: 'planReady'; goal: string; error: string | undefined }
     | { type: 'browserScreenshot'; id: string; dataUrl: string; url: string }
     | { type: 'setEffort'; effort: 'high' | 'medium' | 'low' }
     | { type: 'error'; message: string }
