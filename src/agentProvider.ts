@@ -17,7 +17,7 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, NativeToolCall } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -1123,13 +1123,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             ...chunk.call,
                             id: chunk.call.id ?? `codico_${nodeCrypto.randomBytes(8).toString('hex')}`,
                         };
+                        // A native `clarify` call becomes the <clarify> block the panel renders.
+                        // It is not recorded as a tool call: the turn ends waiting for the user.
+                        const clarifyBlock = nativeClarifyBlock(call);
+                        if (clarifyBlock) {
+                            await processContent(`${fullContent.trim() ? '\n\n' : ''}${clarifyBlock}\n`);
+                            continue;
+                        }
                         const tool = nativeToolCallToToolCall(call);
                         if (!tool) {
-                            this._post({
-                                type: 'streamError',
-                                id: msgId,
-                                message: `Provider returned invalid arguments for native tool ${call.name}.`,
-                            });
+                            // Unknown tool or unusable arguments: return the error as the tool
+                            // result so the model can correct the call and the turn continues.
+                            const result = invalidNativeCallResult(call);
+                            nativeToolExecutions.push({ call, result });
+                            inlineToolResults.push(result);
                             continue;
                         }
                         const dispatched = await dispatchToolCall(tool);
@@ -1290,6 +1297,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 streamRecoveryAttempts = 0;
                 if (inlineToolResults.length === 0) {
+                    // A clarifying question ends the turn: wait for the user's answer
+                    if (/<clarify>[\s\S]*?<\/clarify>/.test(fullContent)) { break; }
                     const verificationGuidance = exploration.completionGuidance();
                     if (verificationGuidance) {
                         verificationNudges++;
