@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="media/logo.png" width="180" alt="Codico logo" />
+  <img src="https://raw.githubusercontent.com/ehk2509/codico/main/media/logo.png" width="180" alt="Codico logo" />
 </p>
 
 <h1 align="center">Codico</h1>
@@ -57,6 +57,13 @@ The integration is deliberately fail-open: if ACCO is unavailable, times out, or
 declines a transform, Codico sends the original request unchanged. Non-loopback
 ACCO URLs are rejected. The first integration targets the benchmarked OpenRouter
 path; direct-provider and Ollama requests are unchanged.
+
+A paired frozen holdout on the `stream-resume-overlap` task kept the same success
+rate with ACCO enabled and disabled (**5/6 in both conditions**), while median
+successful-run provider tokens dropped from **1,362,844** to **672,686** in that
+experiment. Treat this as task-specific evidence rather than a universal savings
+claim; the integration also reports attempts, changed requests, fail-open counts,
+provider JSON input/output characters, characters saved, and optimization latency.
 
 ---
 
@@ -599,7 +606,7 @@ codico/
 │   ├── undoRedoStack.ts             # AI change undo/redo history
 │   ├── editProposalManager.ts       # Edits Mode diff queue
 │   ├── symbolProvider.ts            # LSP symbol context builder
-│   └── ignoreRules.ts               # .copilotignore watcher
+│   └── ignoreRules.ts               # Per-root .codicoignore + legacy .copilotignore policy
 ├── tests/                           # node:test regression + architecture/holdout integrity tests
 ├── eval/                            # Frozen historical coding holdout + VS Code benchmark driver
 ├── scripts/eval/run.js              # Worktree runner, hidden verifier injection, scorecard output
@@ -623,14 +630,16 @@ codico/
 
 ## Security
 
-- **Path traversal prevention** — all file paths are normalized and checked to stay inside the workspace root before any read or write
+- **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics
+- **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
+- **Terminal secret scrubbing** — approved shell commands inherit only an execution/toolchain allowlist (PATH, HOME, Java/Go/Python/Node toolchain roots, temp/system paths, locale), not arbitrary VS Code process secrets
 - **Secret storage** — all API keys (OpenRouter, direct providers, GitHub token) are stored in VS Code's encrypted `SecretStorage`, never in plain `settings.json`
 - **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; the extracted webview module is loaded only through a VS Code `asWebviewUri` resource
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers, pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
-- **Browser network boundary** — browser automation validates every HTTP(S) navigation, redirect, and subresource against the same public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
+- **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, and subresource against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text
 - **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
@@ -666,7 +675,9 @@ npx @vscode/vsce package --out codico.vsix
 
 ### Releases
 
-- Codico is versioned as `0.1.0` for the first release candidate.
-- Push a tag matching the package version (for example `v0.1.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
-- Manual workflow dispatch can also publish the validated VSIX to the Visual Studio Marketplace (`VSCE_PAT`) and/or Open VSX (`OVSX_PAT`).
-- Tag releases fail if the Git tag does not exactly match `package.json#version`.
+- **0.2.0** is the current minor release line, covering reliability/holdout hardening, optional ACCO provider-boundary optimization, and the new workspace/browser/terminal security boundaries.
+- Push a tag matching the package version (for example `v0.2.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
+- Maintainers can also create a `release/vX.Y.Z` branch at the validated release commit. The workflow validates the package version, creates the matching tag, packages the VSIX, and creates/updates the GitHub Release.
+- Release-branch runs publish to the Visual Studio Marketplace and Open VSX when their repository secrets are configured; otherwise those publication steps are skipped with a warning.
+- Manual workflow dispatch remains available for explicit Marketplace/Open VSX publication.
+- Release automation rejects a version/ref mismatch instead of publishing an ambiguously versioned package.
