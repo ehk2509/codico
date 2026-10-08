@@ -169,7 +169,7 @@
   var curThinkIdx  = 0;    // per-message counter → unique block IDs
   var msgContents = {}; // id -> final plain text content
   var ctxAttachments = []; // { kind, label, text }
-  var _pendingPlanGoal = null; // set when a planReady message arrives
+  var _planGoals = {}; // msgId -> plan goal, for replies the extension marked as plans
   var _allowAllWrites   = false; // set by "Allow All" on a write-perm card; reset each user turn
   var _allowAllTerminal = false; // set by "Allow All" on a terminal-perm card; reset each user turn
   var _pendingContinueAfterCompact = false; // set when Continue is clicked after context overflow
@@ -1511,11 +1511,12 @@
       }
     }
 
-    // If this message was a plan response, inject checklist + approval buttons
-    if (_pendingPlanGoal !== null) {
-      var planGoal = _pendingPlanGoal;
+    // If this message is a plan (marked by the extension on startMessage), inject the
+    // checklist and approval buttons. Keyed by message id so no other reply can take them.
+    var planGoal = _planGoals[id];
+    delete _planGoals[id];
+    if (planGoal) {
       var planContent = savedContent;
-      _pendingPlanGoal = null;
 
       // Parse numbered steps
       _planTasks = [];
@@ -1526,7 +1527,13 @@
       }
 
       var wrap = document.getElementById('msg-' + id);
-      if (wrap) {
+      if (wrap && _planTasks.length === 0) {
+        // No numbered steps (failed or empty reply): there is nothing to approve
+        var noPlan = document.createElement('div');
+        noPlan.className = 'stream-stop-notice warn';
+        noPlan.textContent = '\u26A0 No plan steps were produced, so there is nothing to approve. Rephrase the goal or try again.';
+        wrap.appendChild(noPlan);
+      } else if (wrap) {
         // Render checklist preview
         if (_planTasks.length > 0) {
           var checklist = document.createElement('div');
@@ -2555,7 +2562,7 @@
     switch (data.type) {
       // setStreaming: replies the extension starts itself (CodeLens, editor commands, /test…)
       // must also show Stop and a working status, not only ones sent from this panel
-      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); setStreaming(true); break;
+      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); if (data.planGoal) { _planGoals[data.id] = data.planGoal; } startMsg(data.id); setStreaming(true); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
@@ -2588,14 +2595,6 @@
           appendUserMsg('\uD83D\uDD0D Code Review: ' + data.label, []);
           setStreaming(true);
         }
-        break;
-      case 'planReady':
-        if (data.error) {
-          showError(data.error);
-        }
-        // Plan content streams in via normal appendContent/endMessage.
-        // After endMessage we inject approval buttons — handled via a flag.
-        _pendingPlanGoal = data.goal;
         break;
       case 'tokenUsage':
         if (sTokens) {

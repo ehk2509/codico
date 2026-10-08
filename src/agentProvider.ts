@@ -58,6 +58,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private readonly _editProposals = new EditProposalManager();
     private _editsMode = false;
     private _chatMode = false;
+    /** Goal of the plan being generated; planning runs under Ask-mode (read-only) rules. */
+    private _planGoal: string | null = null;
+    private get _readOnly(): boolean { return this._chatMode || this._planGoal !== null; }
     private _mcpReady = false;
     private _watchersCreated = false;
     private readonly _workspaceIndex: WorkspaceIndex;
@@ -76,7 +79,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Resolves the pending step checkpoint: true = keep going, false = stop. */
     private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
     /** Messages sent while the previous turn was still finishing; run in order once free. */
-    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean }> = [];
+    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; planGoal?: string }> = [];
     /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
     private readonly _bgProcesses = new Map<number, { command: string; startedAt: number }>();
     private _bgPollTimer: ReturnType<typeof setInterval> | undefined;
@@ -665,13 +668,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         });
     }
 
-    public async runEvaluationTask(text: string): Promise<EvaluationRunMetrics> {
+    /** @param asPlan run the text as a Plan-mode goal (read-only, awaits approval) instead of a message */
+    public async runEvaluationTask(text: string, asPlan = false): Promise<EvaluationRunMetrics> {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         this._evalSteps = this._evalToolCalls = this._evalPromptTokens = this._evalCompletionTokens = 0;
         this._evalBudgetExceeded = false; this._evalProjectedCharsOmitted = 0; this._evalTrace = [];
         this._evalTaskStartedAt = Date.now();
         await vscode.commands.executeCommand('workbench.view.extension.codico-container');
-        await this._handleUserMessage(text);
+        await (asPlan ? this._handlePlan(text) : this._handleUserMessage(text));
         return this.getEvaluationSnapshot();
     }
 
@@ -894,7 +898,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         });
 
         const msgId = Date.now().toString();
-        this._post({ type: 'startMessage', id: msgId });
+        // planGoal marks this reply as a plan: the panel offers Approve only on it
+        this._post({ type: 'startMessage', id: msgId, planGoal: this._planGoal ?? undefined });
         this._recording = { msgId, events: [], size: 0, truncated: false };
 
         this._abortController = new AbortController();
@@ -916,7 +921,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
         let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
-            ? getNativeToolDefinitions(this._chatMode)
+            ? getNativeToolDefinitions(this._readOnly)
             : [];
 
         // Circuit breaker: track how many times each unique tool call has been issued
@@ -924,7 +929,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // inject a hard nudge into history and stop the current iteration.
         const _toolCallCounts = new Map<string, number>();
         const MAX_IDENTICAL_CALLS = 3;
-        const exploration = new ExplorationController(rawText, maxIterations);
+        // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
+        const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
         try {
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
                 if (signal.aborted) { break; }
@@ -981,7 +987,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         return { keepGoing: false, result: nudge };
                     }
 
-                    const explorationCheck = exploration.before(tool, this._chatMode);
+                    const explorationCheck = exploration.before(tool, this._readOnly);
                     if (explorationCheck.block) {
                         if (this._evaluationMode) {
                             this._evalTrace.push({
@@ -1113,7 +1119,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const systemPromptOverride = exploration.systemPrompt(this._chatMode);
+                const systemPromptOverride = exploration.systemPrompt(this._readOnly);
                 const projectedHistory = projectHistoryForModel(this._history);
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
@@ -1520,7 +1526,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _releaseBusy(): void {
         this._busy = false;
         const next = this._pendingUserMessages.shift();
-        if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics); }
+        if (next?.planGoal !== undefined) { void this._handlePlan(next.planGoal); }
+        else if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics); }
     }
 
     private async _generateFollowUps(msgId: string, apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, signal: AbortSignal, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
@@ -1698,7 +1705,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
-        if (this._chatMode) {
+        if (this._readOnly) {
             const writeTools = new Set(['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call']);
             if (writeTools.has(tool.type)) {
                 this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: tool.type, success: false, error: 'Not available in Ask mode' });
@@ -2510,9 +2517,19 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
 
     private async _handlePlan(goal: string): Promise<void> {
         if (!this._view) { return; }
-        this._post({ type: 'planReady', goal, error: undefined });
-        const planMessage = AgentProvider.PLAN_PROMPT + goal;
-        await this._handleUserMessage(planMessage);
+        if (this._busy) {
+            // The previous turn is still finishing: run the plan once the agent is free
+            this._pendingUserMessages.push({ text: goal, planGoal: goal });
+            return;
+        }
+        // The plan is generated with read-only tools (enforced in code, not just asked of the
+        // model); changes are only made after the user approves it.
+        this._planGoal = goal;
+        try {
+            await this._handleUserMessage(AgentProvider.PLAN_PROMPT + goal);
+        } finally {
+            this._planGoal = null;
+        }
     }
 
     private async _handleReview(target: 'file' | 'selection'): Promise<void> {

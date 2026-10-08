@@ -210,3 +210,53 @@ test('wide file previews never make the panel scroll sideways', async () => {
   assert.ok(m.btnRight <= m.viewport, `Allow All off-screen at x=${m.btnRight}`);
   await page.close();
 });
+
+const PLAN = '1. Inspect the listings page\n2. Write the scraper\n\n## Files Affected\n- scraper.js\n\n> Approve the plan to begin execution.';
+
+async function requestPlan(page, goal) {
+  await page.click('#mode-plan-btn');
+  await page.fill('#msg-input', goal);
+  await page.click('#send-btn');
+}
+
+test('Plan mode: the plan reply gets Approve, and approving sends the execution request', async () => {
+  const { page, send, posted } = await openPanel();
+  await requestPlan(page, 'Build a scraper');
+  assert.equal((await posted('startPlan')).length, 1);
+  assert.equal((await posted('sendMessage')).length, 0, 'nothing executes before approval');
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'Build a scraper' }, { type: 'appendContent', id: 'p1', text: PLAN }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
+  await page.locator('#msg-p1 .plan-approve-btn').click();
+  const approvals = await posted('approvePlan');
+  assert.equal(approvals.length, 1);
+  assert.match(approvals[0].executionPrompt, /Original goal: Build a scraper/);
+  assert.match(approvals[0].executionPrompt, /Write the scraper/);
+  await page.close();
+});
+
+test('Plan mode: a stray end-of-message event cannot take the plan\'s Approve button', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'Build a scraper');
+  await send({ type: 'endMessage', id: '' });
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'Build a scraper' }, { type: 'appendContent', id: 'p1', text: PLAN }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
+  await page.close();
+});
+
+test('Plan mode: an ordinary reply never gets an Approve button', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'Build a scraper');
+  // the plan request failed before any reply (e.g. missing API key); the next reply is unrelated
+  await send({ type: 'startMessage', id: 'm2' }, { type: 'appendContent', id: 'm2', text: '1. Not a plan\n2. Just a list' }, { type: 'endMessage', id: 'm2' });
+  assert.equal(await page.locator('.plan-approve-btn').count(), 0);
+  await page.close();
+});
+
+test('Plan mode: a plan reply without steps offers nothing to approve', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'Build a scraper');
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'Build a scraper' }, { type: 'streamError', id: 'p1', message: 'provider failed' }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('.plan-approve-btn').count(), 0);
+  assert.match(await page.locator('#msg-p1').innerText(), /No plan steps were produced/);
+  await page.close();
+});

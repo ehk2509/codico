@@ -304,7 +304,7 @@ Context chips appear as removable badges before sending.
 The toggle under the input box switches how the next message is handled:
 
 - **💬 Ask** — read-only: the agent searches and answers; file writes, edits, terminal commands, browser actions and MCP calls are blocked
-- **📋 Plan** — the agent first produces a step-by-step plan; approve it to execute (same as `/plan`)
+- **📋 Plan** — the agent first produces a step-by-step plan, then waits: nothing is changed until you click **▶ Approve & Execute** (same as `/plan`). While planning it can only read and search, enforced like Ask mode, so it can ground the plan in your code without modifying it.
 - **🤖 Agent** — fully autonomous with all tools (default)
 
 While a response is streaming, **Send** becomes **Queue →**: your next message is sent automatically when the current response finishes.

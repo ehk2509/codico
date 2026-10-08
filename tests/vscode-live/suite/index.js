@@ -15,11 +15,11 @@ async function run() {
   await vscode.commands.executeCommand('codico.openChat');
   await new Promise(r => setTimeout(r, 1500));
   const all = (reqs) => reqs.map(r => r.lastUser).join('\n=====\n');
-  const scenario = async (name, check, limitMs = 60000) => {
+  const scenario = async (name, check, limitMs = 60000, command = 'codico.__evalRunTask') => {
     const before = (await getLog()).length; const t0 = Date.now(); let error = null;
     try {
       await Promise.race([
-        vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`),
+        vscode.commands.executeCommand(command, `[SCENARIO:${name}] please do the task`),
         new Promise((_, rej) => setTimeout(() => rej(new Error(`timed out after ${limitMs / 1000} s`)), limitMs)),
       ]);
     } catch (e) { error = String(e && e.message || e); }
@@ -56,6 +56,14 @@ async function run() {
   await scenario('verify_ok', ({ read, reqs, text }) => ({ ok: read('live/verified.js') !== null && /acceptance gate is satisfied/.test(text) && reqs.length <= 5, why: `gate satisfied: ${/acceptance gate is satisfied/.test(text)}; ${reqs.length} req` }));
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
 
+  await scenario('plan_readonly', ({ reqs, text, read }) => {
+    const blocked = /Not available in Ask mode/.test(text);
+    const written = read('live/planned.js') !== null;
+    const nudged = /\[System Action\]/.test(text);
+    return { ok: blocked && !written && !nudged && reqs.length === 2,
+      why: `write blocked: ${blocked}; file written: ${written}; "make a change" nudge: ${nudged}; ${reqs.length} req` };
+  }, 60000, 'codico.__evalRunPlan');
+
   // Browser automation: playwright-core is loaded lazily on first use; page text must
   // reach the model wrapped as untrusted content
   await set('browserAllowPrivateNetwork', true);
@@ -75,6 +83,12 @@ async function run() {
     return { ok: nativeOnly(reqs) && !!result && /NOTES-MARKER/.test(result.lastText), why: `tool result returned as role=tool: ${!!result}; content: ${result ? JSON.stringify(result.lastText.slice(0, 60)) : '-'}` };
   });
   await scenario('native_clarify', ({ reqs }) => ({ ok: nativeOnly(reqs) && reqs.length === 1, why: `${reqs.length} req; a clarify call must end the turn` }));
+  await scenario('native_plan', ({ reqs }) => {
+    const names = (reqs[0] && reqs[0].toolNames) || [];
+    const writable = names.filter(n => /write_file|edit_file|run_terminal|browser_(click|type|navigate)|mcp_call/.test(n));
+    return { ok: reqs.length === 1 && names.includes('read_file') && writable.length === 0,
+      why: `${reqs.length} req; tools offered while planning: ${names.length} (write/run tools: ${writable.join(',') || 'none'})` };
+  }, 60000, 'codico.__evalRunPlan');
   await scenario('native_unknown', ({ reqs }) => {
     const result = reqs.find(r => r.lastRole === 'tool');
     const corrective = !!result && /no tool named "ask_user"/.test(result.lastText);
