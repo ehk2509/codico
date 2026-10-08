@@ -2,6 +2,31 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.2.0 - 2026-10-08
+
+### Added
+- Optional local ACCO provider-boundary optimization for OpenRouter requests, disabled by default and fail-open without changing Codico's canonical history, agent loop, mutations, or verification state.
+- ACCO evaluation telemetry for optimization attempts, changed requests, fail-open events, input/output characters, characters saved, and latency.
+- Multi-root-aware `.codicoignore` enforcement across Codico file reads, listings, searches, writes, edits, and diagnostics, with `.copilotignore` retained for compatibility.
+- Centralized workspace path/security policy shared by file tools and diagnostics.
+- Paired ACCO-on / ACCO-off frozen-holdout validation and regression coverage for provider optimization behavior.
+
+### Changed
+- Agent evidence access stays available through mutation and verification instead of being hard-blocked by exploration counters.
+- Stream-resume overlap verification now accepts correct recovery integration through exported wrappers while preserving the same behavioral overlap contract.
+- `AgentProvider` sheds duplicated workspace-path/security logic into dedicated modules and remains below the architecture budget.
+- README security, ACCO, release, and workspace-policy documentation now matches the shipped behavior.
+
+### Security
+- Browser automation now fails closed on malformed URLs and rejects non-HTTP(S) schemes such as `file:`, `data:`, `javascript:`, and `chrome:`.
+- Terminal subprocesses no longer inherit the full VS Code process environment; only execution/toolchain/system variables are passed through by default.
+- Workspace file access is centrally confined and multi-root aware.
+- The misleading no-op `FileManager.requestPermission()` API was removed.
+
+### Validation
+- Frozen paired `stream-resume-overlap` runs produced the same 5/6 success rate with ACCO enabled and disabled; in that experiment median successful-run provider tokens fell from 1,362,844 to 672,686 with ACCO enabled.
+- CI continues to cover Ubuntu, Windows, macOS, a real VS Code Extension Host, VSIX packaging, and packaged-extension smoke installation.
+
 ## 0.1.1 - 2026-10-05
 
 ### Fixed
