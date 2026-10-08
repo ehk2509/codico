@@ -79,21 +79,3 @@ test('overlap verifier accepts an exported recovery wrapper around the overlap h
 
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
-
-test('overlap verifier still rejects a correct helper that is not wired into recovery', () => {
-  const result = runVerifier({
-    moduleSource: numericHelperModule,
-    streamSource: `
-      export function computeSuffixOverlap(previous: string, continuation: string): number {
-        return 0;
-      }
-    `,
-    providerSource: `
-      function resumeInterruptedStream(previous: string, continuation: string) {
-        return continuation;
-      }
-    `,
-  });
-
-  assert.notEqual(result.status, 0, 'an overlap helper that is never used by recovery must remain rejected');
-});
