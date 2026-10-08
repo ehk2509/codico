@@ -59,8 +59,8 @@ test('v6 retains integrated resume-overlap scoring from v5', () => {
   const task = suite.tasks.find(t => t.id === 'stream-resume-overlap');
   assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.verifier.js');
   const source = fs.readFileSync(path.join(root, task.verifierPath), 'utf8');
-  assert.match(source, /callPattern/);
-  assert.match(source, /must be called by the agent resume path/);
+  assert.match(source, /integratedRecoveryCall/);
+  assert.match(source, /used directly or through an exported streamCompletion recovery helper/);
 });
 
 test('v6 retains behavior-level fingerprint and EOF verifiers', () => {
