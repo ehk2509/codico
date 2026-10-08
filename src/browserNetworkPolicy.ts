@@ -7,15 +7,17 @@ export async function assertBrowserRequestAllowed(
     allowPrivateNetwork: boolean,
     resolvePublic: PublicUrlResolver = resolvePublicHttpUrl
 ): Promise<void> {
-    if (allowPrivateNetwork) { return; }
-
     let parsed: URL;
     try {
         parsed = new URL(rawUrl);
     } catch {
-        return;
+        throw new Error('Browser navigation requires a valid HTTP or HTTPS URL');
     }
 
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') { return; }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error(`Browser navigation blocked unsupported URL scheme: ${parsed.protocol}`);
+    }
+
+    if (allowPrivateNetwork) { return; }
     await resolvePublic(rawUrl);
 }
