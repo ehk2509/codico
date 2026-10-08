@@ -61,6 +61,27 @@ npm run eval:coding -- --limit 4
 
 Results are written beneath `eval/results/` and are git-ignored.
 
+
+## ACCO provider-boundary measurements
+
+When Codico runs with the optional ACCO OpenRouter optimizer enabled, the evaluation
+snapshot also records provider-boundary optimization telemetry:
+
+- request attempts and changed requests;
+- fail-open events;
+- provider JSON input/output characters;
+- characters saved;
+- cumulative optimization latency.
+
+This telemetry is diagnostic only and never changes agent control flow or verifier
+outcomes.
+
+For the 0.2.0 validation, the frozen `stream-resume-overlap` task was run in a
+paired ACCO-on / ACCO-off control. Both conditions passed **5/6** repetitions.
+The median successful-run provider-token count was **672,686 with ACCO** versus
+**1,362,844 without ACCO**. This is evidence for that exact task/model/runtime
+combination, not a universal savings percentage.
+
 ## Freeze policy
 
 `codico-coding-holdout-v1` through `v5` are burned evidence and stay reproducible. `codico-coding-holdout-v6` is active and frozen.
