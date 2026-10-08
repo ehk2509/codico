@@ -1,5 +1,7 @@
 import * as fs from 'fs';
-import { chromium, Browser, Page } from 'playwright-core';
+// Types only: playwright-core takes ~0.5 s to load, so it is loaded on first browser use
+// rather than at extension activation.
+import type { Browser, Page } from 'playwright-core';
 import { assertBrowserRequestAllowed } from './browserNetworkPolicy';
 
 const CHROME_PATHS = [
@@ -55,6 +57,8 @@ export class BrowserManager {
                     'Checked paths: ' + CHROME_PATHS.join(', ')
                 );
             }
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { chromium } = require('playwright-core') as typeof import('playwright-core');
             this._browser = await chromium.launch({
                 executablePath,
                 headless: false, // visible so user can watch the browser

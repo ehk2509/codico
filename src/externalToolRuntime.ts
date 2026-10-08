@@ -9,6 +9,7 @@ import { fetchPublicText } from './urlFetcher';
 import { resolveSymbol } from './symbolProvider';
 import { ExtensionMessage } from './chatProtocol';
 import { isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { wrapUntrusted } from './untrustedContent';
 
 /**
  * Owns tools whose effects cross the core workspace file/terminal boundary:
@@ -34,6 +35,16 @@ export class ExternalToolRuntime {
 
     public resetTurnPermissions(): void {
         this._allowAllExternal = this._evaluationMode;
+        this._untrustedContentSeen = false;
+    }
+
+    /** True once external content (web, browser, MCP) has been returned to the model this turn. */
+    public get untrustedContentSeen(): boolean { return this._untrustedContentSeen; }
+    private _untrustedContentSeen = false;
+
+    private _untrusted(source: string, text: string): string {
+        this._untrustedContentSeen = true;
+        return wrapUntrusted(source, text);
     }
 
     public setAllowPrivateNetwork(allow: boolean): void {
@@ -118,7 +129,7 @@ export class ExternalToolRuntime {
         try {
             const text = await this._browser.getText(tool.selector);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page', success: true });
-            return `[browser_get_text: ${tool.selector ?? 'page'}]\n${text}`;
+            return `[browser_get_text: ${tool.selector ?? 'page'}]\n${this._untrusted('browser page', text)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page', success: false, error: message });
@@ -152,7 +163,7 @@ export class ExternalToolRuntime {
         try {
             const text = await fetchPublicText(tool.url);
             this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: true });
-            return `[fetch_url: ${tool.url}]\n${text}`;
+            return `[fetch_url: ${tool.url}]\n${this._untrusted(tool.url, text)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'fetch_url', label: tool.url, success: false, error: message });
@@ -219,8 +230,8 @@ export class ExternalToolRuntime {
             const isError = result.isError === true;
             this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: !isError, error: isError ? text : undefined });
             return isError
-                ? `[mcp_call: ${label}] ERROR:\n${text}`
-                : `[mcp_call: ${label}]\n${text}`;
+                ? `[mcp_call: ${label}] ERROR:\n${this._untrusted('MCP ' + label, text)}`
+                : `[mcp_call: ${label}]\n${this._untrusted('MCP ' + label, text)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: false, error: message });

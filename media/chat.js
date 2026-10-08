@@ -1763,9 +1763,10 @@
     scrollBottom();
   }
 
-  function showTerminalPermCard(msgId, permId, command) {
-    // If the user already clicked "Allow All" this turn, auto-grant silently
-    if (_allowAllTerminal) {
+  function showTerminalPermCard(msgId, permId, command, note) {
+    // If the user already clicked "Allow All" this turn, auto-grant silently, unless
+    // the extension asks again (the agent read external content this turn)
+    if (_allowAllTerminal && !note) {
       vscode.postMessage({ type: 'allowAllTerminal', permId: permId });
       return;
     }
@@ -1786,6 +1787,14 @@
     pre.className = 'write-perm-preview';
     pre.textContent = command;
     card.appendChild(pre);
+
+    if (note) {
+      var noteEl = document.createElement('div');
+      noteEl.className = 'write-perm-preview';
+      noteEl.style.color = 'var(--vscode-editorWarning-foreground, #d4a017)';
+      noteEl.textContent = '\u26A0 ' + note;
+      card.appendChild(noteEl);
+    }
 
     var actions = document.createElement('div');
     actions.className = 'write-perm-actions';
@@ -2189,6 +2198,14 @@
     scrollBottom();
   }
 
+  // 950 -> "950", 12345 -> "12.3k", 2400000 -> "2.4M"
+  function _fmtTokens(n) {
+    if (!n) { return '0'; }
+    if (n < 1000) { return String(n); }
+    if (n < 1000000) { return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, '') + 'k'; }
+    return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+  }
+
   function scrollBottom() { msgs.scrollTop = msgs.scrollHeight; }
 
   function _relativeTime(ts) {
@@ -2536,12 +2553,14 @@
 
   function handleExtMessage(data) {
     switch (data.type) {
-      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); break;
+      // setStreaming: replies the extension starts itself (CodeLens, editor commands, /test…)
+      // must also show Stop and a working status, not only ones sent from this panel
+      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); startMsg(data.id); setStreaming(true); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
       case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent); break;
-      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command); break;
+      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note); break;
       case 'fileWriteResult': showFileResult(data.id, data.filepath, data.granted, data.error, data.diff); break;
       case 'toolStart':      showToolPending(data.id, data.tool, data.label); break;
       case 'toolResult':      showToolResult(data.id, data.tool, data.label, data.success, data.error, data.diff); break;
@@ -2580,9 +2599,19 @@
         break;
       case 'tokenUsage':
         if (sTokens) {
-          sTokens.textContent = data.totalTokens
-            ? (data.promptTokens + '\u2191 ' + data.completionTokens + '\u2193 ' + data.totalTokens + ' tok')
+          var tokText = data.totalTokens
+            ? (_fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
             : '';
+          if (data.taskTokens) {
+            tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok';
+            if (typeof data.taskCostUsd === 'number') {
+              tokText += ' \u00b7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2);
+            }
+          }
+          sTokens.textContent = tokText;
+          sTokens.title = 'Last request: ' + data.promptTokens + ' prompt + ' + data.completionTokens + ' completion tokens' +
+            (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' : '') +
+            (typeof data.taskCostUsd === 'number' ? ' (provider-reported cost $' + data.taskCostUsd.toFixed(4) + ')' : '');
         }
         break;
       case 'compactStart': {
@@ -2671,7 +2700,7 @@
         var cpEl = document.createElement('div');
         cpEl.className = 'stream-stop-notice warn checkpoint-notice';
         var cpTxt = document.createElement('span');
-        cpTxt.textContent = '\u23F8 ' + data.steps + ' steps so far. Keep going?';
+        cpTxt.textContent = '\u23F8 ' + (data.reason || (data.steps + ' steps so far. Keep going?'));
         var cpGo = document.createElement('button');
         cpGo.className = 'continue-btn';
         cpGo.textContent = '\u25B6 Continue';

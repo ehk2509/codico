@@ -55,5 +55,30 @@ async function run() {
   await scenario('todo', ({ text }) => ({ ok: /Task list updated/i.test(text), why: `todo accepted (and agent usable after HTTP 500): ${/Task list updated/i.test(text)}` }));
   await scenario('verify_ok', ({ read, reqs, text }) => ({ ok: read('live/verified.js') !== null && /acceptance gate is satisfied/.test(text) && reqs.length <= 5, why: `gate satisfied: ${/acceptance gate is satisfied/.test(text)}; ${reqs.length} req` }));
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
+
+  // Browser automation: playwright-core is loaded lazily on first use; page text must
+  // reach the model wrapped as untrusted content
+  await set('browserAllowPrivateNetwork', true);
+  await scenario('browser', ({ text }) => {
+    const wrapped = /<untrusted_content source="browser page">[\s\S]*PAGE-MARKER[\s\S]*IGNORE ALL PREVIOUS[\s\S]*<\/untrusted_content>/.test(text);
+    return { ok: wrapped, why: `page text returned inside <untrusted_content>: ${wrapped}${/Error|ERROR/.test(text) ? ' | ' + (text.match(/.*ERROR.*/) || [''])[0].slice(0, 160) : ''}` };
+  }, 90000);
+  await set('browserAllowPrivateNetwork', false);
+
+  // ── Native tool calling, through the OpenRouter client pointed at the fake server ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'fake/native-model', maxIterations: 12 });
+  await set('nativeToolCalling', true);
+  const nativeOnly = (reqs) => reqs.length > 0 && reqs.every(r => r.native);
+  await scenario('native_text', ({ reqs }) => ({ ok: nativeOnly(reqs) && reqs.length === 1, why: `native tools sent: ${nativeOnly(reqs)}; ${reqs.length} req` }));
+  await scenario('native_read', ({ reqs }) => {
+    const result = reqs.find(r => r.lastRole === 'tool');
+    return { ok: nativeOnly(reqs) && !!result && /NOTES-MARKER/.test(result.lastText), why: `tool result returned as role=tool: ${!!result}; content: ${result ? JSON.stringify(result.lastText.slice(0, 60)) : '-'}` };
+  });
+  await scenario('native_clarify', ({ reqs }) => ({ ok: nativeOnly(reqs) && reqs.length === 1, why: `${reqs.length} req; a clarify call must end the turn` }));
+  await scenario('native_unknown', ({ reqs }) => {
+    const result = reqs.find(r => r.lastRole === 'tool');
+    const corrective = !!result && /no tool named "ask_user"/.test(result.lastText);
+    return { ok: nativeOnly(reqs) && corrective, why: `corrective tool result for unknown tool: ${corrective}` };
+  });
 }
 module.exports = { run };

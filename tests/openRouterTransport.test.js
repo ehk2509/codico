@@ -197,3 +197,33 @@ test('OpenRouter request continues unchanged when optimizer fails open', async (
     optimizer,
   )));
 });
+
+test('OpenRouter requests usage accounting and passes the reported cost through', async () => {
+  let requestBody;
+  const chunks = await withFakeServer((req, res) => {
+    let body = '';
+    req.on('data', d => { body += d; });
+    req.on('end', () => {
+      requestBody = JSON.parse(body);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}\n\n');
+      res.write('data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30,"total_tokens":150,"cost":0.00042}}\n\n');
+      res.write('data: [DONE]\n\n');
+      res.end();
+    });
+  }, endpoint => collect(streamOpenRouter('test-key', [{ role: 'user', content: 'hello' }], 'test-model', undefined, undefined, 'low', undefined, [], endpoint)));
+
+  assert.deepEqual(requestBody.usage, { include: true });
+  const usage = chunks.find(c => c.type === 'usage');
+  assert.equal(usage.totalTokens, 150);
+  assert.equal(usage.costUsd, 0.00042);
+});
+
+test('test endpoint override only accepts http(s) URLs', () => {
+  const { testOpenRouterEndpoint } = require('../out/openRouterClient.js');
+  assert.deepEqual(testOpenRouterEndpoint('http://127.0.0.1:4567/api/v1/chat/completions'),
+    { protocol: 'http:', hostname: '127.0.0.1', port: 4567, path: '/api/v1/chat/completions' });
+  assert.equal(testOpenRouterEndpoint(undefined), undefined);
+  assert.equal(testOpenRouterEndpoint('file:///etc/passwd'), undefined);
+  assert.equal(testOpenRouterEndpoint('not a url'), undefined);
+});

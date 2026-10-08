@@ -41,6 +41,19 @@ jobs:
       - name: Run Extension Host smoke test
         run: xvfb-run -a node tests/vscode/runTest.js
 
+  webview-ui:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run chat panel UI tests in headless Chrome
+        run: npm run test:ui
+
   live-agent:
     needs: test
     runs-on: ubuntu-latest

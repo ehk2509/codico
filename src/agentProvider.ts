@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
-import { streamOpenRouter, ChatMessage, MessageContentPart } from './openRouterClient';
+import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
 import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
@@ -34,6 +34,8 @@ import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { TaskUsage } from './taskUsage';
+import { generateFollowUps } from './followUps';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -811,6 +813,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
+        const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
 
@@ -1120,7 +1123,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
                         ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools, undefined, accoOptimizer)) {
+                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1168,7 +1171,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalPromptTokens += chunk.promptTokens;
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens });
+                        taskUsage.add(chunk.totalTokens, chunk.costUsd);
+                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1378,13 +1382,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // Periodic checkpoint so a run that has gone off track does not spend
                 // tokens indefinitely. Waits for the user; Stop also ends the wait.
                 if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
-                    const keepGoing = await new Promise<boolean>((resolve) => {
-                        this._checkpointResolver = resolve;
-                        signal.addEventListener('abort', () => resolve(false), { once: true });
-                        this._post({ type: 'checkpoint', id: msgId, steps: i + 1 });
-                    });
-                    this._checkpointResolver = null;
-                    if (!keepGoing) { break; }
+                    if (!await this._awaitCheckpoint(msgId, i + 1, signal)) { break; }
+                }
+
+                // Token budget: pause each time the task crosses another budget's worth
+                if (taskUsage.budgetExceeded) {
+                    if (!await this._awaitCheckpoint(msgId, i + 1, signal, taskUsage.budgetPrompt())) { break; }
+                    taskUsage.extendBudget();
                 }
 
             }
@@ -1501,6 +1505,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    /** Shows a Continue / Stop prompt and resolves with the user's choice (Stop or abort = false). */
+    private async _awaitCheckpoint(msgId: string, steps: number, signal: AbortSignal, reason?: string): Promise<boolean> {
+        const keepGoing = await new Promise<boolean>((resolve) => {
+            this._checkpointResolver = resolve;
+            signal.addEventListener('abort', () => resolve(false), { once: true });
+            this._post({ type: 'checkpoint', id: msgId, steps, reason });
+        });
+        this._checkpointResolver = null;
+        return keepGoing;
+    }
+
     /** Marks the agent free and runs the next message that arrived while it was busy. */
     private _releaseBusy(): void {
         this._busy = false;
@@ -1509,97 +1524,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _generateFollowUps(msgId: string, apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, signal: AbortSignal, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
-        try {
-            // Take last 6 turns, filtering out injected tool-result messages so the model
-            // sees the actual conversation, not raw terminal/file output.
-            const recent = this._history.slice(-8).filter(m => {
-                if (m.role === 'tool') { return false; }
-                if (typeof m.content !== 'string') { return true; }
-                return !m.content.startsWith('[Tool Results]');
-            }).slice(-6);
-            if (recent.length === 0) { return; }
-
-            const contextStr = recent.map(m => {
-                const text = typeof m.content === 'string'
-                    ? m.content.slice(0, 500)
-                    : (m.content as { type: string; text?: string }[])
-                        .filter(p => p.type === 'text').map(p => p.text ?? '').join('').slice(0, 500);
-                return `${m.role}: ${text}`;
-            }).join('\n');
-
-            const prompt = `Given this conversation, suggest exactly 3 short, distinct follow-up questions or requests the user might make next. Output ONLY a JSON array of 3 strings. No explanation, no markdown fences.\n\nConversation:\n${contextStr}`;
-
-            let raw = '';
-            if (isOllama) {
-                raw = await ollamaChatCompletion(
-                    ollamaBaseUrl,
-                    [{ role: 'user', content: prompt }],
-                    ollamaModel,
-                    300,
-                    signal
-                );
-            } else if (isDirect) {
-                raw = await directSingleCompletion(directKey, directProviderId, directModelId, prompt, 300, signal);
-            } else {
-                const body = JSON.stringify({
-                    model,
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 300,
-                    temperature: 0.3,
-                });
-
-                raw = await new Promise<string>((resolve) => {
-                    if (signal.aborted) { resolve(''); return; }
-                    const req = https.request(
-                        {
-                            hostname: 'openrouter.ai',
-                            path: '/api/v1/chat/completions',
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                                'HTTP-Referer': 'vscode-codico',
-                                'X-Title': 'Codico',
-                                'Content-Length': Buffer.byteLength(body),
-                            },
-                        },
-                        (res) => {
-                            let data = '';
-                            let totalBytes = 0;
-                            res.on('data', (c: Buffer) => {
-                                totalBytes += c.length;
-                                if (totalBytes > 64 * 1024) { res.destroy(); resolve(''); return; }
-                                data += c.toString();
-                            });
-                            res.on('end', () => {
-                                try {
-                                    resolve(JSON.parse(data)?.choices?.[0]?.message?.content ?? '');
-                                } catch { resolve(''); }
-                            });
-                            res.on('error', () => resolve(''));
-                        }
-                    );
-                    req.setTimeout(15_000, () => { req.destroy(); resolve(''); });
-                    signal.addEventListener('abort', () => { req.destroy(); resolve(''); }, { once: true });
-                    req.on('error', () => resolve(''));
-                    req.write(body);
-                    req.end();
-                });
-            }
-
-            const cleaned = raw.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, '').trim();
-            let suggestions: string[] = [];
-            try {
-                const arr = JSON.parse(cleaned);
-                if (Array.isArray(arr)) {
-                    suggestions = (arr as unknown[]).slice(0, 3).map(String);
-                }
-            } catch { /* ignore */ }
-
-            if (suggestions.length > 0 && !signal.aborted) {
-                this._post({ type: 'followUps', id: msgId, suggestions });
-            }
-        } catch { /* best-effort */ }
+        const suggestions = await generateFollowUps(this._history,
+            { apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directKey, directProviderId, directModelId }, signal);
+        if (suggestions.length > 0 && !signal.aborted) {
+            this._post({ type: 'followUps', id: msgId, suggestions });
+        }
     }
 
     private async _runAutoCommit(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, userPrompt: string, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
@@ -1989,14 +1918,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             ? tool.command.slice(0, 80) + '\u2026'
             : tool.command;
 
+        // After the agent has read external content this turn, Allow All no longer covers
+        // commands: a prompt-injected page must not be able to run them unattended.
+        const askAgain = this._allowAllTerminal && !this._evaluationMode && this._external.untrustedContentSeen;
         let granted: boolean;
-        if (this._allowAllTerminal) {
+        if (this._allowAllTerminal && !askAgain) {
             granted = true;
         } else {
             const permId = nodeCrypto.randomBytes(8).toString('hex');
             granted = await new Promise<boolean>((resolve) => {
                 this._pendingTerminalPermissions.set(permId, resolve);
-                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command });
+                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command,
+                    note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined });
             });
         }
 
