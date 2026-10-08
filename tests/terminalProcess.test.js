@@ -48,6 +48,7 @@ test('terminal runner honors user abort', async () => {
 test('terminal environment keeps execution essentials and drops secrets', () => {
   const env = buildTerminalEnvironment({
     PATH: '/usr/bin',
+    Path: 'C:\\Tools',
     HOME: '/home/user',
     LANG: 'en_US.UTF-8',
     LC_ALL: 'C',
@@ -58,6 +59,7 @@ test('terminal environment keeps execution essentials and drops secrets', () => 
   });
 
   assert.equal(env.PATH, '/usr/bin');
+  assert.equal(env.Path, 'C:\\Tools');
   assert.equal(env.HOME, '/home/user');
   assert.equal(env.LANG, 'en_US.UTF-8');
   assert.equal(env.LC_ALL, 'C');
