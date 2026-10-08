@@ -80,25 +80,20 @@ test('overlap verifier accepts an exported recovery wrapper around the overlap h
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('overlap verifier still rejects a reusable helper with invalid overlap semantics', () => {
+test('overlap verifier still rejects a correct helper that is not wired into recovery', () => {
   const result = runVerifier({
-    moduleSource: `
-      exports.computeOverlap = function computeOverlap() {
-        return { overlap: 1 };
-      };
-    `,
+    moduleSource: numericHelperModule,
     streamSource: `
-      export function computeOverlap(): unknown {
-        return { overlap: 1 };
+      export function computeSuffixOverlap(previous: string, continuation: string): number {
+        return 0;
       }
     `,
     providerSource: `
-      function resumeStream(previous: string, continuation: string) {
-        const overlap = computeOverlap(previous, continuation);
+      function resumeInterruptedStream(previous: string, continuation: string) {
         return continuation;
       }
     `,
   });
 
-  assert.notEqual(result.status, 0, 'invalid overlap semantics must remain rejected');
+  assert.notEqual(result.status, 0, 'an overlap helper that is never used by recovery must remain rejected');
 });
