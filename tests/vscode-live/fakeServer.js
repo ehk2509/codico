@@ -30,6 +30,10 @@ const SCRIPTS = (port) => ({
   http500: [{ status: 500 }],
   verify_ok: [tool('write_file', 'filepath: live/verified.js\ncontent:\nmodule.exports = 1;'), 'Done.'],
   stuck_verify: [tool('write_file', 'filepath: live/stuck.js\ncontent:\nmodule.exports = 2;'), 'Done.'],
+  // Plan mode: the model tries to write while planning; that must be blocked
+  plan_readonly: [tool('write_file', 'filepath: live/planned.js\ncontent:\nmodule.exports = 3;'),
+    '1. Read the config\n2. Update the port\n\n## Files Affected\n- fixtures/config.txt\n\n> Approve the plan to begin execution.'],
+  native_plan: ['1. Read the notes\n2. Summarise them\n\n> Approve the plan to begin execution.'],
   browser: [tool('browser_navigate', `url: http://127.0.0.1:${port}/page`), F + 'browser_get_text\n' + F + '\n', tool('browser_close', ''), 'Read the page.'],
   // Native tool calling (OpenRouter path): replies may be streamed tool_calls
   native_text: ['A plain native-mode answer.'],
@@ -68,7 +72,7 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user').pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
-        native: Array.isArray(json.tools) && json.tools.length > 0, lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
+        native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
       log.push(rec);
       fs.appendFileSync(LOG_FILE, JSON.stringify({ ...rec, lastUser: rec.lastUser.slice(0, 300) }) + '\n');
       if (json.stream === false) {

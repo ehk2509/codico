@@ -56,6 +56,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 if (!prompt?.trim()) { throw new Error('Evaluation prompt is required.'); }
                 return provider.runEvaluationTask(prompt);
             }),
+            vscode.commands.registerCommand('codico.__evalRunPlan', async (goal: string) => {
+                if (!goal?.trim()) { throw new Error('Evaluation plan goal is required.'); }
+                return provider.runEvaluationTask(goal, true);
+            }),
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
         );
     }
