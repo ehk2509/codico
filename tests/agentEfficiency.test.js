@@ -54,3 +54,13 @@ test('terminal source inspection remains identifiable without being a hard lock'
   assert.equal(isExploratoryTerminalCommand('npm test'), false);
   assert.equal(isExploratoryTerminalCommand('npm run compile'), false);
 });
+
+test('documentation and plain-text files are recognised', () => {
+  const { isDocumentationFile } = require('../out/agentEfficiency.js');
+  for (const f of ['README.md', 'docs/guide.markdown', 'notes.txt', 'a/b/INDEX.rst', 'manual.adoc', 'LICENSE', 'CHANGELOG', 'dir\\Notes.TXT']) {
+    assert.equal(isDocumentationFile(f), true, f);
+  }
+  for (const f of ['src/app.ts', 'page.mdx', 'Makefile', 'config.json', 'script.py', '.env', 'readme.md.ts']) {
+    assert.equal(isDocumentationFile(f), false, f);
+  }
+});

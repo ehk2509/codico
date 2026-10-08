@@ -289,3 +289,28 @@ test('mutation-required task cannot complete before a successful edit', () => {
   assert.equal(controller.mutationGracePending, false);
   assert.equal(controller.verificationPending, true);
 });
+
+test('writing documentation does not open the verification gate', () => {
+  const controller = new ExplorationController('Update the README with setup steps');
+  controller.beginIteration(); // the agent loop starts every step this way
+  const note = controller.after(
+    { type: 'write_file', filepath: 'docs/README.md', content: '# Setup' },
+    '[write_file: docs/README.md] Written successfully (1 lines).'
+  );
+  assert.equal(note, undefined);
+  assert.equal(controller.verificationPending, false);
+  assert.equal(controller.completionGuidance(), undefined);
+});
+
+test('a documentation write keeps verification pending for an earlier code edit', () => {
+  const controller = new ExplorationController();
+  controller.after(
+    { type: 'edit_file', filepath: 'src/a.ts', oldStr: 'a', newStr: 'b' },
+    '[edit_file: src/a.ts] Edit applied successfully.'
+  );
+  controller.after(
+    { type: 'write_file', filepath: 'CHANGELOG.md', content: '- fix' },
+    '[write_file: CHANGELOG.md] Written successfully (1 lines).'
+  );
+  assert.equal(controller.verificationPending, true);
+});

@@ -7,6 +7,7 @@ import {
     explorationDecision,
     explorationTarget,
     isBehavioralVerificationCommand,
+    isDocumentationFile,
     isExplorationTool,
     isExploratoryTerminalCommand,
 } from './agentEfficiency';
@@ -192,6 +193,14 @@ export class ExplorationController {
         if (tool.type === 'write_file' || tool.type === 'edit_file') {
             if (!/\b(?:Edit applied successfully|Written successfully)\b/.test(result)) {
                 return '[System Follow-through] The edit was not applied. Resolve the tool failure before counting this as a code change.';
+            }
+            if (isDocumentationFile(tool.filepath)) {
+                // Docs/plain text have no behavior to verify. Count the change as progress
+                // but leave any verification already pending for code untouched.
+                this.streak = 0;
+                this._locked = false;
+                this._lastMutationIteration = this._iteration;
+                return undefined;
             }
             if (result.includes('[Post-edit integration audit]')) {
                 this._unwiredImports.add(tool.filepath);

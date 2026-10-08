@@ -12,3 +12,4 @@ coverage/**
 **/*.map
 eval/**
 scripts/**
+.vscode-test/**

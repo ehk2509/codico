@@ -908,6 +908,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
         const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
+        // Reminders answered without any tool call before the turn stops instead of
+        // re-sending them (each reminder is another paid model request).
+        const MAX_STALLED_VERIFICATION_NUDGES = 3;
         let verificationNudges = 0;
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._chatMode)
@@ -1320,6 +1323,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     if (/<clarify>[\s\S]*?<\/clarify>/.test(fullContent)) { break; }
                     const verificationGuidance = exploration.completionGuidance();
                     if (verificationGuidance) {
+                        if (verificationNudges >= MAX_STALLED_VERIFICATION_NUDGES) {
+                            const pendingWork = verificationGuidance.startsWith('[System Action]')
+                                ? 'make the code change this task requires'
+                                : 'verify its change';
+                            this._post({
+                                type: 'appendContent',
+                                id: msgId,
+                                text: `\n\n> ⚠️ Stopped after ${verificationNudges} reminders: the model kept ending its turn without trying to ${pendingWork}, so this task is not verified as complete.`,
+                            });
+                            break;
+                        }
                         verificationNudges++;
                         this._history.push({ role: 'user', content: verificationGuidance });
                         this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
@@ -1341,6 +1355,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
 
                 actionNudges = 0;
+                // The model is calling tools again, so reminders are no longer "stalled"
+                verificationNudges = 0;
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
