@@ -607,9 +607,50 @@ export class OpenAIToolCallAccumulator {
     }
 }
 
+/**
+ * Models with native tool calling sometimes call `clarify` as a function, although
+ * clarifying questions are a `<clarify>` block in the reply, not a tool. Converts
+ * such a call into that block so the question renders and the turn waits for the
+ * user. Returns null when the call is not a usable clarify call.
+ */
+export function nativeClarifyBlock(call: NativeToolCall): string | null {
+    if (call.name !== 'clarify') { return null; }
+    const args = call.arguments ?? {};
+    const oneLine = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+    const question = oneLine(args.question);
+    if (!question) { return null; }
+    const options = (Array.isArray(args.options) ? args.options : [])
+        .map(o => oneLine(typeof o === 'object' && o !== null ? (o as Record<string, unknown>).label : o))
+        .filter(Boolean);
+    const multi = args.type === 'multi' || args.multi === true || args.multiple === true;
+    const freeInput = args.free_input === true || args.freeInput === true || options.length === 0;
+    const lines = ['<clarify>', `question: ${question}`, `type: ${multi ? 'multi' : 'single'}`];
+    if (options.length > 0) { lines.push('options:', ...options.map(o => `- ${o}`)); }
+    lines.push(`free_input: ${freeInput}`, '</clarify>');
+    return lines.join('\n');
+}
+
+/**
+ * Tool result returned to the model for a native call that names an unknown tool
+ * or has unusable arguments, so it can correct the call instead of the turn ending.
+ */
+export function invalidNativeCallResult(call: NativeToolCall): string {
+    const known = ALL_TOOLS.find(tool => tool.name === call.name);
+    if (!known) {
+        return `[${call.name}] Error: there is no tool named "${call.name}". Available tools: ` +
+            `${ALL_TOOLS.map(tool => tool.name).join(', ')}. To ask the user a clarifying question, ` +
+            'write a <clarify> block in your reply instead of calling a tool.';
+    }
+    const required = Array.isArray(known.inputSchema.required) ? (known.inputSchema.required as string[]) : [];
+    const received = JSON.stringify(call.arguments ?? {}).slice(0, 500);
+    return `[${call.name}] Error: missing or invalid arguments. Required: ${required.join(', ') || 'none'}. ` +
+        `Received: ${received}. Fix the arguments and call the tool again.`;
+}
+
 export const NATIVE_TOOL_PROMPT = `
 Provider-native function/tool calling is enabled for this request.
 Use native tool calls instead of writing fenced tool blocks whenever you need a tool.
 The fenced formats in the base prompt are compatibility fallback documentation only.
 Do not describe a tool call without issuing it. Continue autonomously after each tool result.
+Clarifying questions are not a tool: to ask one, write the <clarify> block in your reply text and do not call any tool in that reply.
 `;

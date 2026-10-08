@@ -2,6 +2,18 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.2.1 - 2026-10-08
+
+### Fixed
+- Native tool calling: a model calling `clarify` as a function no longer fails with "Provider returned invalid arguments for native tool clarify". The call is shown as the interactive clarifying question and the turn waits for the user's answer.
+- Native tool calls naming an unknown tool or carrying unusable arguments now return an explanatory tool result, so the model can correct the call instead of the turn ending.
+- Queued follow-up messages are no longer dropped when the previous turn is still finishing (saving history, auto-compacting, or waiting on the completion notification); they run as soon as the agent is free, and Stop cancels them.
+- The README logo rendered as a broken image because `media/logo.png` is corrupt; the README now uses the intact `media/logo-128.png`.
+
+### Changed
+- The completion notification no longer keeps the agent busy until it is dismissed.
+- Evaluation tasks and scripts (`eval/`, `scripts/`) are no longer shipped in the VSIX.
+
 ## 0.2.0 - 2026-10-08
 
 ### Added

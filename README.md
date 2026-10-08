@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ehk2509/codico/main/media/logo.png" width="180" alt="Codico logo" />
+  <img src="https://raw.githubusercontent.com/ehk2509/codico/main/media/logo-128.png" width="128" alt="Codico logo" />
 </p>
 
 <h1 align="center">Codico</h1>

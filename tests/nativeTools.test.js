@@ -220,3 +220,40 @@ test('focused action removes read_file after its two-turn source budget', () => 
   assert.equal(names.has('edit_file'), true);
   assert.equal(names.has('write_file'), true);
 });
+
+test('native clarify calls become the <clarify> block the chat panel renders', () => {
+  const { nativeClarifyBlock } = require('../out/nativeTools.js');
+  const block = nativeClarifyBlock({
+    name: 'clarify',
+    arguments: { question: 'Which stack\nshould I use?', type: 'single', options: ['React', { label: 'Vue' }, ''] },
+  });
+  assert.equal(block, [
+    '<clarify>',
+    'question: Which stack should I use?',
+    'type: single',
+    'options:',
+    '- React',
+    '- Vue',
+    'free_input: false',
+    '</clarify>',
+  ].join('\n'));
+
+  // No options: free-text answer
+  assert.match(nativeClarifyBlock({ name: 'clarify', arguments: { question: 'Name?' } }), /free_input: true/);
+  // Not clarify, or no question: not converted
+  assert.equal(nativeClarifyBlock({ name: 'read_file', arguments: { question: 'x' } }), null);
+  assert.equal(nativeClarifyBlock({ name: 'clarify', arguments: {} }), null);
+});
+
+test('unknown tools and invalid arguments produce a corrective tool result', () => {
+  const { invalidNativeCallResult } = require('../out/nativeTools.js');
+  const unknown = invalidNativeCallResult({ name: 'ask_user', arguments: {} });
+  assert.match(unknown, /no tool named "ask_user"/);
+  assert.match(unknown, /read_file/);
+  assert.match(unknown, /<clarify> block/);
+
+  const invalid = invalidNativeCallResult({ name: 'read_file', arguments: { path: 'a.ts' } });
+  assert.match(invalid, /missing or invalid arguments/);
+  assert.match(invalid, /Required: filepath/);
+  assert.match(invalid, /"path":"a.ts"/);
+});
