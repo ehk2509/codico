@@ -1,5 +1,4 @@
 import * as vscode from 'vscode';
-import * as path from 'path';
 import { BrowserManager } from './browserManager';
 import { McpManager } from './mcpManager';
 import {
@@ -9,6 +8,7 @@ import {
 import { fetchPublicText } from './urlFetcher';
 import { resolveSymbol } from './symbolProvider';
 import { ExtensionMessage } from './chatProtocol';
+import { isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
 
 /**
  * Owns tools whose effects cross the core workspace file/terminal boundary:
@@ -165,20 +165,15 @@ export class ExternalToolRuntime {
             let pairs: [vscode.Uri, readonly vscode.Diagnostic[]][];
 
             if (tool.filepath) {
-                const folders = vscode.workspace.workspaceFolders;
-                if (!folders || folders.length === 0) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: 'workspace', success: false, error: 'No workspace folder open' });
-                    return '[get_diagnostics] ERROR: No workspace folder open';
-                }
-                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-                if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'get_diagnostics', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
-                    return `[get_diagnostics: ${tool.filepath}] ERROR: Unsafe path rejected`;
-                }
-                const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
-                pairs = [[fileUri, vscode.languages.getDiagnostics(fileUri)]];
+                const target = await resolveWorkspaceToolPath(tool.filepath);
+                pairs = [[target.uri, vscode.languages.getDiagnostics(target.uri)]];
             } else {
-                pairs = vscode.languages.getDiagnostics();
+                pairs = [];
+                for (const pair of vscode.languages.getDiagnostics()) {
+                    if (await isWorkspaceUriAllowed(pair[0])) {
+                        pairs.push(pair);
+                    }
+                }
             }
 
             const lines: string[] = [];

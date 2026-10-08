@@ -33,6 +33,7 @@ import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
+import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -1841,47 +1842,23 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleWriteFile(tool: WriteFileTool, msgId: string): Promise<string> {
-        // ── Edits Mode: queue proposal instead of writing immediately ──────────
-        if (this._editsMode) {
-            const norm = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-            if (norm.startsWith('..') || path.isAbsolute(norm)) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'write_file', label: tool.filepath, success: false, error: 'Unsafe path rejected' });
-                return `[write_file: ${tool.filepath}] ERROR: Unsafe path rejected`;
-            }
-            let before: Uint8Array | null = null;
+        try {
+            const target = await resolveWorkspaceToolPath(tool.filepath);
+            let beforeBytes: Uint8Array | null = null;
+            let beforeText = '';
             try {
-                const folders = vscode.workspace.workspaceFolders;
-                if (folders?.length) {
-                    before = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folders[0].uri, norm));
-                }
+                beforeBytes = await vscode.workspace.fs.readFile(target.uri);
+                beforeText = new TextDecoder().decode(beforeBytes);
             } catch { /* new file */ }
-            this._editProposals.queue({ filepath: tool.filepath, originalContent: before, proposedContent: tool.content, label: `write ${tool.filepath}` });
-            this._post({ type: 'proposalQueued', filepath: tool.filepath });
-            return `[write_file: ${tool.filepath}] Queued as edit proposal`;
-        }
 
-        // ── Read existing content once (used for both diff preview and undo) ──
-        let beforeBytes: Uint8Array | null = null;
-        let beforeText = '';
-        try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (folders?.length) {
-                const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-                if (!normalized.startsWith('..') && !path.isAbsolute(normalized)) {
-                    const uri = vscode.Uri.joinPath(folders[0].uri, normalized);
-                    beforeBytes = await vscode.workspace.fs.readFile(uri);
-                    beforeText = new TextDecoder().decode(beforeBytes);
-                }
+            if (this._editsMode) {
+                this._editProposals.queue({ filepath: tool.filepath, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
+                this._post({ type: 'proposalQueued', filepath: tool.filepath });
+                return `[write_file: ${tool.filepath}] Queued as edit proposal`;
             }
-        } catch { /* new file — beforeText stays '' */ }
 
-        // Pre-compute diff to show in the permission card preview
-        const diff = this._computeLineDiff(beforeText, tool.content);
-
-        let writeResult: { granted: boolean; editedContent?: string } = { granted: false };
-        let errorMsg: string | undefined;
-
-        try {
+            const diff = this._computeLineDiff(beforeText, tool.content);
+            let writeResult: { granted: boolean; editedContent?: string };
             if (this._allowAllWrites) {
                 writeResult = { granted: true };
             } else {
@@ -1891,51 +1868,33 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'writePermissionRequest', id: msgId, permId, filepath: tool.filepath, preview: '', diff, editableContent: tool.content });
                 });
             }
-            if (writeResult.granted) {
-                const contentToWrite = writeResult.editedContent ?? tool.content;
-                const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, writeResult.editedContent) : diff;
-                await this._fileManager.writeFile(tool.filepath, contentToWrite);
 
-                const after = new TextEncoder().encode(contentToWrite);
-                this._undoRedo.push({ filepath: tool.filepath, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
-                this._filesWrittenThisTurn++;
-                const lineCount = contentToWrite.split('\n').length;
-                return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
+            if (!writeResult.granted) {
+                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false });
+                return `[write_file: ${tool.filepath}] Denied by user`;
             }
-        } catch (err: unknown) {
-            errorMsg = err instanceof Error ? err.message : String(err);
-        }
 
-        this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
-        return `[write_file: ${tool.filepath}] ${errorMsg ? `Error: ${errorMsg}` : 'Denied by user'}`;
+            const contentToWrite = writeResult.editedContent ?? tool.content;
+            const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, contentToWrite) : diff;
+            await this._fileManager.writeFile(tool.filepath, contentToWrite);
+
+            const after = new TextEncoder().encode(contentToWrite);
+            this._undoRedo.push({ filepath: tool.filepath, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
+            this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
+            this._filesWrittenThisTurn++;
+            const lineCount = contentToWrite.split('\n').length;
+            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
+        } catch (err: unknown) {
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
+            return `[write_file: ${tool.filepath}] Error: ${errorMsg}`;
+        }
     }
 
     private async _handleReadFile(tool: ReadFileTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: err });
-                return `[read_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            // Trim whitespace and normalise to posix separators
-            let fp = tool.filepath.trim().replace(/\\/g, '/');
-            // Strip leading workspace-root prefix that models sometimes emit (e.g. "/src/foo.ts")
-            const wsRoot = folders[0].uri.fsPath.replace(/\\/g, '/').replace(/\/$/, '');
-            if (fp.startsWith(wsRoot + '/')) {
-                fp = fp.slice(wsRoot.length + 1);
-            }
-            // Strip a leading "/" so "/src/foo.ts" becomes "src/foo.ts"
-            fp = fp.replace(/^\/+/, '');
-            const normalized = path.posix.normalize(fp || '.');
-            if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                const err = `Unsafe path rejected: ${tool.filepath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: err });
-                return `[read_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
+            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const content = new TextDecoder().decode(bytes);
             const window = sliceFileByLines(content, tool.startLine, tool.endLine);
@@ -1956,23 +1915,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleListDirectory(tool: ListDirectoryTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: false, error: err });
-                return `[list_directory: ${tool.dirpath}] ERROR: ${err}`;
-            }
-            const rawPath = tool.dirpath === '.' ? '' : tool.dirpath.replace(/\\/g, '/');
-            const normalized = rawPath ? path.posix.normalize(rawPath) : '';
-            if (normalized && (normalized.startsWith('..') || path.isAbsolute(normalized))) {
-                const err = `Unsafe path rejected: ${tool.dirpath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: false, error: err });
-                return `[list_directory: ${tool.dirpath}] ERROR: ${err}`;
-            }
-            const dirUri = normalized
-                ? vscode.Uri.joinPath(folders[0].uri, normalized)
-                : folders[0].uri;
-            const entries = await vscode.workspace.fs.readDirectory(dirUri);
+            const target = await resolveWorkspaceToolPath(tool.dirpath, true);
+            const entries = (await vscode.workspace.fs.readDirectory(target.uri))
+                .filter(([name]) => !isIgnoredDirectoryEntry(target, name));
             const lines = entries.map(([name, type]) =>
                 type === vscode.FileType.Directory ? `[dir]  ${name}/` : `[file] ${name}`
             );
@@ -2115,7 +2060,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         const include = tool.glob?.trim() || '**/*';
         const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-        const uris = await vscode.workspace.findFiles(include, exclude, 600);
+        const uris = await filterAllowedWorkspaceUris(
+            await vscode.workspace.findFiles(include, exclude, 600)
+        );
         const matches: string[] = [];
 
         for (const uri of uris) {
@@ -2148,30 +2095,22 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleFindFiles(tool: FindFilesTool, msgId: string): Promise<string> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
-            return '[find_files] ERROR: No workspace folder open';
-        }
-
-        let dir = (tool.dirpath ?? '').trim().replace(/\\/g, '/');
-        if (dir === '.') { dir = ''; }
-        if (dir) {
-            dir = path.posix.normalize(dir);
-            if (dir.startsWith('..') || path.isAbsolute(dir)) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: 'Unsafe dirpath rejected' });
-                return '[find_files] ERROR: Unsafe dirpath rejected';
-            }
-        }
-
-        const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
-        const include = dir
-            ? `${dir}/**/${cleanPattern}`
-            : `**/${cleanPattern}`;
-        const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-
         try {
-            const uris = await vscode.workspace.findFiles(include, exclude, 200);
+            const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
+            let include: vscode.GlobPattern = `**/${cleanPattern}`;
+            const requestedDir = (tool.dirpath ?? '').trim();
+            if (requestedDir && requestedDir !== '.') {
+                const target = await resolveWorkspaceToolPath(requestedDir, true);
+                const scopedPattern = target.relativePath
+                    ? `${target.relativePath}/**/${cleanPattern}`
+                    : `**/${cleanPattern}`;
+                include = new vscode.RelativePattern(target.folder, scopedPattern);
+            }
+
+            const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
+            const uris = await filterAllowedWorkspaceUris(
+                await vscode.workspace.findFiles(include, exclude, 200)
+            );
             const result = uris.map(uri => vscode.workspace.asRelativePath(uri));
             this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${tool.pattern} — ${result.length} file(s)`, success: true });
             return result.length > 0
@@ -2186,19 +2125,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _handleEditFile(tool: EditFileTool, msgId: string): Promise<string> {
         try {
-            const folders = vscode.workspace.workspaceFolders;
-            if (!folders || folders.length === 0) {
-                const err = 'No workspace folder open';
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const normalized = path.posix.normalize(tool.filepath.replace(/\\/g, '/'));
-            if (normalized.startsWith('..') || path.isAbsolute(normalized)) {
-                const err = `Unsafe path rejected: ${tool.filepath}`;
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}`;
-            }
-            const fileUri = vscode.Uri.joinPath(folders[0].uri, normalized);
+            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             const bytes = await vscode.workspace.fs.readFile(fileUri);
             const rawContent = new TextDecoder().decode(bytes);
 

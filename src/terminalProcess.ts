@@ -1,5 +1,27 @@
 import * as cp from 'child_process';
 
+const SAFE_TERMINAL_ENV_KEYS = new Set([
+    'PATH', 'HOME', 'USER', 'USERNAME', 'LOGNAME', 'SHELL', 'TERM',
+    'TMP', 'TEMP', 'TMPDIR', 'SYSTEMROOT', 'WINDIR', 'COMSPEC',
+    'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'PATHEXT',
+    'PROGRAMDATA', 'PROGRAMFILES', 'PROGRAMFILES(X86)',
+    'LANG', 'COLORTERM', 'NO_COLOR',
+    'NVM_BIN', 'NVM_DIR', 'VOLTA_HOME', 'PNPM_HOME',
+    'GOPATH', 'GOROOT', 'JAVA_HOME', 'PYENV_ROOT', 'VIRTUAL_ENV',
+].map(key => key.toLowerCase()));
+
+export function buildTerminalEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = {};
+    for (const [key, value] of Object.entries(source)) {
+        if (value === undefined) { continue; }
+        const normalizedKey = key.toLowerCase();
+        if (SAFE_TERMINAL_ENV_KEYS.has(normalizedKey) || normalizedKey.startsWith('lc_')) {
+            env[key] = value;
+        }
+    }
+    return env;
+}
+
 export interface TerminalProcessOptions {
     command: string;
     cwd?: string;
@@ -50,7 +72,7 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         cwd,
         timeoutMs,
         signal,
-        env = process.env,
+        env = buildTerminalEnvironment(),
         onChunk,
         maxCapturedBytes = 1024 * 1024,
     } = options;

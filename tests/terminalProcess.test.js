@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { runTerminalProcess } = require('../out/terminalProcess.js');
+const { buildTerminalEnvironment, runTerminalProcess } = require('../out/terminalProcess.js');
 
 test('terminal runner streams output and reports success', async () => {
   const controller = new AbortController();
@@ -42,4 +42,29 @@ test('terminal runner honors user abort', async () => {
   });
 
   assert.equal(result.stopped, true);
+});
+
+
+test('terminal environment keeps execution essentials and drops secrets', () => {
+  const env = buildTerminalEnvironment({
+    PATH: '/usr/bin',
+    Path: 'C:\\Tools',
+    HOME: '/home/user',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'C',
+    OPENAI_API_KEY: 'secret',
+    GITHUB_TOKEN: 'secret',
+    AWS_SECRET_ACCESS_KEY: 'secret',
+    CUSTOM_SECRET: 'secret',
+  });
+
+  assert.equal(env.PATH, '/usr/bin');
+  assert.equal(env.Path, 'C:\\Tools');
+  assert.equal(env.HOME, '/home/user');
+  assert.equal(env.LANG, 'en_US.UTF-8');
+  assert.equal(env.LC_ALL, 'C');
+  assert.equal(env.OPENAI_API_KEY, undefined);
+  assert.equal(env.GITHUB_TOKEN, undefined);
+  assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
+  assert.equal(env.CUSTOM_SECRET, undefined);
 });

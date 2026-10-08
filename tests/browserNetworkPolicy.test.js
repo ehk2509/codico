@@ -20,10 +20,23 @@ test('browser policy bypasses public-network validation only after explicit opt 
   assert.equal(called, false);
 });
 
-test('browser policy leaves non-network schemes alone', async () => {
-  let called = false;
-  await assertBrowserRequestAllowed('data:text/plain,hello', false, async () => {
-    called = true;
-  });
-  assert.equal(called, false);
+test('browser policy rejects non-HTTP schemes even when private access is enabled', async () => {
+  for (const url of [
+    'file:///etc/passwd',
+    'data:text/plain,hello',
+    'javascript:alert(1)',
+    'chrome://settings/',
+  ]) {
+    await assert.rejects(
+      assertBrowserRequestAllowed(url, true, async () => {}),
+      /unsupported URL scheme/,
+    );
+  }
+});
+
+test('browser policy rejects malformed URLs instead of failing open', async () => {
+  await assert.rejects(
+    assertBrowserRequestAllowed('not a url', false, async () => {}),
+    /valid HTTP or HTTPS URL/,
+  );
 });

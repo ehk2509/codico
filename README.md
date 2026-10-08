@@ -417,8 +417,10 @@ Select failing output in the integrated terminal, right-click → **Explain Erro
 
 ---
 
-### Excluding Files (`.copilotignore`)
-Add a `.copilotignore` file (gitignore syntax) to the workspace root to exclude matching files from the semantic workspace index, inline completions and next-edit suggestions. Changes are picked up automatically. It does not stop the agent's own tools — the agent can still open an ignored file with `read_file` if asked.
+### Excluding Files (`.codicoignore`)
+Add a `.codicoignore` file (gitignore syntax) to any workspace root to exclude matching files from Codico's semantic index and agent file surfaces. The policy is enforced for `read_file`, `list_directory`, `search_files`, `find_files`, `write_file`, `edit_file`, and diagnostics, and changes are picked up automatically. Multi-root workspaces keep separate rules per root.
+
+Existing `.copilotignore` files are still read for compatibility; `.codicoignore` is the Codico-specific policy and its later rules can override legacy matches. Terminal commands are a separate permission boundary: an approved shell command can still access files that the operating system allows, so do not treat ignore rules as a shell sandbox. Terminal subprocesses no longer inherit arbitrary VS Code process secrets by default.
 
 ---
 
@@ -577,11 +579,12 @@ codico/
 │   ├── networkSecurity.ts           # Public-address/DNS validation and pinned lookups
 │   ├── browserNetworkPolicy.ts      # Browser public/private-network request policy
 │   ├── urlFetcher.ts                # Secure public URL fetch + redirect/text handling
-│   ├── terminalProcess.ts           # Cross-platform command/process-tree lifecycle
+│   ├── terminalProcess.ts           # Cross-platform command/process-tree lifecycle + scrubbed environment
 │   ├── mcpEnvironment.ts            # Minimal environment policy for MCP child processes
 │   ├── testOrchestrator.ts          # Test-command detection and the /test fix loop prompt
 │   ├── indexPersistence.ts          # Workspace index storage (vectors + hashes, no raw source)
-│   ├── fileManager.ts               # File write with path-traversal guard + permission dialog
+│   ├── fileManager.ts               # File writes routed through centralized workspace policy
+│   ├── workspaceSecurity.ts         # Multi-root confinement + .codicoignore enforcement
 │   ├── codeLensProvider.ts          # Explain / Fix CodeLens above function definitions
 │   ├── coverageProvider.ts          # LCOV / Istanbul JSON parser, coverage prompt builder
 │   ├── prContextProvider.ts         # GitHub PR context fetcher + formatter
