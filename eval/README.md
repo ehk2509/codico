@@ -11,7 +11,7 @@ v6 preserves the v5 task corpus and behavior-level verifiers, including the requ
 - **no evaluator wall-clock timeout** (`maxTaskMinutes: 0`);
 - **no cumulative token ceiling** (`maxTotalTokens: 0`).
 
-The agent is still bounded by the normal iteration budget plus mutation/verification grace, and hidden verifiers still determine correctness. Periodic checkpoints preserve evidence if the host or CI process is interrupted externally.
+While a required change or post-edit verification is pending the iteration budget does not stop the agent; a turn ends once the model stops calling tools after 3 consecutive reminders. Writes to documentation and plain-text files do not require verification. Hidden verifiers still determine correctness. Periodic checkpoints preserve evidence if the host or CI process is interrupted externally.
 
 Burned v1-v5 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v5.json`. v5 retains its original 15-minute / 400k-token policy for reproducibility.
 
