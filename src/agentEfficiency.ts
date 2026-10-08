@@ -79,6 +79,20 @@ export function explorationGuidance(streak: number): string | null {
 const EXPLORATORY_TERMINAL_RE = /^\s*(?:(?:git\s+(?:grep|show|log|status|diff))|(?:rg|grep|find|fd|ls|cat|head|tail|less|more|sed|awk|wc)\b)/i;
 const LEADING_CD_RE = /^\s*cd\s+[^;&|]+\s*(?:&&|;)\s*/i;
 
+const DOCUMENTATION_EXTENSIONS = new Set(['.md', '.markdown', '.txt', '.rst', '.adoc', '.asciidoc', '.org']);
+const DOCUMENTATION_NAMES = new Set(['license', 'licence', 'notice', 'authors', 'contributors', 'changelog', 'readme']);
+
+/**
+ * Documentation and plain-text files have no runtime behavior, so writing one
+ * must not open the code-verification gate (there is nothing to test).
+ */
+export function isDocumentationFile(filepath: string): boolean {
+    const base = filepath.replace(/\\/g, '/').split('/').pop()?.toLowerCase() ?? '';
+    const dot = base.lastIndexOf('.');
+    if (dot <= 0) { return DOCUMENTATION_NAMES.has(base); }
+    return DOCUMENTATION_EXTENSIONS.has(base.slice(dot));
+}
+
 export function isExploratoryTerminalCommand(command: string): boolean {
     let candidate = command;
     while (LEADING_CD_RE.test(candidate)) {
