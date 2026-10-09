@@ -34,6 +34,13 @@ const SCRIPTS = (port) => ({
   plan_readonly: [tool('write_file', 'filepath: live/planned.js\ncontent:\nmodule.exports = 3;'),
     '1. Read the config\n2. Update the port\n\n## Files Affected\n- fixtures/config.txt\n\n> Approve the plan to begin execution.'],
   native_plan: ['1. Read the notes\n2. Summarise them\n\n> Approve the plan to begin execution.'],
+  // Long task that crosses the auto-compaction threshold part-way (replies indexed by request count)
+  compaction: ['fixtures/config.txt', 'fixtures/notes.txt', 'live/keep-me.txt', 'fixtures/config.txt\nstart_line: 2', 'fixtures/notes.txt\nstart_line: 1\nend_line: 1', 'live/keep-me.txt\nstart_line: 1']
+    .map((f, i) => `Step ${i + 1}.\n\n` + tool('read_file', 'filepath: ' + f)).concat(['The original request was handled.']),
+  // Plan → clarifying question → answer: the answer must continue the read-only plan
+  plan_clarify: ['<clarify>\nquestion: Which database should the plan target?\ntype: single\noptions:\n- Postgres\n- SQLite\nfree_input: false\n</clarify>',
+    tool('write_file', 'filepath: live/eager.js\ncontent:\nmodule.exports = 4;'),
+    '1. Add the Postgres client\n2. Migrate the schema\n\n> Approve the plan to begin execution.'],
   browser: [tool('browser_navigate', `url: http://127.0.0.1:${port}/page`), F + 'browser_get_text\n' + F + '\n', tool('browser_close', ''), 'Read the page.'],
   // Native tool calling (OpenRouter path): replies may be streamed tool_calls
   native_text: ['A plain native-mode answer.'],
@@ -56,6 +63,8 @@ function start(port0) {
   fs.writeFileSync(LOG_FILE, '');
   let port;
   const log = [];
+  let compactionReplies = 0;
+  let planClarifyReplies = 0;
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/page') {
       res.setHeader('content-type', 'text/html');
@@ -72,6 +81,8 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user').pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
+        roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
+        hasRequest: messages.some(m => m.role === 'user' && /\[SCENARIO:compaction\]/.test(textOf(m.content))),
         native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
       log.push(rec);
       fs.appendFileSync(LOG_FILE, JSON.stringify({ ...rec, lastUser: rec.lastUser.slice(0, 300) }) + '\n');
@@ -82,6 +93,8 @@ function start(port0) {
       let entry;
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
       if (needsVerify && scenario !== 'stuck_verify') { entry = VERIFY; }
+      else if (scenario === 'compaction') { entry = SCRIPTS(port).compaction[compactionReplies++] ?? 'Done.'; }
+      else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }
       const reply = typeof entry === 'string' ? { text: entry, finish: 'stop' } : entry;
       if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); return res.end('{"error":"simulated provider failure"}'); }
@@ -104,7 +117,9 @@ function start(port0) {
       const tick = () => {
         if (i < chunks.length) { res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: chunks[i++] }, finish_reason: null }] }) + '\n\n'); return setTimeout(tick, 3); }
         if (reply.drop) { return res.socket.destroy(); }
-        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: reply.finish || 'stop' }] }) + '\n\n');
+        // Large reported prompt sizes push the compaction scenario over the auto-compact threshold
+        const usage = scenario === 'compaction' ? { usage: { prompt_tokens: 20000, completion_tokens: 50, total_tokens: 20050 } } : {};
+        res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: reply.finish || 'stop' }], ...usage }) + '\n\n');
         res.write('data: [DONE]\n\n'); res.end();
       };
       tick();
