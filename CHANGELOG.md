@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.5 - 2026-10-09
 
 ### Changed
 - Prompt caching: requests to Claude models (direct and through OpenRouter) now ask the provider to cache the conversation, so each request in a task re-reads what was already sent at about a tenth of the price. The system prompt and tool list no longer change during a task (phase guidance is added to the conversation instead), so providers that cache automatically (OpenAI, DeepSeek, Gemini, Grok…) get cache hits too. The token counter shows the cached share. On a recorded 63-request task, billed input dropped from ~6.0M to the equivalent of ~0.9M tokens at Claude cache pricing.
