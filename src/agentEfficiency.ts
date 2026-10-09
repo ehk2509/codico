@@ -93,6 +93,18 @@ export function isDocumentationFile(filepath: string): boolean {
     return DOCUMENTATION_EXTENSIONS.has(base.slice(dot));
 }
 
+/**
+ * True when a search pattern sent without regex mode is clearly meant as one
+ * (alternation, escapes, wildcards, anchors, quantified classes) and compiles.
+ * Models often omit the regex flag; such patterns essentially never match
+ * literally. Plain brackets or parentheses are not enough: "[System x]" or
+ * "call(x)" are ordinary literal searches.
+ */
+export function looksLikeIntendedRegex(pattern: string): boolean {
+    if (!/\||\\[bdswBDSW]|\.[*+?]|^\^|\$$|\[[^\]]+\][*+?{]/.test(pattern)) { return false; }
+    try { new RegExp(pattern); return true; } catch { return false; }
+}
+
 export function isExploratoryTerminalCommand(command: string): boolean {
     let candidate = command;
     while (LEADING_CD_RE.test(candidate)) {

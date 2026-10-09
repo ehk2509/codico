@@ -56,6 +56,37 @@ async function run() {
   await scenario('verify_ok', ({ read, reqs, text }) => ({ ok: read('live/verified.js') !== null && /acceptance gate is satisfied/.test(text) && reqs.length <= 5, why: `gate satisfied: ${/acceptance gate is satisfied/.test(text)}; ${reqs.length} req` }));
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
 
+  // Auto-compaction mid-task must keep the request and leave no orphaned tool results
+  await set('autoCompactThreshold', 10000);
+  await scenario('compaction', ({ reqs }) => {
+    const after = reqs.filter(r => r.hasSummary);
+    const keptRequest = after.length > 0 && after.every(r => r.hasRequest);
+    // Fenced tools: each [Tool Results] user message must follow an assistant message
+    const wellFormed = after.every(r => r.roles.every((role, i) => i === 0 || !(role === 'user' && r.roles[i - 1] === 'user')));
+    return { ok: after.length > 0 && keptRequest && wellFormed,
+      why: `${reqs.length} req, ${after.length} after compaction; request kept: ${keptRequest}; roles alternate: ${wellFormed}` };
+  }, 90000);
+  await set('autoCompactThreshold', 100000);
+
+  {
+    // Plan → clarifying question → the user answers (two commands, one scenario)
+    const before = (await getLog()).length; const t0 = Date.now(); let error = null;
+    try {
+      await vscode.commands.executeCommand('codico.__evalRunPlan', '[SCENARIO:plan_clarify] plan the storage layer');
+      await vscode.commands.executeCommand('codico.__evalAnswerClarify', 'Postgres');
+    } catch (e) { error = String(e && e.message || e); }
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'plan_clarify' && e.stream);
+    const afterAnswer = reqs.slice(1);
+    const continuedPlan = afterAnswer.length > 0 && afterAnswer.every(r => /task planner/.test(r.lastUser) || /^\[Tool Results\]/.test(r.lastUser));
+    const answerIncluded = afterAnswer.some(r => /plan the storage layer[\s\S]*answer to your clarifying question: Postgres/.test(r.lastUser));
+    const blocked = afterAnswer.some(r => /Not available in Ask mode/.test(r.lastUser));
+    const written = read('live/eager.js') !== null;
+    const ok = !error && reqs.length === 3 && continuedPlan && answerIncluded && blocked && !written;
+    results.push({ name: 'plan_clarify', ms: Date.now() - t0, requests: reqs.length, ok,
+      why: `answer continued the plan: ${continuedPlan}; goal + answer sent: ${answerIncluded}; write blocked: ${blocked}; file written: ${written}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   await scenario('plan_readonly', ({ reqs, text, read }) => {
     const blocked = /Not available in Ask mode/.test(text);
     const written = read('live/planned.js') !== null;

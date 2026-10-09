@@ -64,3 +64,13 @@ test('documentation and plain-text files are recognised', () => {
     assert.equal(isDocumentationFile(f), false, f);
   }
 });
+
+test('search patterns that are clearly regexes are recognised when regex mode was omitted', () => {
+  const { looksLikeIntendedRegex } = require('../out/agentEfficiency.js');
+  for (const p of ['system|SYSTEM', 'systemPrompt|SYSTEM_PROMPT', 'export const (DEFAULT_SYSTEM_PROMPT|S_SYSTEM)', '\\bfoo\\b', 'get.*Name', '^import ', 'end;$', 'v[0-9]+']) {
+    assert.equal(looksLikeIntendedRegex(p), true, p);
+  }
+  for (const p of ['You are Codico', 'streamOpenRouter', 'a.b', 'call(x)', 'unbalanced (paren', '[System Verification]']) {
+    assert.equal(looksLikeIntendedRegex(p), false, p);
+  }
+});
