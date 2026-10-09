@@ -5,7 +5,8 @@
 const fs = require('node:fs');
 const [mode, statusFile] = process.argv.slice(2);
 const status = { pid: process.pid, pingAnswered: false, cancelled: null };
-const save = () => statusFile && fs.writeFileSync(statusFile, JSON.stringify(status));
+// Written atomically: the test may read the file while it is being replaced
+const save = () => { if (statusFile) { fs.writeFileSync(statusFile + '.tmp', JSON.stringify(status)); fs.renameSync(statusFile + '.tmp', statusFile); } };
 save();
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
 let buf = '';
