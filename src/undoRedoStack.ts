@@ -1,9 +1,12 @@
 import * as vscode from 'vscode';
+import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 /** A before/after snapshot of a single file mutation. */
 export interface FileSnapshot {
-    /** Workspace-relative path (forward slashes). */
+    /** Path as shown to the user. */
     filepath: string;
+    /** The resolved file (the path may be absolute or name another workspace folder). */
+    uri: vscode.Uri;
     /** File contents before the change. `null` means the file did not exist. */
     before: Uint8Array | null;
     /** File contents after the change. */
@@ -12,7 +15,15 @@ export interface FileSnapshot {
     label: string;
 }
 
+/** Asks the user whether to overwrite a file that changed since Codico wrote it. */
+export type ConfirmOverwrite = (message: string) => Promise<boolean>;
+
+/** Result of undo/redo: `applied` is false when the user kept a file that had changed since. */
+export interface UndoRedoResult { filepath: string; applied: boolean }
+
 export class UndoRedoStack {
+    constructor(private readonly _confirm: ConfirmOverwrite) {}
+
     private _undo: FileSnapshot[] = [];
     private _redo: FileSnapshot[] = [];
     private readonly _max = 50;
@@ -25,31 +36,34 @@ export class UndoRedoStack {
         this._redo = [];
     }
 
-    /** Undo the most recent mutation. Returns the filepath restored, or undefined if nothing to undo. */
-    async undo(): Promise<string | undefined> {
-        if (this._opInProgress) { return undefined; }
-        this._opInProgress = true;
-        try {
-            const snap = this._undo.pop();
-            if (!snap) { return undefined; }
-            await this._apply(snap.filepath, snap.before);
-            this._redo.push(snap);
-            return snap.filepath;
-        } finally {
-            this._opInProgress = false;
-        }
+    /** Undo the most recent mutation. Returns undefined if there is nothing to undo. */
+    async undo(): Promise<UndoRedoResult | undefined> {
+        return this._step(this._undo, this._redo, 'undo');
     }
 
-    /** Redo the most recently undone mutation. Returns the filepath restored, or undefined. */
-    async redo(): Promise<string | undefined> {
+    /** Redo the most recently undone mutation. Returns undefined if there is nothing to redo. */
+    async redo(): Promise<UndoRedoResult | undefined> {
+        return this._step(this._redo, this._undo, 'redo');
+    }
+
+    private async _step(from: FileSnapshot[], to: FileSnapshot[], kind: 'undo' | 'redo'): Promise<UndoRedoResult | undefined> {
         if (this._opInProgress) { return undefined; }
         this._opInProgress = true;
         try {
-            const snap = this._redo.pop();
+            const snap = from.at(-1);
             if (!snap) { return undefined; }
-            await this._apply(snap.filepath, snap.after);
-            this._undo.push(snap);
-            return snap.filepath;
+            const uri = snap.uri;
+            // The file must still be as Codico left it; anything else (hand edits, other
+            // tools) would be silently lost, so ask first
+            const expected = kind === 'undo' ? snap.after : snap.before;
+            if (!sameBytes(await readCurrentBytes(uri), expected) &&
+                !await this._confirm(`${snap.filepath} has changed since Codico ${kind === 'undo' ? 'made' : 'undid'} this change. ${kind === 'undo' ? 'Undo' : 'Redo'} anyway and lose those changes?`)) {
+                return { filepath: snap.filepath, applied: false };
+            }
+            from.pop();
+            await this._apply(uri, kind === 'undo' ? snap.before : snap.after);
+            to.push(snap);
+            return { filepath: snap.filepath, applied: true };
         } finally {
             this._opInProgress = false;
         }
@@ -70,23 +84,13 @@ export class UndoRedoStack {
         };
     }
 
-    private async _apply(relPath: string, content: Uint8Array | null): Promise<void> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) { throw new Error('No workspace folder open'); }
-        const uri = vscode.Uri.joinPath(folders[0].uri, relPath);
+    private async _apply(uri: vscode.Uri, content: Uint8Array | null): Promise<void> {
         if (content === null) {
             // File did not exist before — delete the current version
             try { await vscode.workspace.fs.delete(uri); } catch { /* already gone */ }
         } else {
-            // Restore parent dirs and write
-            const dirUri = vscode.Uri.joinPath(uri, '..');
-            await vscode.workspace.fs.createDirectory(dirUri);
-            await vscode.workspace.fs.writeFile(uri, content);
-            // Show the restored file
-            try {
-                const doc = await vscode.workspace.openTextDocument(uri);
-                await vscode.window.showTextDocument(doc, { preview: true });
-            } catch { /* ignore */ }
+            await writeCurrentBytes(uri, content);
+            await revealFile(uri);
         }
     }
 }

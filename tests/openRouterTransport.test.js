@@ -227,3 +227,39 @@ test('test endpoint override only accepts http(s) URLs', () => {
   assert.equal(testOpenRouterEndpoint('file:///etc/passwd'), undefined);
   assert.equal(testOpenRouterEndpoint('not a url'), undefined);
 });
+
+test('a character split across network chunks is decoded intact', async () => {
+  const frame = Buffer.from('data: {"choices":[{"delta":{"content":"Café 日本語 🚀"}}]}\n\n');
+  const chunks = await withFakeServer(async (req, res) => {
+    req.resume();
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    // One byte per write, flushed separately, so every multi-byte character is split
+    for (const byte of frame) {
+      res.write(Buffer.from([byte]));
+      await new Promise(r => setImmediate(r));
+    }
+    res.end('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  }, endpoint => collect(streamOpenRouter('test-key', [{ role: 'user', content: 'hi' }], 'test-model', undefined, undefined, 'low', undefined, [], endpoint)));
+  const text = chunks.filter(c => c.type === 'content').map(c => c.text).join('');
+  assert.equal(text, 'Café 日本語 🚀');
+});
+
+test('a provider that stops sending is reported as a recoverable interruption', async () => {
+  const { setStreamStallTimeout, isRecoverableStreamInterruption } = require('../out/streamCompletion.js');
+  setStreamStallTimeout(1);
+  try {
+    const started = Date.now();
+    const chunks = await withFakeServer((req, res) => {
+      req.resume();
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n');
+      // ...and then nothing, with the connection left open
+    }, endpoint => collect(streamOpenRouter('test-key', [{ role: 'user', content: 'hi' }], 'test-model', undefined, undefined, 'low', undefined, [], endpoint)));
+    const error = chunks.find(c => c.type === 'stream_error');
+    assert.ok(error, 'the stall is reported');
+    assert.ok(isRecoverableStreamInterruption(error.message), error.message);
+    assert.ok(Date.now() - started < 5000, 'reported within seconds, not never');
+  } finally {
+    setStreamStallTimeout(300);
+  }
+});

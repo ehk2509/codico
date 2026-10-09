@@ -44,6 +44,24 @@ const SCRIPTS = (port) => ({
   // Busy-agent queueing: A answers slowly; B arrives meanwhile and must be queued, not dropped
   queue_a: [{ text: 'Done A.', delay: 1500 }],
   queue_b: ['Done B.'],
+  // A failing panel action during A must not unlock the agent: B still waits for A
+  herr_a: [{ text: tool('read_file', 'filepath: fixtures/notes.txt'), delay: 1500 }, 'Done A.'],
+  herr_b: ['Done B.'],
+  // The user edits the file while the approval prompt is open
+  approve_edit: [tool('edit_file', 'filepath: fixtures/approve-edit.txt\nold_str:\nbeta=2\nnew_str:\nbeta=3'), 'Done.'],
+  approve_write: [tool('write_file', 'filepath: fixtures/approve-write.txt\ncontent:\nagent'), 'Done.'],
+  // The old text exists only in the editor's unsaved buffer
+  dirty_edit: [tool('edit_file', 'filepath: fixtures/dirty.txt\nold_str:\nTWO-UNSAVED\nnew_str:\ntwo-final'), 'Done.'],
+  undo_write: [tool('write_file', 'filepath: fixtures/undo.txt\ncontent:\nv2'), 'Done.'],
+  // VS Code will not open this as text; the write itself still succeeds
+  binary_write: [tool('write_file', 'filepath: live/blob.bin\ncontent:\nAB\u0000\u0001CD'), 'Done.'],
+  // The model names the file by its absolute path; Undo must restore that same file
+  abs_undo: [tool('write_file', `filepath: ${path.join(process.env.LIVE_WORK_DIR || '', 'ws', 'fixtures', 'abs.txt')}\ncontent:\nv2`), 'Done.'],
+  // Symbolic links leading outside the workspace: reading or writing through them is refused
+  symlink: [tool('read_file', 'filepath: fixtures/link/secret.txt'), tool('write_file', 'filepath: fixtures/link/new.txt\ncontent:\nescaped'),
+    tool('write_file', 'filepath: fixtures/dangling\ncontent:\nescaped'), 'Done.'],
+  // Stopped during setup: must never reach the model
+  stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only
   plan_q_a: [{ text: '1. First plan step\n\n> Approve the plan to begin execution.', delay: 1500 }],
   plan_q_b: [tool('write_file', 'filepath: live/queued-plan.js\ncontent:\nmodule.exports = 5;'), '1. Second plan step\n\n> Approve the plan to begin execution.'],

@@ -66,3 +66,24 @@ test('drops text a resumed response repeats from before the cutoff', () => {
 
   assert.equal(repeatedPrefixLength('', 'anything'), 0);
 });
+
+test('think tags split across chunks never leak into the reply', () => {
+  const { ThinkTagSplitter } = require('../out/streamCompletion.js');
+  const run = (chunks) => {
+    const out = [];
+    const splitter = new ThinkTagSplitter((kind, text) => {
+      const last = out[out.length - 1];
+      if (last && last.kind === kind) { last.text += text; } else { out.push({ kind, text }); }
+    });
+    chunks.forEach(c => splitter.push(c));
+    splitter.flush();
+    return out;
+  };
+  const expected = [{ kind: 'thinking', text: 'plan it' }, { kind: 'content', text: 'Answer.' }];
+  assert.deepEqual(run(['<think>plan it</think>Answer.']), expected);
+  assert.deepEqual(run(['<thi', 'nk>plan', ' it</th', 'ink>Ans', 'wer.']), expected);
+  assert.deepEqual(run(['<', 't', 'h', 'i', 'n', 'k', '>plan it<', '/think', '>Answer.']), expected);
+  // A "<" that is not a tag is held only until the next chunk, and flushed at the end
+  assert.deepEqual(run(['a <', ' b']), [{ kind: 'content', text: 'a < b' }]);
+  assert.deepEqual(run(['ends with <th']), [{ kind: 'content', text: 'ends with <th' }]);
+});

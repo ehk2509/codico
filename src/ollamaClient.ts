@@ -1,7 +1,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { SYSTEM_PROMPT, StreamChunk, ChatMessage } from './openRouterClient';
-import { StreamCompletionGuard } from './streamCompletion';
+import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { flattenChatHistory } from './providerConversation';
 
 /**
@@ -62,33 +62,7 @@ export function streamOllama(
             }
 
             // ── <think> tag state machine (for models like qwen3, deepseek-r1) ──
-            let inThinkBlock = false;
-
-            function processContentChunk(raw: string): void {
-                if (!raw) { return; }
-
-                if (!inThinkBlock) {
-                    const tIdx = raw.indexOf('<think>');
-                    if (tIdx !== -1) {
-                        const before = raw.slice(0, tIdx);
-                        if (before) { push({ type: 'content', text: before }); }
-                        inThinkBlock = true;
-                        processContentChunk(raw.slice(tIdx + 7));
-                    } else {
-                        push({ type: 'content', text: raw });
-                    }
-                } else {
-                    const eIdx = raw.indexOf('</think>');
-                    if (eIdx !== -1) {
-                        const inside = raw.slice(0, eIdx);
-                        if (inside) { push({ type: 'thinking', text: inside }); }
-                        inThinkBlock = false;
-                        processContentChunk(raw.slice(eIdx + 8));
-                    } else {
-                        push({ type: 'thinking', text: raw });
-                    }
-                }
-            }
+            const think = new ThinkTagSplitter((type, text) => push({ type, text }));
 
             const messages = flattenChatHistory([
                 { role: 'system', content: effectiveSystemPrompt },
@@ -123,7 +97,8 @@ export function streamOllama(
                     (res) => {
                         if (res.statusCode && res.statusCode >= 400) {
                             let errBody = '';
-                            res.on('data', (d: Buffer) => { errBody += d.toString(); });
+                            res.setEncoding('utf8'); // keeps characters split across chunks intact
+                            res.on('data', (d: string) => { errBody += d.toString(); });
                             res.on('end', () => {
                                 push(new Error(`Ollama HTTP ${res.statusCode}: ${errBody.slice(0, 300)}`));
                             });
@@ -136,6 +111,7 @@ export function streamOllama(
                         const pushEnd = (): void => {
                             if (!streamEnded) {
                                 streamEnded = true;
+                                think.flush();
                                 push(null);
                             }
                         };
@@ -169,7 +145,7 @@ export function streamOllama(
                                             | undefined;
 
                                         if (typeof delta?.content === 'string') {
-                                            processContentChunk(delta.content);
+                                            think.push(delta.content);
                                         }
 
                                         const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
@@ -196,7 +172,8 @@ export function streamOllama(
                             }
                         }
 
-                        res.on('data', (data: Buffer) => {
+                        res.setEncoding('utf8'); // keeps characters split across chunks intact
+                        res.on('data', (data: string) => {
                             buffer += data.toString();
                             const lines = buffer.split('\n');
                             buffer = lines.pop() ?? '';
@@ -226,7 +203,7 @@ export function streamOllama(
                                             | undefined;
 
                                         if (typeof delta?.content === 'string') {
-                                            processContentChunk(delta.content);
+                                            think.push(delta.content);
                                         }
 
                                         const finishReason: string | undefined = json.choices?.[0]?.finish_reason;
@@ -282,6 +259,7 @@ export function streamOllama(
                         push(null);
                     }
                 });
+                watchStreamStall(req);
                 req.write(body);
                 req.end();
             }
@@ -346,7 +324,8 @@ export function ollamaChatCompletion(
             },
             (res) => {
                 let data = '';
-                res.on('data', (c: Buffer) => { data += c.toString(); });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (c: string) => { data += c.toString(); });
                 res.on('end', () => {
                     try {
                         resolve(JSON.parse(data)?.choices?.[0]?.message?.content ?? '');

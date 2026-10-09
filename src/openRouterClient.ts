@@ -1,6 +1,6 @@
 import * as http from 'http';
 import * as https from 'https';
-import { StreamCompletionGuard } from './streamCompletion';
+import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toOpenAIMessages } from './providerConversation';
 import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
@@ -296,33 +296,7 @@ export function streamOpenRouter(
             }
 
             // ── <think> tag state machine ─────────────────────────────────
-            let inThinkBlock = false;
-
-            function processContentChunk(raw: string): void {
-                if (!raw) { return; }
-
-                if (!inThinkBlock) {
-                    const tIdx = raw.indexOf('<think>');
-                    if (tIdx !== -1) {
-                        const before = raw.slice(0, tIdx);
-                        if (before) { push({ type: 'content', text: before }); }
-                        inThinkBlock = true;
-                        processContentChunk(raw.slice(tIdx + 7));
-                    } else {
-                        push({ type: 'content', text: raw });
-                    }
-                } else {
-                    const eIdx = raw.indexOf('</think>');
-                    if (eIdx !== -1) {
-                        const inside = raw.slice(0, eIdx);
-                        if (inside) { push({ type: 'thinking', text: inside }); }
-                        inThinkBlock = false;
-                        processContentChunk(raw.slice(eIdx + 8));
-                    } else {
-                        push({ type: 'thinking', text: raw });
-                    }
-                }
-            }
+            const think = new ThinkTagSplitter((type, text) => push({ type, text }));
 
             // ── Build request ─────────────────────────────────────────────
             let useNativeTools = nativeTools.length > 0;
@@ -413,7 +387,8 @@ export function streamOpenRouter(
                     // with the compatibility fenced protocol instead of failing the turn.
                     if (res.statusCode && res.statusCode >= 400) {
                         let errBody = '';
-                        res.on('data', (d: Buffer) => { errBody += d.toString(); });
+                        res.setEncoding('utf8'); // keeps characters split across chunks intact
+                        res.on('data', (d: string) => { errBody += d.toString(); });
                         res.on('end', () => {
                             const toolCapabilityError = /tool|function|unsupported|not supported/i.test(errBody);
                             if (useNativeTools && !nativeFallbackUsed && toolCapabilityError && !signal?.aborted) {
@@ -450,7 +425,7 @@ export function streamOpenRouter(
                     }
                     // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
                     let streamEnded = false;
-                    function pushEnd(): void { if (!streamEnded) { streamEnded = true; push(null); } }
+                    function pushEnd(): void { if (!streamEnded) { streamEnded = true; think.flush(); push(null); } }
 
                     function processSSELine(trimmed: string): void {
                         if (!trimmed) { return; }
@@ -482,7 +457,7 @@ export function streamOpenRouter(
                                 }
                                 | undefined;
                             if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
-                            if (typeof delta?.content === 'string') { processContentChunk(delta.content); }
+                            if (typeof delta?.content === 'string') { think.push(delta.content); }
                             for (const toolCall of delta?.tool_calls ?? []) {
                                 nativeCalls.add(toolCall);
                             }
@@ -514,7 +489,8 @@ export function streamOpenRouter(
                         for (const line of remaining.split('\n')) { processSSELine(line.trim()); }
                     }
 
-                    res.on('data', (data: Buffer) => {
+                    res.setEncoding('utf8'); // keeps characters split across chunks intact
+                    res.on('data', (data: string) => {
                         buffer += data.toString();
                         const lines = buffer.split('\n');
                         buffer = lines.pop() ?? '';
@@ -550,6 +526,7 @@ export function streamOpenRouter(
                         push(null);
                     }
                 });
+                watchStreamStall(req);
                 req.write(body);
                 req.end();
             }

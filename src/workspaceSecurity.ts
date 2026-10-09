@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
 import * as path from 'path';
 import { ignoreRules } from './ignoreRules';
 
@@ -86,11 +87,42 @@ export async function resolveWorkspaceToolPath(
         throw new Error('Path excluded by .codicoignore: ' + relativePath);
     }
 
-    return {
-        folder: selected.folder,
-        relativePath,
-        uri: relativePath ? vscode.Uri.joinPath(selected.folder.uri, relativePath) : selected.folder.uri,
-    };
+    const uri = relativePath ? vscode.Uri.joinPath(selected.folder.uri, relativePath) : selected.folder.uri;
+    await assertNoSymlinkEscape(selected.folder, uri, relativePath);
+    return { folder: selected.folder, relativePath, uri };
+}
+
+/**
+ * The path text stays inside the folder, but a symbolic link on the way (a repo's
+ * `docs -> ~/.ssh`) could still lead outside it. The deepest existing part of the
+ * path is resolved, since write_file targets may not exist yet.
+ */
+async function assertNoSymlinkEscape(folder: vscode.WorkspaceFolder, uri: vscode.Uri, relativePath: string): Promise<void> {
+    if (uri.scheme !== 'file' || !relativePath) { return; }
+    const root = await fs.promises.realpath(folder.uri.fsPath).catch(() => folder.uri.fsPath);
+    let probe = uri.fsPath;
+    let rest = '';
+    for (;;) {
+        try {
+            const resolved = path.join(await fs.promises.realpath(probe), rest);
+            const inside = path.relative(root, resolved);
+            if (inside === '..' || inside.startsWith('..' + path.sep) || path.isAbsolute(inside)) {
+                throw new Error('Unsafe path rejected: it leads outside the workspace through a symbolic link: ' + relativePath);
+            }
+            return;
+        } catch (err) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code !== 'ENOENT' && code !== 'ENOTDIR') { throw err; }
+            // A dangling link: writing through it would create its (unchecked) target
+            if ((await fs.promises.lstat(probe).catch(() => null))?.isSymbolicLink()) {
+                throw new Error('Unsafe path rejected: it is a symbolic link to a missing target: ' + relativePath);
+            }
+            const parent = path.dirname(probe);
+            if (parent === probe) { return; }
+            rest = path.join(path.basename(probe), rest);
+            probe = parent;
+        }
+    }
 }
 
 export async function isWorkspaceUriAllowed(uri: vscode.Uri): Promise<boolean> {

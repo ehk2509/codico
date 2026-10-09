@@ -2,6 +2,24 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Stop was ignored while a turn was still preparing its request (reading keys, building context, `/pr` and `@agent` lookups), so the whole task ran anyway; a thread switch or Clear in that window waited for the entire task. Stop now cancels the turn from its first moment.
+- A failing panel action (accepting an edit, Undo/Redo, previewing a diff, refreshing MCP) during a running task marked the agent idle, so a queued message started while the task was still running. The running task is no longer affected.
+- Errors while starting a queued message or a resumed session were silently lost; they are now shown in the panel.
+- Turning Edits mode on or off, or refreshing MCP servers, during a running task now takes effect when the task ends, instead of discarding its pending proposals or disconnecting a server it was calling.
+- Undo, Redo and accepting an Edits-mode proposal overwrote the file even if it had changed since (hand edits were silently lost). Codico now asks before overwriting a changed file.
+- Approving a write or edit applied content computed before the prompt, overwriting changes the user made while it was open. Edits are now re-applied to the current file, and a write to a file that changed is not made (the model is told to re-read it).
+- Files open with unsaved changes were read and edited on disk, so the model saw stale content and saving ended in a conflict. Codico now reads the editor's buffer and writes through it.
+- write_file reported a failed write (and skipped Undo) when the file was written but could not be shown as text.
+- After a repeated tool call was detected, later tool calls in the same response still ran; they are now skipped.
+- Non-English text and emoji could be corrupted ("�") when a character arrived split across two network chunks, in the chat and in files the agent wrote. All providers, terminal output and helper requests now decode text across chunk boundaries.
+- A provider that kept the connection open but stopped sending hung the task until Stop. After 5 minutes of silence (`codico.streamStallTimeoutSeconds`) the connection is now treated as dropped and the agent reconnects.
+- Undo, Redo and Edits-mode proposals used the wrong file when the model gave an absolute path or a path in another folder of a multi-root workspace (Undo wrote a stray copy; accepting failed with "Unsafe file path rejected").
+- Security: a symbolic link inside the workspace (e.g. `docs -> ~/.ssh`) let tools read or write files outside it. Paths that lead outside the workspace through a link, or through a dangling link, are now refused.
+- A `<think>` tag split across chunks leaked the model's reasoning into the reply as raw text.
+
 ## 0.3.3 - 2026-10-09
 
 ### Changed
