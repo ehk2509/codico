@@ -110,7 +110,7 @@
     return out;
   }
 
-  var api = { renderMd: renderMd };
+  var api = { renderMd: renderMd, renderInline: inline };
   if (typeof window !== 'undefined') { window.CodicoMarkdown = api; }
   if (typeof module !== 'undefined' && module.exports) { module.exports = api; }
 })();

@@ -957,15 +957,46 @@ body{
 .todo-text{flex:1}
 .todo-item.done .todo-text{opacity:.5;text-decoration:line-through}
 .todo-item.active .todo-text{font-weight:600}
-/* In-plan checklist preview */
-.plan-checklist{
-  border:1px solid var(--vscode-panel-border);border-radius:6px;
-  padding:8px 10px;margin:8px 0 10px;
-  background:var(--vscode-editor-background);font-size:11px;
+/* Plan card (Plan mode preview before approval) */
+.plan-card{
+  margin:10px 0 8px;border-radius:8px;overflow:hidden;
+  border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));
+  background:var(--vscode-editor-background);
 }
-.plan-checklist-title{
-  font-size:10px;font-weight:700;opacity:.6;letter-spacing:.06em;
-  text-transform:uppercase;margin-bottom:6px;
+.plan-card-header{
+  display:flex;align-items:center;gap:7px;padding:8px 12px;
+  border-bottom:1px solid var(--vscode-panel-border,rgba(128,128,128,.25));
+  background:var(--vscode-sideBarSectionHeader-background,rgba(128,128,128,.06));
+}
+.plan-card-icon{font-size:13px;line-height:1}
+.plan-card-title{font-size:12px;font-weight:700;letter-spacing:.02em}
+.plan-card-count{
+  margin-left:auto;font-size:10px;font-weight:600;padding:1px 8px;border-radius:10px;
+  background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);
+}
+.plan-steps{list-style:none;margin:0;padding:4px 0}
+.plan-step{
+  display:flex;gap:10px;align-items:flex-start;padding:7px 12px;
+  border-radius:6px;margin:0 4px;transition:background .12s;
+}
+.plan-step:hover{background:var(--vscode-list-hoverBackground,rgba(128,128,128,.08))}
+.plan-step + .plan-step{margin-top:1px}
+.plan-step-num{
+  flex-shrink:0;width:20px;height:20px;border-radius:50%;margin-top:1px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;font-variant-numeric:tabular-nums;
+  color:var(--vscode-button-foreground,#fff);background:var(--vscode-button-background,#0e639c);
+}
+.plan-step-body{min-width:0;flex:1}
+.plan-step-title{font-size:12px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.plan-step-detail{
+  margin-top:2px;font-size:11px;line-height:1.5;color:var(--vscode-descriptionForeground);
+  overflow-wrap:anywhere;
+}
+.plan-step-title code,.plan-step-detail code{
+  font-family:var(--vscode-editor-font-family,monospace);font-size:.92em;
+  padding:0 4px;border-radius:3px;
+  background:var(--vscode-textCodeBlock-background,rgba(128,128,128,.15));
 }
 #ctx-chips{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
 .chip{

@@ -272,9 +272,10 @@ test('Plan mode: steps written in bold, headings or "Step N:" form still get App
   await send({ type: 'startMessage', id: 'p1', planGoal: 'add future trading option' }, { type: 'appendContent', id: 'p1', text: boldPlan }, { type: 'endMessage', id: 'p1' });
   assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
   assert.equal(await page.locator('#msg-p1').innerText().then(t => /No plan steps were produced/.test(t)), false);
-  const steps = await page.locator('#msg-p1 .plan-checklist .todo-text').allInnerTexts();
-  assert.deepEqual(steps, ['1. Add `POST /api/orders/future` endpoint', '2. Add `GET /api/orders/future` endpoint',
-    '3. Add a price-monitoring loop', '4. Add the `FutureOrders.js` component']);
+  const titles = await page.locator('#msg-p1 .plan-step-title').allInnerTexts();
+  assert.deepEqual(titles, ['Add POST /api/orders/future endpoint', 'Add GET /api/orders/future endpoint',
+    'Add a price-monitoring loop', 'Add the FutureOrders.js component']);
+  assert.deepEqual(await page.locator('#msg-p1 .plan-step-num').allInnerTexts(), ['1', '2', '3', '4']);
   await page.close();
 });
 
@@ -283,6 +284,37 @@ test('Plan mode: a plan with the closing line is approvable even if its steps ar
   await requestPlan(page, 'add future trading option');
   const oddPlan = 'First, add the endpoint.\nThen, add the UI.\n\n## Files Affected\n- a.js\n\n> Approve the plan to begin execution.';
   await send({ type: 'startMessage', id: 'p1', planGoal: 'add future trading option' }, { type: 'appendContent', id: 'p1', text: oddPlan }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
+  await page.close();
+});
+
+test('Plan card: formatted titles, full details, every step visible without interaction', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'pluggable providers');
+  const longDetail = 'Define the `ProviderAdapter` interface. ' + 'This sentence makes the description long. '.repeat(30) + 'FINAL-WORDS';
+  const steps = [
+    '**1. Add `src/modelAdapter.ts`**  \n' + longDetail,
+    '2. Add `src/providerRegistry.ts` — the adapter registry for **built-in** providers.',
+    ...[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].map(n => `${n}. Step ${n} title: detail for step ${n}`),
+  ].join('\n\n');
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'g' }, { type: 'appendContent', id: 'p1', text: steps + '\n\n> Approve the plan to begin execution.' }, { type: 'endMessage', id: 'p1' });
+
+  assert.equal(await page.locator('#msg-p1 .plan-card-count').innerText(), '14 steps');
+  // Inline markdown is rendered, not shown raw
+  assert.equal(await page.locator('#msg-p1 .plan-step').first().locator('.plan-step-title code').innerText(), 'src/modelAdapter.ts');
+  assert.equal(await page.locator('#msg-p1 .plan-card').innerText().then(t => t.includes('`') || t.includes('**')), false);
+  assert.equal(await page.locator('#msg-p1 .plan-step-title').nth(1).innerText(), 'Add src/providerRegistry.ts');
+  assert.match(await page.locator('#msg-p1 .plan-step-detail').nth(1).innerHTML(), /<strong>built-in<\/strong>/);
+
+  // The full description is visible: nothing cut, clamped or hidden
+  const first = page.locator('#msg-p1 .plan-step-detail').first();
+  assert.match(await first.innerText(), /FINAL-WORDS$/, 'description not truncated');
+  const clipped = await first.evaluate(e => e.scrollHeight > e.clientHeight + 1 || getComputedStyle(e).webkitLineClamp !== 'none');
+  assert.equal(clipped, false, 'description not visually clamped');
+  // Every step is visible without clicking anything
+  const visible = await page.evaluate(() => [...document.querySelectorAll('#msg-p1 .plan-step')].filter(e => e.offsetParent).length);
+  assert.equal(visible, 14);
+  assert.equal(await page.locator('#msg-p1 .plan-card-more').count(), 0);
   assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
   await page.close();
 });

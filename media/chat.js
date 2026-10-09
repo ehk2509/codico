@@ -1227,7 +1227,7 @@
     // If this is a plan execution message, prepend the todo tracker
     if (_isExecutingPlan && _planTasks.length > 0) {
       _isExecutingPlan = false;
-      var planItems = _planTasks.map(function(t) { return { status: 'pending', text: t.n + '. ' + t.text }; });
+      var planItems = _planTasks.map(function(t) { return { status: 'pending', text: t.n + '. ' + t.text + (t.detail ? ' \u2014 ' + t.detail : '') }; });
       var tracker = _buildOrUpdateTodoTracker('todo-tracker-plan-' + id, null, wrap, planItems, true);
       // Keep id-based lookups working for [TASK_START/DONE/FAIL:N] markers
       _planTasks.forEach(function(task) {
@@ -1531,21 +1531,9 @@
         noPlan.textContent = '\u26A0 No plan steps were produced, so there is nothing to approve. Rephrase the goal or try again.';
         wrap.appendChild(noPlan);
       } else if (wrap) {
-        // Render checklist preview
+        // Render the plan card: numbered steps, short title + clamped details
         if (_planTasks.length > 0) {
-          var checklist = document.createElement('div');
-          checklist.className = 'plan-checklist';
-          var clTitle = document.createElement('div');
-          clTitle.className = 'plan-checklist-title';
-          clTitle.textContent = '\uD83D\uDCCB ' + _planTasks.length + ' tasks planned';
-          checklist.appendChild(clTitle);
-          _planTasks.forEach(function (task) {
-            var row = document.createElement('div');
-            row.className = 'todo-item pending';
-            row.innerHTML = '<i class="todo-icon"></i><span class="todo-text">' + esc(task.n + '. ' + task.text) + '</span>';
-            checklist.appendChild(row);
-          });
-          wrap.appendChild(checklist);
+          wrap.appendChild(_buildPlanCard(_planTasks));
         }
 
         // Approval buttons
@@ -2207,16 +2195,78 @@
   // ":" and dash separators only count after the word "Step", so "10:30 …" is not a step.
   var PLAN_STEP_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*|__)?[ \t]*(step[ \t]+)?(\d{1,3})[ \t]*([.):]|[—–-])[ \t]*(.+)$/gim;
   function _parsePlanSteps(text) {
-    var steps = [];
+    var found = [];
     var m;
     PLAN_STEP_RE.lastIndex = 0;
     while ((m = PLAN_STEP_RE.exec(text)) !== null) {
       var sep = m[3];
       if (!m[1] && sep !== '.' && sep !== ')') { continue; }
-      var stepText = m[4].replace(/\*\*|__/g, '').replace(/\s+$/, '').trim();
-      if (stepText) { steps.push({ n: parseInt(m[2], 10), text: stepText, status: 'pending' }); }
+      var stepText = _stripHeadingEmphasis(m[4]);
+      if (stepText) { found.push({ n: parseInt(m[2], 10), line: stepText, start: m.index, end: PLAN_STEP_RE.lastIndex }); }
     }
-    return steps;
+    return found.map(function (f, i) {
+      // Lines after the step line (e.g. under a bold "**1. Title**") are its description,
+      // up to the next step or the next heading / quote / rule
+      var stop = i + 1 < found.length ? found[i + 1].start : text.length;
+      var following = text.slice(f.end, stop).split('\n');
+      var cut = following.findIndex(function (l) { return /^\s*(#{1,6}\s|>|---)/.test(l); });
+      if (cut >= 0) { following = following.slice(0, cut); }
+      var extra = following.join(' ').replace(/\s+/g, ' ').trim();
+      var split = _splitPlanStep(f.line);
+      var detail = [split.detail, extra].filter(Boolean).join(' ');
+      return { n: f.n, text: split.title, detail: detail, status: 'pending' };
+    });
+  }
+
+  function _buildPlanCard(tasks) {
+    var md = window.CodicoMarkdown;
+    var fmt = function (t) { return md && md.renderInline ? md.renderInline(t) : esc(t); };
+    var card = document.createElement('div');
+    card.className = 'plan-card';
+    card.innerHTML =
+      '<div class="plan-card-header">' +
+        '<span class="plan-card-icon">📋</span>' +
+        '<span class="plan-card-title">Plan</span>' +
+        '<span class="plan-card-count">' + tasks.length + (tasks.length === 1 ? ' step' : ' steps') + '</span>' +
+      '</div>';
+    var list = document.createElement('ol');
+    list.className = 'plan-steps';
+    // Every step and its full description are shown: the user reads the whole plan before approving
+    tasks.forEach(function (task) {
+      var li = document.createElement('li');
+      li.className = 'plan-step';
+      li.innerHTML =
+        '<span class="plan-step-num">' + task.n + '</span>' +
+        '<div class="plan-step-body">' +
+          '<div class="plan-step-title">' + fmt(task.text) + '</div>' +
+          (task.detail ? '<div class="plan-step-detail">' + fmt(task.detail) + '</div>' : '') +
+        '</div>';
+      list.appendChild(li);
+    });
+    card.appendChild(list);
+    return card;
+  }
+
+  // Remove the emphasis wrapping a step heading ("**1. Title**", "- **Step 1:** x") while
+  // keeping balanced inline emphasis inside the step ("uses **built-in** providers")
+  function _stripHeadingEmphasis(text) {
+    var t = text.replace(/^\s*(\*\*|__)\s*/, '').trim();
+    ['**', '__'].forEach(function (mark) {
+      if ((t.split(mark).length - 1) % 2 === 1) {
+        var i = t.indexOf(mark);
+        t = (t.slice(0, i) + t.slice(i + mark.length)).trim();
+      }
+    });
+    return t;
+  }
+
+  // "Add x.ts — does y" / "Add x.ts: does y" / "Add x.ts. Then y" -> short title + details
+  function _splitPlanStep(line) {
+    var m = line.match(/^(.{3,120}?)\s+[—–]\s+(.+)$/) || line.match(/^(.{3,90}?):\s+(.+)$/);
+    if (m) { return { title: m[1].trim(), detail: m[2].trim() }; }
+    var s = line.match(/^(.{12,120}?[.!?])\s+(.+)$/);
+    if (s) { return { title: s[1].replace(/\.$/, '').trim(), detail: s[2].trim() }; }
+    return { title: line, detail: '' };
   }
 
   // 950 -> "950", 12345 -> "12.3k", 2400000 -> "2.4M"
