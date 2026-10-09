@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.7 - 2026-10-09
 
 ### Added
 - Grouped tool steps: when a reply finishes, runs of three or more steps collapse into one line ("12 steps · read 7 files, searched 3×, ran 2 commands") that expands on click. Failed steps, terminal output and diffs stay visible; steps are shown live while the agent works.
