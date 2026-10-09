@@ -284,6 +284,12 @@
           "minimum": 10,
           "description": "Kill a run_terminal command (and everything it started) after this many seconds"
         },
+        "codico.streamStallTimeoutSeconds": {
+          "type": "number",
+          "default": 300,
+          "minimum": 30,
+          "description": "Treat a model response that sends nothing for this many seconds as a dropped connection and reconnect, instead of waiting forever"
+        },
         "codico.nativeToolCalling": {
           "type": "boolean",
           "default": true,

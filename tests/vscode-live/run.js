@@ -31,6 +31,12 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
   fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
   fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'v1\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/abs.txt'), 'v1\n');
+  // Outside the workspace, reachable only through symbolic links inside it
+  fs.mkdirSync(path.join(work, 'outside'));
+  fs.writeFileSync(path.join(work, 'outside/secret.txt'), 'OUTSIDE-SECRET\n');
+  fs.symlinkSync(path.join(work, 'outside'), path.join(ws, 'fixtures/link'));
+  fs.symlinkSync(path.join(work, 'outside/dangling-target.txt'), path.join(ws, 'fixtures/dangling'));
 
   process.env.LIVE_WORK_DIR = work;
   const server = await start(0);

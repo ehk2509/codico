@@ -85,7 +85,8 @@ export async function generateFollowUps(history: ChatMessage[], provider: Follow
                     (res) => {
                         let data = '';
                         let totalBytes = 0;
-                        res.on('data', (c: Buffer) => {
+                        res.setEncoding('utf8'); // keeps characters split across chunks intact
+                        res.on('data', (c: string) => {
                             totalBytes += c.length;
                             if (totalBytes > 64 * 1024) { res.destroy(); resolve(''); return; }
                             data += c.toString();

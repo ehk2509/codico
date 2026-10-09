@@ -1,14 +1,19 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { readCurrentBytes, sameBytes, writeCurrentBytes } from './workspaceText';
+import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 export interface FileEditProposal {
+    /** Path as the model wrote it; identifies the proposal in the panel. */
     filepath: string;
+    /** The resolved file (the path may be absolute or name another workspace folder). */
+    uri: vscode.Uri;
     /** Raw bytes of the file before this change. `null` means the file is new. */
     originalContent: Uint8Array | null;
     proposedContent: string;
     label: string;
 }
+
+export type UndoPush = (before: Uint8Array | null, after: Uint8Array, fp: string, label: string, uri: vscode.Uri) => void;
 
 // ── Virtual document provider for proposed (not-yet-written) content ─────────
 
@@ -49,6 +54,7 @@ class ProposedContentProvider implements vscode.TextDocumentContentProvider {
 // ── Manager ───────────────────────────────────────────────────────────────────
 
 export class EditProposalManager {
+    /** Keyed by resolved file, so two spellings of one path share a proposal. */
     private readonly _proposals = new Map<string, FileEditProposal>();
     private readonly _provider = new ProposedContentProvider();
 
@@ -59,14 +65,21 @@ export class EditProposalManager {
         );
     }
 
-    /** Add or replace a proposal for a filepath. */
+    /** Add or replace the proposal for a file. */
     queue(proposal: FileEditProposal): void {
-        this._provider.set(proposal.filepath, proposal.proposedContent);
-        this._proposals.set(proposal.filepath, proposal);
+        const key = proposal.uri.toString();
+        // A later edit to the same file keeps the name the panel already shows
+        const filepath = this._proposals.get(key)?.filepath ?? proposal.filepath;
+        this._provider.set(filepath, proposal.proposedContent);
+        this._proposals.set(key, { ...proposal, filepath });
     }
 
     /** The queued proposal for a file, if any (later edits must build on it, not on disk). */
-    pending(filepath: string): FileEditProposal | undefined { return this._proposals.get(filepath); }
+    pending(uri: vscode.Uri): FileEditProposal | undefined { return this._proposals.get(uri.toString()); }
+
+    private _byPath(filepath: string): FileEditProposal | undefined {
+        return [...this._proposals.values()].find(p => p.filepath === filepath);
+    }
 
     get hasProposals(): boolean { return this._proposals.size > 0; }
     get count(): number { return this._proposals.size; }
@@ -74,11 +87,8 @@ export class EditProposalManager {
 
     /** Open a VS Code side-by-side diff for a single proposal. */
     async openDiff(filepath: string): Promise<void> {
-        const proposal = this._proposals.get(filepath);
+        const proposal = this._byPath(filepath);
         if (!proposal) { return; }
-
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) { return; }
 
         const proposedUri = this._provider.uri(filepath);
         // Ensure provider has fresh content
@@ -86,8 +96,7 @@ export class EditProposalManager {
 
         let originalUri: vscode.Uri;
         if (proposal.originalContent !== null) {
-            const norm = path.posix.normalize(filepath.replace(/\\/g, '/'));
-            originalUri = vscode.Uri.joinPath(folders[0].uri, norm);
+            originalUri = proposal.uri;
         } else {
             // New file — diff against an empty document
             this._provider.set('__empty__', '');
@@ -112,25 +121,19 @@ export class EditProposalManager {
 
     /**
      * Apply a single proposal to disk.
-     * Calls `undoPush` with (before, after, filepath, label) so callers can
+     * Calls `undoPush` with (before, after, filepath, label, uri) so callers can
      * integrate with the UndoRedoStack without a direct dependency.
      */
     async applyOne(
         filepath: string,
-        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void,
+        undoPush: UndoPush,
         confirm: (message: string) => Promise<boolean>
     ): Promise<boolean> {
-        const proposal = this._proposals.get(filepath);
+        const proposal = this._byPath(filepath);
         if (!proposal) { return false; }
 
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) { throw new Error('No workspace folder open'); }
-
-        const norm = path.posix.normalize(filepath.replace(/\\/g, '/'));
-        if (norm.startsWith('..') || path.isAbsolute(norm)) {
-            throw new Error(`Unsafe file path rejected: "${filepath}"`);
-        }
-        const fileUri = vscode.Uri.joinPath(folders[0].uri, norm);
+        // Resolved (and checked) by the workspace path rules when the proposal was made
+        const fileUri = proposal.uri;
         const encoded = new TextEncoder().encode(proposal.proposedContent);
 
         // The proposal was built on the file as it was then; changes made since would be lost
@@ -140,30 +143,30 @@ export class EditProposalManager {
         }
         await writeCurrentBytes(fileUri, encoded);
 
-        undoPush(proposal.originalContent, encoded, filepath, proposal.label);
+        undoPush(proposal.originalContent, encoded, filepath, proposal.label, fileUri);
 
-        this._proposals.delete(filepath);
+        this._proposals.delete(fileUri.toString());
         this._provider.delete(filepath);
 
-        const doc = await vscode.workspace.openTextDocument(fileUri);
-        await vscode.window.showTextDocument(doc, { preview: false });
+        await revealFile(fileUri);
         return true;
     }
 
     /** Apply every queued proposal in order. Returns list of applied filepaths. */
     async applyAll(
-        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void,
+        undoPush: UndoPush,
         confirm: (message: string) => Promise<boolean>
     ): Promise<string[]> {
         const applied: string[] = [];
-        for (const fp of [...this._proposals.keys()]) {
+        for (const fp of this.proposals.map(p => p.filepath)) {
             if (await this.applyOne(fp, undoPush, confirm)) { applied.push(fp); }
         }
         return applied;
     }
 
     rejectOne(filepath: string): void {
-        this._proposals.delete(filepath);
+        const proposal = this._byPath(filepath);
+        if (proposal) { this._proposals.delete(proposal.uri.toString()); }
         this._provider.delete(filepath);
     }
 

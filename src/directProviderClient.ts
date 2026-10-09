@@ -1,6 +1,6 @@
 import * as https from 'https';
 import { ChatMessage, MessageContentPart, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
-import { StreamCompletionGuard } from './streamCompletion';
+import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toAnthropicMessages, toGeminiMessages, toOpenAIMessages } from './providerConversation';
 
@@ -132,35 +132,6 @@ function makeQueue<T>(): { push: (v: T | null | Error) => void; iterable: AsyncI
     };
 }
 
-// ── <think> tag state machine (shared by OpenAI-compat streaming) ─────────────
-
-function makeThinkParser(push: (v: StreamChunk) => void) {
-    let inThinkBlock = false;
-    return function processChunk(text: string): void {
-        if (inThinkBlock) {
-            const eIdx = text.indexOf('</think>');
-            if (eIdx !== -1) {
-                const inside = text.slice(0, eIdx);
-                if (inside) { push({ type: 'thinking', text: inside }); }
-                inThinkBlock = false;
-                processChunk(text.slice(eIdx + 8));
-            } else {
-                push({ type: 'thinking', text });
-            }
-        } else {
-            const tIdx = text.indexOf('<think>');
-            if (tIdx !== -1) {
-                const before = text.slice(0, tIdx);
-                if (before) { push({ type: 'content', text: before }); }
-                inThinkBlock = true;
-                processChunk(text.slice(tIdx + 7));
-            } else {
-                if (text) { push({ type: 'content', text }); }
-            }
-        }
-    };
-}
-
 // ── OpenAI-compatible streaming ───────────────────────────────────────────────
 
 function _streamOpenAICompat(
@@ -198,7 +169,8 @@ function _streamOpenAICompat(
           headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
-                let e = ''; res.on('data', (d: Buffer) => { e += d; });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                let e = ''; res.on('data', (d: string) => { e += d; });
                 res.on('end', () => {
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
@@ -213,7 +185,7 @@ function _streamOpenAICompat(
             let buf = '';
             const completion = new StreamCompletionGuard();
             const nativeCalls = new OpenAIToolCallAccumulator();
-            const processChunk = makeThinkParser(push as (v: StreamChunk) => void);
+            const think = new ThinkTagSplitter((type, text) => push({ type, text }));
             const emitNativeCalls = (final = false): void => {
                 for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
                 if (final && nativeCalls.hasPending) {
@@ -223,7 +195,8 @@ function _streamOpenAICompat(
                     });
                 }
             };
-            res.on('data', (chunk: Buffer) => {
+            res.setEncoding('utf8'); // keeps characters split across chunks intact
+            res.on('data', (chunk: string) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
                 for (const line of lines) {
@@ -232,6 +205,7 @@ function _streamOpenAICompat(
                     const raw = t.slice(5).trim();
                     if (raw === '[DONE]') {
                         completion.markTerminal();
+                        think.flush();
                         emitNativeCalls(true);
                         push(null);
                         return;
@@ -256,7 +230,7 @@ function _streamOpenAICompat(
                         // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
                         // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
                         if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
-                        if (typeof delta?.content === 'string' && delta.content) { processChunk(delta.content); }
+                        if (typeof delta?.content === 'string' && delta.content) { think.push(delta.content); }
                         for (const toolCall of delta?.tool_calls ?? []) { nativeCalls.add(toolCall); }
                         const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
                         if (finishReason) {
@@ -270,6 +244,7 @@ function _streamOpenAICompat(
                 }
             });
             res.on('end', () => {
+                think.flush();
                 if (!signal?.aborted) {
                     const interrupted = completion.unexpectedEofMessage(apiBase);
                     if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
@@ -295,6 +270,7 @@ function _streamOpenAICompat(
         }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+    watchStreamStall(req);
     req.write(body); req.end();
 }
 
@@ -331,7 +307,8 @@ function _streamAnthropic(
           headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
-                let e = ''; res.on('data', (d: Buffer) => { e += d; });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                let e = ''; res.on('data', (d: string) => { e += d; });
                 res.on('end', () => {
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
@@ -350,7 +327,8 @@ function _streamAnthropic(
             let inputTokens = 0;
             let outputTokens = 0;
 
-            res.on('data', (chunk: Buffer) => {
+            res.setEncoding('utf8'); // keeps characters split across chunks intact
+            res.on('data', (chunk: string) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
                 for (const line of lines) {
@@ -443,6 +421,7 @@ function _streamAnthropic(
         }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+    watchStreamStall(req);
     req.write(body); req.end();
 }
 
@@ -480,7 +459,8 @@ function _streamGoogle(
           headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
-                let e = ''; res.on('data', (d: Buffer) => { e += d; });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                let e = ''; res.on('data', (d: string) => { e += d; });
                 res.on('end', () => {
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
@@ -495,7 +475,8 @@ function _streamGoogle(
             let buf = '';
             const completion = new StreamCompletionGuard();
             const emittedFunctionCalls = new Set<string>();
-            res.on('data', (chunk: Buffer) => {
+            res.setEncoding('utf8'); // keeps characters split across chunks intact
+            res.on('data', (chunk: string) => {
                 buf += chunk.toString();
                 const lines = buf.split('\n'); buf = lines.pop() ?? '';
                 for (const line of lines) {
@@ -559,6 +540,7 @@ function _streamGoogle(
         }
     });
     if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+    watchStreamStall(req);
     req.write(body); req.end();
 }
 
@@ -662,7 +644,8 @@ export async function directSingleCompletion(
 
         const req = https.request(reqOpts, (res) => {
             let data = ''; let totalBytes = 0; let bodyDestroyed = false;
-            res.on('data', (c: Buffer) => {
+            res.setEncoding('utf8'); // keeps characters split across chunks intact
+            res.on('data', (c: string) => {
                 totalBytes += c.length;
                 if (totalBytes > 256 * 1024) { bodyDestroyed = true; res.destroy(); done(''); return; }
                 data += c.toString();

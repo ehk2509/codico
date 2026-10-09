@@ -1,3 +1,5 @@
+import type { ClientRequest } from 'http';
+
 export class StreamCompletionGuard {
     private _terminalSeen = false;
 
@@ -13,6 +15,23 @@ export class StreamCompletionGuard {
         if (this._terminalSeen) { return null; }
         return `${provider} stream interrupted: connection closed before the provider sent a completion marker.`;
     }
+}
+
+let streamStallMs = 300_000;
+
+/** Silence after which a streaming request counts as dropped (setting codico.streamStallTimeoutSeconds). */
+export function setStreamStallTimeout(seconds: number): void {
+    streamStallMs = Math.max(1, seconds) * 1000;
+}
+
+/**
+ * A provider that keeps the connection open but stops sending would hang the turn
+ * until the user presses Stop. After a silence the connection is dropped instead,
+ * which surfaces as a transport error and goes through the normal reconnect.
+ */
+export function watchStreamStall(req: ClientRequest): void {
+    const ms = streamStallMs;
+    req.setTimeout(ms, () => req.destroy(new Error(`no data received for ${Math.round(ms / 1000)} s (stalled)`)));
 }
 
 export function isRecoverableStreamInterruption(message: string): boolean {
@@ -66,4 +85,50 @@ export function repeatedPrefixLength(previousTail: string, continuation: string)
         if (body.length >= MIN_OVERLAP && suffix.startsWith(body)) { return continuation.length; }
     }
     return 0;
+}
+
+/**
+ * Splits streamed text into reply content and `<think>` reasoning. A tag split
+ * across chunks ("<thi" + "nk>") is held back until complete, so it never leaks
+ * into the reply as raw text.
+ */
+export class ThinkTagSplitter {
+    private _inThink = false;
+    private _carry = '';
+
+    constructor(private readonly _emit: (kind: 'content' | 'thinking', text: string) => void) {}
+
+    push(text: string): void {
+        let rest = this._carry + text;
+        this._carry = '';
+        for (;;) {
+            const tag = this._inThink ? '</think>' : '<think>';
+            const idx = rest.indexOf(tag);
+            if (idx !== -1) {
+                this._out(rest.slice(0, idx));
+                this._inThink = !this._inThink;
+                rest = rest.slice(idx + tag.length);
+                continue;
+            }
+            // Keep back an ending that could be the start of the tag
+            let keep = 0;
+            for (let n = Math.min(tag.length - 1, rest.length); n > 0; n--) {
+                if (tag.startsWith(rest.slice(-n))) { keep = n; break; }
+            }
+            this._out(rest.slice(0, rest.length - keep));
+            this._carry = rest.slice(rest.length - keep);
+            return;
+        }
+    }
+
+    /** Emits anything still held back; call when the stream ends. */
+    flush(): void {
+        const carry = this._carry;
+        this._carry = '';
+        this._out(carry);
+    }
+
+    private _out(text: string): void {
+        if (text) { this._emit(this._inThink ? 'thinking' : 'content', text); }
+    }
 }

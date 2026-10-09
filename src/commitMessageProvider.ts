@@ -41,7 +41,8 @@ export function fetchCommitMessage(apiKey: string, model: string, diff: string):
             },
             (res) => {
                 let data = '';
-                res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (chunk: string) => { data += chunk.toString(); });
                 res.on('end', () => {
                     try {
                         const json = JSON.parse(data);

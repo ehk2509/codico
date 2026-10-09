@@ -55,6 +55,11 @@ const SCRIPTS = (port) => ({
   undo_write: [tool('write_file', 'filepath: fixtures/undo.txt\ncontent:\nv2'), 'Done.'],
   // VS Code will not open this as text; the write itself still succeeds
   binary_write: [tool('write_file', 'filepath: live/blob.bin\ncontent:\nAB\u0000\u0001CD'), 'Done.'],
+  // The model names the file by its absolute path; Undo must restore that same file
+  abs_undo: [tool('write_file', `filepath: ${path.join(process.env.LIVE_WORK_DIR || '', 'ws', 'fixtures', 'abs.txt')}\ncontent:\nv2`), 'Done.'],
+  // Symbolic links leading outside the workspace: reading or writing through them is refused
+  symlink: [tool('read_file', 'filepath: fixtures/link/secret.txt'), tool('write_file', 'filepath: fixtures/link/new.txt\ncontent:\nescaped'),
+    tool('write_file', 'filepath: fixtures/dangling\ncontent:\nescaped'), 'Done.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only

@@ -194,6 +194,27 @@ async function run() {
       why: `write ${JSON.stringify(written)} → undo ${JSON.stringify(undone)} → redo ${JSON.stringify(redone)} → user edit, undo keeps it: ${JSON.stringify(kept)}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
+  {
+    // Undo after a write addressed by absolute path must restore that file, not a nested copy
+    const t0 = Date.now();
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:abs_undo] please do the task');
+    const written = read('fixtures/abs.txt');
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'undo' });
+    const undone = read('fixtures/abs.txt');
+    const stray = fs.existsSync(path.join(ws, ws.replace(/^\/+/, '')));
+    results.push({ name: 'abs_undo', ms: Date.now() - t0, requests: 0, ok: /^v2/.test(written || '') && undone === 'v1\n' && !stray,
+      why: `write ${JSON.stringify(written)} → undo ${JSON.stringify(undone)}; stray nested copy created: ${stray}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+  await scenario('symlink', ({ text }) => {
+    const work = path.dirname(ws);
+    const leaked = /OUTSIDE-SECRET/.test(text);
+    const escapedDir = fs.existsSync(path.join(work, 'outside/new.txt'));
+    const escapedDangling = fs.existsSync(path.join(work, 'outside/dangling-target.txt'));
+    const refusals = (text.match(/symbolic link/g) || []).length;
+    return { ok: !leaked && !escapedDir && !escapedDangling && refusals >= 3,
+      why: `outside secret read: ${leaked}; written through link: ${escapedDir}; written through dangling link: ${escapedDangling}; refusals: ${refusals}/3` };
+  });
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

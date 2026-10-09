@@ -16,7 +16,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
-import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
+import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
@@ -465,8 +465,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await this._editProposals.openDiff(msg.filepath);
                 break;
             case 'acceptEdit': {
-                const applied = await this._editProposals.applyOne(msg.filepath, (before, after, fp, label) => {
-                    this._undoRedo.push({ filepath: fp, before, after, label });
+                const applied = await this._editProposals.applyOne(msg.filepath, (before, after, fp, label, uri) => {
+                    this._undoRedo.push({ filepath: fp, uri, before, after, label });
                 }, message => this._confirmOverwrite(message));
                 // Not applied: the file changed meanwhile and the user kept it; the proposal stays
                 if (!applied) { break; }
@@ -485,8 +485,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 break;
             case 'acceptAllEdits': {
-                await this._editProposals.applyAll((before, after, fp, label) => {
-                    this._undoRedo.push({ filepath: fp, before, after, label });
+                await this._editProposals.applyAll((before, after, fp, label, uri) => {
+                    this._undoRedo.push({ filepath: fp, uri, before, after, label });
                 }, message => this._confirmOverwrite(message));
                 this._post({ type: 'undoRedoState', ...this._undoRedo.state });
                 // Proposals for files the user chose to keep stay open for review
@@ -842,6 +842,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
+        setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
         const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
 
         // Load repo instructions once per session
@@ -1710,7 +1711,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         (res) => {
                             let data = '';
                             let totalBytes = 0;
-                            res.on('data', (c: Buffer) => {
+                            res.setEncoding('utf8'); // keeps characters split across chunks intact
+                            res.on('data', (c: string) => {
                                 totalBytes += c.length;
                                 if (totalBytes > 256 * 1024) { res.destroy(); resolve(''); return; }
                                 data += c.toString();
@@ -1899,7 +1901,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const beforeText = beforeBytes ? new TextDecoder().decode(beforeBytes) : '';
 
             if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
+                this._editProposals.queue({ filepath: tool.filepath, uri: target.uri, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
                 this._post({ type: 'proposalQueued', filepath: tool.filepath });
                 return `[write_file: ${tool.filepath}] Queued as edit proposal`;
             }
@@ -1933,7 +1935,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             await this._fileManager.writeFile(tool.filepath, contentToWrite);
 
             const after = new TextEncoder().encode(contentToWrite);
-            this._undoRedo.push({ filepath: tool.filepath, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
+            this._undoRedo.push({ filepath: tool.filepath, uri: target.uri, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
             this._post({ type: 'undoRedoState', ...this._undoRedo.state });
             this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
             this._filesWrittenThisTurn++;
@@ -2191,7 +2193,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             // Edits mode: a file can have a queued (unwritten) proposal. Build on it, or earlier
             // edits to the same file are lost and edits to a file created by write_file fail.
-            const pending = this._editsMode ? this._editProposals.pending(tool.filepath) : undefined;
+            const pending = this._editsMode ? this._editProposals.pending(fileUri) : undefined;
             const bytes = pending ? pending.originalContent : await readCurrentBytes(fileUri);
             if (!pending && bytes === null) { throw new Error(`File not found: ${tool.filepath}`); }
             let rawContent = pending ? pending.proposedContent : new TextDecoder().decode(bytes!);
@@ -2221,7 +2223,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
             // ── Edits Mode: queue proposal instead of writing immediately ──────
             if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, originalContent: bytes, proposedContent: applyEdit(tool.newStr), label: `edit ${tool.filepath}` });
+                this._editProposals.queue({ filepath: tool.filepath, uri: fileUri, originalContent: bytes, proposedContent: applyEdit(tool.newStr), label: `edit ${tool.filepath}` });
                 this._post({ type: 'proposalQueued', filepath: tool.filepath });
                 return `[edit_file: ${tool.filepath}] Queued as edit proposal`;
             }
@@ -2272,7 +2274,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             await writeCurrentBytes(fileUri, after);
             await revealFile(fileUri);
 
-            this._undoRedo.push({ filepath: tool.filepath, before, after, label: `edit_file ${tool.filepath}` });
+            this._undoRedo.push({ filepath: tool.filepath, uri: fileUri, before, after, label: `edit_file ${tool.filepath}` });
             this._post({ type: 'undoRedoState', ...this._undoRedo.state });
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: true, diff: finalEditDiff });
             this._filesWrittenThisTurn++;

@@ -56,7 +56,8 @@ async function fetchRenameSuggestion(
             },
             (res) => {
                 let data = '';
-                res.on('data', (c: Buffer) => { data += c.toString(); });
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (c: string) => { data += c.toString(); });
                 res.on('end', () => {
                     try {
                         const text: string = JSON.parse(data)?.choices?.[0]?.message?.content ?? '{}';

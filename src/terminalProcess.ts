@@ -158,8 +158,7 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         signal.addEventListener('abort', onAbort, { once: true });
         if (signal.aborted) { terminate(); }
 
-        const onData = (chunk: Buffer): void => {
-            const text = chunk.toString('utf8');
+        const onData = (text: string): void => {
             onChunk?.(text);
             if (capturedBytes >= maxCapturedBytes) { return; }
             const remaining = maxCapturedBytes - capturedBytes;
@@ -170,6 +169,9 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
             outputChunks.push(kept);
         };
 
+        // Decoded per stream so a character split across chunks is not corrupted
+        child.stdout?.setEncoding('utf8');
+        child.stderr?.setEncoding('utf8');
         child.stdout?.on('data', onData);
         child.stderr?.on('data', onData);
 

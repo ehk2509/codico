@@ -3,8 +3,10 @@ import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './wo
 
 /** A before/after snapshot of a single file mutation. */
 export interface FileSnapshot {
-    /** Workspace-relative path (forward slashes). */
+    /** Path as shown to the user. */
     filepath: string;
+    /** The resolved file (the path may be absolute or name another workspace folder). */
+    uri: vscode.Uri;
     /** File contents before the change. `null` means the file did not exist. */
     before: Uint8Array | null;
     /** File contents after the change. */
@@ -50,7 +52,7 @@ export class UndoRedoStack {
         try {
             const snap = from.at(-1);
             if (!snap) { return undefined; }
-            const uri = this._uri(snap.filepath);
+            const uri = snap.uri;
             // The file must still be as Codico left it; anything else (hand edits, other
             // tools) would be silently lost, so ask first
             const expected = kind === 'undo' ? snap.after : snap.before;
@@ -65,12 +67,6 @@ export class UndoRedoStack {
         } finally {
             this._opInProgress = false;
         }
-    }
-
-    private _uri(relPath: string): vscode.Uri {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) { throw new Error('No workspace folder open'); }
-        return vscode.Uri.joinPath(folders[0].uri, relPath);
     }
 
     get canUndo(): boolean { return this._undo.length > 0; }

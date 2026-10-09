@@ -117,7 +117,8 @@ export class AccoProviderOptimizer implements ProviderRequestOptimizer {
             }, res => {
                 let raw = '';
                 let bytes = 0;
-                res.on('data', (chunk: Buffer) => {
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (chunk: string) => {
                     bytes += chunk.length;
                     if (bytes > 16 * 1024 * 1024) {
                         req.destroy(new Error('ACCO response exceeded safety limit'));
