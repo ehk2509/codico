@@ -9,6 +9,11 @@ All notable changes to Codico will be documented in this file.
 - A failing panel action (accepting an edit, Undo/Redo, previewing a diff, refreshing MCP) during a running task marked the agent idle, so a queued message started while the task was still running. The running task is no longer affected.
 - Errors while starting a queued message or a resumed session were silently lost; they are now shown in the panel.
 - Turning Edits mode on or off, or refreshing MCP servers, during a running task now takes effect when the task ends, instead of discarding its pending proposals or disconnecting a server it was calling.
+- Undo, Redo and accepting an Edits-mode proposal overwrote the file even if it had changed since (hand edits were silently lost). Codico now asks before overwriting a changed file.
+- Approving a write or edit applied content computed before the prompt, overwriting changes the user made while it was open. Edits are now re-applied to the current file, and a write to a file that changed is not made (the model is told to re-read it).
+- Files open with unsaved changes were read and edited on disk, so the model saw stale content and saving ended in a conflict. Codico now reads the editor's buffer and writes through it.
+- write_file reported a failed write (and skipped Undo) when the file was written but could not be shown as text.
+- After a repeated tool call was detected, later tool calls in the same response still ran; they are now skipped.
 
 ## 0.3.3 - 2026-10-09
 

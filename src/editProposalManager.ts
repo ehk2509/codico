@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { readCurrentBytes, sameBytes, writeCurrentBytes } from './workspaceText';
 
 export interface FileEditProposal {
     filepath: string;
@@ -116,7 +117,8 @@ export class EditProposalManager {
      */
     async applyOne(
         filepath: string,
-        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void
+        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void,
+        confirm: (message: string) => Promise<boolean>
     ): Promise<boolean> {
         const proposal = this._proposals.get(filepath);
         if (!proposal) { return false; }
@@ -131,9 +133,12 @@ export class EditProposalManager {
         const fileUri = vscode.Uri.joinPath(folders[0].uri, norm);
         const encoded = new TextEncoder().encode(proposal.proposedContent);
 
-        // Ensure parent directories exist
-        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(fileUri, '..'));
-        await vscode.workspace.fs.writeFile(fileUri, encoded);
+        // The proposal was built on the file as it was then; changes made since would be lost
+        if (!sameBytes(await readCurrentBytes(fileUri), proposal.originalContent) &&
+            !await confirm(`${filepath} has changed since Codico proposed this edit. Apply it anyway and lose those changes?`)) {
+            return false;
+        }
+        await writeCurrentBytes(fileUri, encoded);
 
         undoPush(proposal.originalContent, encoded, filepath, proposal.label);
 
@@ -147,12 +152,12 @@ export class EditProposalManager {
 
     /** Apply every queued proposal in order. Returns list of applied filepaths. */
     async applyAll(
-        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void
+        undoPush: (before: Uint8Array | null, after: Uint8Array, fp: string, label: string) => void,
+        confirm: (message: string) => Promise<boolean>
     ): Promise<string[]> {
         const applied: string[] = [];
         for (const fp of [...this._proposals.keys()]) {
-            await this.applyOne(fp, undoPush);
-            applied.push(fp);
+            if (await this.applyOne(fp, undoPush, confirm)) { applied.push(fp); }
         }
         return applied;
     }

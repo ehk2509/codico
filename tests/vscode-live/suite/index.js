@@ -129,6 +129,75 @@ async function run() {
       why: `requests sent after Stop: ${sent}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
+  // ── File safety: changes the user made must never be silently overwritten ──
+  const pollApproval = async (ms = 15000) => {
+    const t = Date.now();
+    while (Date.now() - t < ms) {
+      const ids = await vscode.commands.executeCommand('codico.__evalApprovals');
+      if (ids.length) { return ids[0]; }
+      await new Promise(r => setTimeout(r, 50));
+    }
+    return null;
+  };
+  // The user edits the file while the approval prompt is open, then approves
+  const approveAfterUserEdit = async (name, file, userContent) => {
+    const before = (await getLog()).length; const t0 = Date.now();
+    await vscode.commands.executeCommand('codico.__evalApprovals', true);
+    const task = vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`);
+    const permId = await pollApproval();
+    fs.writeFileSync(path.join(ws, file), userContent);
+    if (permId) { await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'writePermissionResponse', permId, granted: true }); }
+    await task;
+    await vscode.commands.executeCommand('codico.__evalApprovals', false);
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === name && e.stream);
+    return { ms: Date.now() - t0, permId, reqs, text: all(reqs), file: read(file) };
+  };
+  {
+    const r = await approveAfterUserEdit('approve_edit', 'fixtures/approve-edit.txt', 'alpha=USER\nbeta=2\n');
+    results.push({ name: 'approve_edit', ms: r.ms, requests: r.reqs.length, ok: !!r.permId && r.file === 'alpha=USER\nbeta=3\n',
+      why: `approval shown: ${!!r.permId}; file: ${JSON.stringify(r.file)} (must keep the user's change and apply the edit)` });
+  }
+  {
+    const r = await approveAfterUserEdit('approve_write', 'fixtures/approve-write.txt', 'user\n');
+    const told = /Not written: the file changed/.test(r.text);
+    results.push({ name: 'approve_write', ms: r.ms, requests: r.reqs.length, ok: !!r.permId && r.file === 'user\n' && told,
+      why: `approval shown: ${!!r.permId}; file: ${JSON.stringify(r.file)}; model told it was not written: ${told}` });
+  }
+  {
+    // Unsaved editor changes: the agent must see and edit the buffer, not the stale disk copy
+    const uri = vscode.Uri.file(path.join(ws, 'fixtures/dirty.txt'));
+    const doc = await vscode.workspace.openTextDocument(uri);
+    await vscode.window.showTextDocument(doc);
+    const we = new vscode.WorkspaceEdit();
+    we.replace(uri, new vscode.Range(1, 0, 1, 3), 'TWO-UNSAVED');
+    await vscode.workspace.applyEdit(we);
+    const dirtyBefore = doc.isDirty;
+    await scenario('dirty_edit', ({ read }) => {
+      const disk = read('fixtures/dirty.txt');
+      return { ok: dirtyBefore && disk === 'one\ntwo-final\n' && !doc.isDirty && doc.getText() === disk,
+        why: `buffer was unsaved: ${dirtyBefore}; disk: ${JSON.stringify(disk)}; editor saved and in sync: ${!doc.isDirty && doc.getText() === disk}` };
+    });
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+  }
+  {
+    // Undo/Redo work normally, but never overwrite a file changed since
+    const t0 = Date.now();
+    const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:undo_write] please do the task');
+    const written = read('fixtures/undo.txt');
+    await msg({ type: 'undo' }); const undone = read('fixtures/undo.txt');
+    await msg({ type: 'redo' }); const redone = read('fixtures/undo.txt');
+    fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'user\n');
+    await msg({ type: 'undo' }); const kept = read('fixtures/undo.txt');
+    const ok = /^v2/.test(written || '') && undone === 'v1\n' && /^v2/.test(redone || '') && kept === 'user\n';
+    results.push({ name: 'undo_changed', ms: Date.now() - t0, requests: 0, ok,
+      why: `write ${JSON.stringify(written)} → undo ${JSON.stringify(undone)} → redo ${JSON.stringify(redone)} → user edit, undo keeps it: ${JSON.stringify(kept)}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+  await scenario('binary_write', ({ read, text }) => {
+    const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
+    return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };
+  });
   {
     const before = (await getLog()).length; const t0 = Date.now();
     const a = vscode.commands.executeCommand('codico.__evalRunPlan', '[SCENARIO:plan_q_a] first plan');

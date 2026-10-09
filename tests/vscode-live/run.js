@@ -27,6 +27,10 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/secret.txt'), 'SECRET-TOKEN-12345\n');
   fs.writeFileSync(path.join(ws, '.codicoignore'), 'fixtures/secret.txt\n');
   fs.writeFileSync(path.join(ws, 'live/keep-me.txt'), 'keep\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/approve-edit.txt'), 'alpha=1\nbeta=2\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'v1\n');
 
   process.env.LIVE_WORK_DIR = work;
   const server = await start(0);

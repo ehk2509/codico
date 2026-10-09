@@ -47,6 +47,14 @@ const SCRIPTS = (port) => ({
   // A failing panel action during A must not unlock the agent: B still waits for A
   herr_a: [{ text: tool('read_file', 'filepath: fixtures/notes.txt'), delay: 1500 }, 'Done A.'],
   herr_b: ['Done B.'],
+  // The user edits the file while the approval prompt is open
+  approve_edit: [tool('edit_file', 'filepath: fixtures/approve-edit.txt\nold_str:\nbeta=2\nnew_str:\nbeta=3'), 'Done.'],
+  approve_write: [tool('write_file', 'filepath: fixtures/approve-write.txt\ncontent:\nagent'), 'Done.'],
+  // The old text exists only in the editor's unsaved buffer
+  dirty_edit: [tool('edit_file', 'filepath: fixtures/dirty.txt\nold_str:\nTWO-UNSAVED\nnew_str:\ntwo-final'), 'Done.'],
+  undo_write: [tool('write_file', 'filepath: fixtures/undo.txt\ncontent:\nv2'), 'Done.'],
+  // VS Code will not open this as text; the write itself still succeeds
+  binary_write: [tool('write_file', 'filepath: live/blob.bin\ncontent:\nAB\u0000\u0001CD'), 'Done.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only

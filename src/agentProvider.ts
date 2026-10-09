@@ -39,6 +39,7 @@ import { generateFollowUps } from './followUps';
 import { planCompaction, summarizerPrompt, buildCompactedHistory, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
+import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -48,7 +49,22 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Expose the index so extension.ts can register commands against it. */
     public get workspaceIndex(): WorkspaceIndex { return this._workspaceIndex; }
     /** Expose undo/redo stack so extension.ts can register commands against it. */
-    public get undoRedo(): UndoRedoStack { return this._undoRedo; }
+    /** Asks before overwriting a file that changed since Codico read it. Tests have no one to ask: keep the file. */
+    private async _confirmOverwrite(message: string): Promise<boolean> {
+        if (this._evaluationMode) { return false; }
+        return await vscode.window.showWarningMessage(message, { modal: true }, 'Overwrite') === 'Overwrite';
+    }
+
+    /** Runs Undo or Redo and reports the outcome (shared by the panel and the commands). */
+    public async undoRedoStep(kind: 'undo' | 'redo'): Promise<void> {
+        const result = await (kind === 'undo' ? this._undoRedo.undo() : this._undoRedo.redo());
+        if (!result) {
+            void vscode.window.showInformationMessage(`Codico: nothing to ${kind}`);
+        } else if (result.applied) {
+            void vscode.window.showInformationMessage(`Codico: ${kind === 'undo' ? 'undid' : 'redid'} changes to ${result.filepath}`);
+        }
+        this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+    }
     /** Called by extension deactivate() to cleanly shut down the browser process. */
     public async closeBrowser(): Promise<void> { await this._external.closeBrowser(); }
 
@@ -57,7 +73,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private readonly _mcp = new McpManager();
     private readonly _external = new ExternalToolRuntime(this._mcp, msg => this._post(msg));
     private readonly _webviewAssets: WebviewAssets;
-    private readonly _undoRedo = new UndoRedoStack();
+    private readonly _undoRedo = new UndoRedoStack(message => this._confirmOverwrite(message));
     private readonly _editProposals = new EditProposalManager();
     private _editsMode = false;
     private _chatMode = false;
@@ -107,6 +123,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _lastPromptTokens = 0;
     /** Test-only autonomous coding benchmark mode. Never enabled in production extension mode. */
     private readonly _evaluationMode: boolean;
+    /** Test-only: ask for write approval as a user would see it. */
+    private _evalRequireApproval = false;
     private _evalSteps = 0;
     private _evalToolCalls = 0;
     private _evalPromptTokens = 0;
@@ -275,6 +293,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         webviewView.webview.onDidReceiveMessage((msg: WebviewMessage) => this._onWebviewMessage(msg));
     }
 
+    /** Test-only: whether writes wait for approval, and the approval prompts now open. */
+    public evaluationApprovals(require?: boolean): string[] {
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
+        if (require !== undefined) { this._evalRequireApproval = require; }
+        return [...this._pendingWritePermissions.keys()];
+    }
+
     /** Test-only: delivers a message as if the panel had sent it. */
     public async handleEvaluationWebviewMessage(msg: WebviewMessage): Promise<void> {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
@@ -417,26 +442,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._mcp.disconnectAll();
                 await this._connectMcpServers();
                 break;
-            case 'undo': {
-                const fp = await this._undoRedo.undo();
-                if (fp) {
-                    vscode.window.showInformationMessage(`Codico: undid changes to ${fp}`);
-                } else {
-                    vscode.window.showInformationMessage('Codico: nothing to undo');
-                }
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+            case 'undo':
+                await this.undoRedoStep('undo');
                 break;
-            }
-            case 'redo': {
-                const fp = await this._undoRedo.redo();
-                if (fp) {
-                    vscode.window.showInformationMessage(`Codico: redid changes to ${fp}`);
-                } else {
-                    vscode.window.showInformationMessage('Codico: nothing to redo');
-                }
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+            case 'redo':
+                await this.undoRedoStep('redo');
                 break;
-            }
             case 'toggleEditsMode':
                 // A running task keeps the mode it started in (its proposals would be lost)
                 await this._whenIdle();
@@ -454,9 +465,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await this._editProposals.openDiff(msg.filepath);
                 break;
             case 'acceptEdit': {
-                await this._editProposals.applyOne(msg.filepath, (before, after, fp, label) => {
+                const applied = await this._editProposals.applyOne(msg.filepath, (before, after, fp, label) => {
                     this._undoRedo.push({ filepath: fp, before, after, label });
-                });
+                }, message => this._confirmOverwrite(message));
+                // Not applied: the file changed meanwhile and the user kept it; the proposal stays
+                if (!applied) { break; }
                 this._post({ type: 'proposalAccepted', filepath: msg.filepath });
                 this._post({ type: 'undoRedoState', ...this._undoRedo.state });
                 if (!this._editProposals.hasProposals) {
@@ -474,9 +487,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'acceptAllEdits': {
                 await this._editProposals.applyAll((before, after, fp, label) => {
                     this._undoRedo.push({ filepath: fp, before, after, label });
-                });
+                }, message => this._confirmOverwrite(message));
                 this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                this._post({ type: 'allProposalsResolved' });
+                // Proposals for files the user chose to keep stay open for review
+                this._post(this._editProposals.hasProposals
+                    ? { type: 'proposalsReady', proposals: this._editProposals.webviewState }
+                    : { type: 'allProposalsResolved' });
                 break;
             }
             case 'rejectAllEdits':
@@ -769,7 +785,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Reset per-response allow-all flags at the start of every new user turn
-        this._allowAllWrites  = this._evaluationMode;
+        this._allowAllWrites  = this._evaluationMode && !this._evalRequireApproval;
         this._allowAllTerminal = this._evaluationMode;
         this._external.resetTurnPermissions();
 
@@ -983,12 +999,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
                 };
 
+                // Once a loop is detected, the rest of this response is not executed either
+                let loopDetected = false;
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
+                    if (loopDetected) {
+                        const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
+                        inlineToolResults.push(skipped);
+                        return { keepGoing: false, result: skipped };
+                    }
                     const fp = toolFingerprint(tool);
                     const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
                     _toolCallCounts.set(fp, callCount);
 
                     if (callCount > MAX_IDENTICAL_CALLS) {
+                        loopDetected = true;
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
                         this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
@@ -1871,12 +1895,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _handleWriteFile(tool: WriteFileTool, msgId: string): Promise<string> {
         try {
             const target = await resolveWorkspaceToolPath(tool.filepath);
-            let beforeBytes: Uint8Array | null = null;
-            let beforeText = '';
-            try {
-                beforeBytes = await vscode.workspace.fs.readFile(target.uri);
-                beforeText = new TextDecoder().decode(beforeBytes);
-            } catch { /* new file */ }
+            const beforeBytes = await readCurrentBytes(target.uri);
+            const beforeText = beforeBytes ? new TextDecoder().decode(beforeBytes) : '';
 
             if (this._editsMode) {
                 this._editProposals.queue({ filepath: tool.filepath, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
@@ -1901,6 +1921,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 return `[write_file: ${tool.filepath}] Denied by user`;
             }
 
+            // Approval can take a while: if the file changed meanwhile (the user edited it),
+            // writing would silently replace those changes with content they never saw
+            if (!sameBytes(await readCurrentBytes(target.uri), beforeBytes)) {
+                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: 'File changed while waiting for approval' });
+                return `[write_file: ${tool.filepath}] Not written: the file changed while waiting for approval (probably edited by the user). Read it again and make your change on its current content.`;
+            }
+
             const contentToWrite = writeResult.editedContent ?? tool.content;
             const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, contentToWrite) : diff;
             await this._fileManager.writeFile(tool.filepath, contentToWrite);
@@ -1922,8 +1949,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _handleReadFile(tool: ReadFileTool, msgId: string): Promise<string> {
         try {
             const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
-            const bytes = await vscode.workspace.fs.readFile(fileUri);
-            const content = new TextDecoder().decode(bytes);
+            // Unsaved editor changes included: that is the file the user sees
+            const content = await readCurrentText(fileUri);
             const window = sliceFileByLines(content, tool.startLine, tool.endLine);
             const label = window.truncated
                 ? `${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}`
@@ -2165,13 +2192,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             // Edits mode: a file can have a queued (unwritten) proposal. Build on it, or earlier
             // edits to the same file are lost and edits to a file created by write_file fail.
             const pending = this._editsMode ? this._editProposals.pending(tool.filepath) : undefined;
-            const bytes = pending ? pending.originalContent : await vscode.workspace.fs.readFile(fileUri);
-            const rawContent = pending ? pending.proposedContent : new TextDecoder().decode(bytes!);
+            const bytes = pending ? pending.originalContent : await readCurrentBytes(fileUri);
+            if (!pending && bytes === null) { throw new Error(`File not found: ${tool.filepath}`); }
+            let rawContent = pending ? pending.proposedContent : new TextDecoder().decode(bytes!);
 
             // Normalize CRLF → LF for matching; oldStr from the parser is always LF-only.
             // Without this, edit_file fails with "old_str not found" on any CRLF file.
-            const hasCRLF = rawContent.includes('\r\n');
-            const content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
+            let hasCRLF = rawContent.includes('\r\n');
+            let content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
 
             const resolved = resolveEditMatch(content, tool.oldStr);
             if (!resolved.match) {
@@ -2182,7 +2210,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 const fresh = editFailureContext(content, tool.oldStr);
                 return `[edit_file: ${tool.filepath}] ERROR: ${err}${fresh ? `\nCurrent source near the closest requested anchor:\n\`\`\`\n${fresh}\n\`\`\`` : ''}`;
             }
-            const editMatch = resolved.match;
+            let editMatch = resolved.match;
 
             const applyEdit = (replacement: string): string => {
                 const replaced = applyEditMatch(content, editMatch, replacement);
@@ -2217,19 +2245,32 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 return `[edit_file: ${tool.filepath}] Denied by user`;
             }
 
+            // Approval can take a while: if the file changed meanwhile (the user edited it),
+            // apply the edit to the current content, or stop rather than overwrite those changes
+            const nowBytes = await readCurrentBytes(fileUri);
+            const nowRaw = nowBytes === null ? null : new TextDecoder().decode(nowBytes);
+            if (nowRaw !== rawContent) {
+                const nowContent = nowRaw?.replace(/\r\n/g, '\n') ?? '';
+                const rematch = nowRaw === null ? null : resolveEditMatch(nowContent, tool.oldStr).match;
+                if (!rematch) {
+                    this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: 'File changed while waiting for approval' });
+                    return `[edit_file: ${tool.filepath}] Not applied: the file changed while waiting for approval (probably edited by the user) and old_str no longer matches. Read it again and redo the edit on its current content.`;
+                }
+                rawContent = nowRaw!;
+                hasCRLF = rawContent.includes('\r\n');
+                content = nowContent;
+                editMatch = rematch;
+            }
+
             const effectiveNewStr = editResult.editedContent ?? tool.newStr;
             const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr);
-            const finalEditDiff = editResult.editedContent ? this._computeLineDiff(content, newContentLF) : editDiff;
+            // Recomputed when the user edited the replacement or the file changed during approval
+            const finalEditDiff = this._computeLineDiff(content, newContentLF);
             const newContent = hasCRLF ? newContentLF.replace(/(?<!\r)\n/g, '\r\n') : newContentLF;
             const before = new TextEncoder().encode(rawContent);
             const after = new TextEncoder().encode(newContent);
-            await vscode.workspace.fs.writeFile(fileUri, after);
-            // showTextDocument can fail (e.g. column unavailable) even after a successful
-            // write — treat display failure as non-fatal so the AI gets the correct result.
-            try {
-                const doc = await vscode.workspace.openTextDocument(fileUri);
-                await vscode.window.showTextDocument(doc, { preview: true });
-            } catch { /* best-effort display */ }
+            await writeCurrentBytes(fileUri, after);
+            await revealFile(fileUri);
 
             this._undoRedo.push({ filepath: tool.filepath, before, after, label: `edit_file ${tool.filepath}` });
             this._post({ type: 'undoRedoState', ...this._undoRedo.state });
