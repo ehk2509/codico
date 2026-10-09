@@ -41,6 +41,12 @@ const SCRIPTS = (port) => ({
   plan_clarify: ['<clarify>\nquestion: Which database should the plan target?\ntype: single\noptions:\n- Postgres\n- SQLite\nfree_input: false\n</clarify>',
     tool('write_file', 'filepath: live/eager.js\ncontent:\nmodule.exports = 4;'),
     '1. Add the Postgres client\n2. Migrate the schema\n\n> Approve the plan to begin execution.'],
+  // Busy-agent queueing: A answers slowly; B arrives meanwhile and must be queued, not dropped
+  queue_a: [{ text: 'Done A.', delay: 1500 }],
+  queue_b: ['Done B.'],
+  // A plan queued behind another plan must still be read-only
+  plan_q_a: [{ text: '1. First plan step\n\n> Approve the plan to begin execution.', delay: 1500 }],
+  plan_q_b: [tool('write_file', 'filepath: live/queued-plan.js\ncontent:\nmodule.exports = 5;'), '1. Second plan step\n\n> Approve the plan to begin execution.'],
   browser: [tool('browser_navigate', `url: http://127.0.0.1:${port}/page`), F + 'browser_get_text\n' + F + '\n', tool('browser_close', ''), 'Read the page.'],
   // Native tool calling (OpenRouter path): replies may be streamed tool_calls
   native_text: ['A plain native-mode answer.'],
@@ -113,8 +119,9 @@ function start(port0) {
         return res.end();
       }
       const chunks = (reply.text || '').match(/[\s\S]{1,12}/g) || [''];
-      let i = 0;
+      let i = reply.delay ? -1 : 0;
       const tick = () => {
+        if (i < 0) { i = 0; return setTimeout(tick, reply.delay); }
         if (i < chunks.length) { res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: chunks[i++] }, finish_reason: null }] }) + '\n\n'); return setTimeout(tick, 3); }
         if (reply.drop) { return res.socket.destroy(); }
         // Large reported prompt sizes push the compaction scenario over the auto-compact threshold
