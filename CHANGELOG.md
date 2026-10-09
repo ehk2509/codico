@@ -11,6 +11,12 @@ All notable changes to Codico will be documented in this file.
 
 ### Fixed
 - While a change awaited verification there was no iteration limit, so a model whose tool calls could not run (repeats blocked as a loop, phase-blocked or invalid calls) kept going forever. The task now stops after three such iterations in a row.
+- MCP: a request from the server (such as `ping`) could be taken as the reply to one of Codico's requests, because both sides number requests from 1; the tool list then came back empty or a tool call returned nothing. Server requests are now answered (`ping`) or declined.
+- MCP: writing to a server that had exited could raise an unhandled pipe error and crash the extension host.
+- MCP: a server whose handshake failed was left running in the background (on every start and Refresh MCP); it is now stopped.
+- MCP: tool results had no size limit, so one large result was resent with every later request of the task. Results are now capped at 20,000 characters, with a note.
+- MCP: Stop now cancels a running tool call (and tells the server); calls may run up to 5 minutes instead of failing after 30 seconds.
+- MCP: an invalid `.mcp.json` was silently ignored as if missing; a warning now explains why its servers did not start.
 - The loop guard flagged normal work as a loop: re-reading a file after editing it, or re-running the tests after a fix, was blocked from the 4th time in a task. Repeats now only count while nothing has changed (a write resets reads, searches and commands; a command resets reads); identical writes and edits still count.
 
 ## 0.3.4 - 2026-10-09

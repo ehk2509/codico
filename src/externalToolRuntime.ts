@@ -18,6 +18,9 @@ import { wrapUntrusted } from './untrustedContent';
  * Keeping these handlers outside AgentProvider makes the agent loop an orchestrator
  * instead of the implementation home for every tool family.
  */
+
+/** Largest MCP result passed to the model. */
+const MCP_RESULT_MAX_CHARS = 20_000;
 export class ExternalToolRuntime {
     private readonly _browser = new BrowserManager();
     private _allowAllExternal = false;
@@ -212,22 +215,26 @@ export class ExternalToolRuntime {
         }
     }
 
-    public async _handleMcpCall(tool: McpCallTool, msgId: string): Promise<string> {
+    public async _handleMcpCall(tool: McpCallTool, msgId: string, signal?: AbortSignal): Promise<string> {
         const label = `${tool.server}/${tool.tool}`;
         if (!await this._confirmExternalAction('call an MCP tool', label)) {
             return `[mcp_call: ${label}] Denied by user`;
         }
         try {
-            const result = await this._mcp.callTool(tool.server, tool.tool, tool.args);
+            const result = await this._mcp.callTool(tool.server, tool.tool, tool.args, signal);
             // Flatten content parts to a single string
-            const text = (result.content ?? [])
+            const full = (result?.content ?? [])
                 .map(part => {
                     if (part.type === 'text') { return part.text ?? ''; }
                     if (part.type === 'image') { return `[image: ${part.mimeType ?? 'unknown'}]`; }
                     return `[${part.type}]`;
                 })
                 .join('\n');
-            const isError = result.isError === true;
+            // Capped like terminal output: the result is resent with every later request of the task
+            const text = full.length > MCP_RESULT_MAX_CHARS
+                ? `${full.slice(0, MCP_RESULT_MAX_CHARS)}\n… (${(full.length - MCP_RESULT_MAX_CHARS).toLocaleString()} more characters omitted; ask the tool for a narrower result)`
+                : full;
+            const isError = result?.isError === true;
             this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: !isError, error: isError ? text : undefined });
             return isError
                 ? `[mcp_call: ${label}] ERROR:\n${this._untrusted('MCP ' + label, text)}`

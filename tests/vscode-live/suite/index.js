@@ -220,6 +220,21 @@ async function run() {
     return { ok: !leaked && !escapedDir && !escapedDangling && refusals >= 3,
       why: `outside secret read: ${leaked}; written through link: ${escapedDir}; written through dangling link: ${escapedDangling}; refusals: ${refusals}/3` };
   });
+  {
+    // A real stdio MCP server (tests/fixtures/fakeMcpServer.js), registered through settings
+    const server = path.join(__dirname, '..', '..', 'fixtures', 'fakeMcpServer.js');
+    await set('mcpServers', [{ name: 'fake', command: 'node', args: [server, 'normal'] }]);
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'refreshMcp' });
+    await scenario('mcp_big', ({ reqs }) => {
+      // The request log keeps only the start of each message: check its full length and its end
+      const result = reqs.find(r => /\[mcp_call: fake\/big\]/.test(r.lastUser));
+      const chars = result ? result.lastUserChars : 0;
+      const capped = !!result && /more characters omitted/.test(result.lastUserTail);
+      return { ok: !!result && chars < 22000 && capped, why: `MCP result reached the model: ${!!result}; message length: ${chars} (result was 50000); cap noted: ${capped}` };
+    });
+    await set('mcpServers', []);
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'refreshMcp' });
+  }
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

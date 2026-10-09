@@ -66,6 +66,8 @@ const SCRIPTS = (port) => ({
   // Symbolic links leading outside the workspace: reading or writing through them is refused
   symlink: [tool('read_file', 'filepath: fixtures/link/secret.txt'), tool('write_file', 'filepath: fixtures/link/new.txt\ncontent:\nescaped'),
     tool('write_file', 'filepath: fixtures/dangling\ncontent:\nescaped'), 'Done.'],
+  // An MCP tool returning far more than the model should receive
+  mcp_big: [tool('mcp_call', 'server: fake\ntool: big\nsize: 50000'), 'Done.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only
@@ -112,7 +114,7 @@ function start(port0) {
       const { scenario, step } = locate(messages);
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-300),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && /\[SCENARIO:compaction\]/.test(textOf(m.content))),
         native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };

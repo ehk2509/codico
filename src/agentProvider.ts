@@ -955,7 +955,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // model, since there is no iteration limit while a change awaits verification
         const MAX_BLOCKED_ONLY_ITERATIONS = 3;
         let blockedOnlyIterations = 0;
-        let currentPhaseNote = '';
+        let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
@@ -1165,7 +1165,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // The system prompt and tool list stay the same for the whole task so providers can reuse
                 // their prompt cache. A phase change is added to the conversation instead (append-only).
                 const { systemPrompt: systemPromptOverride, phaseNote } = splitPhasePrompt(exploration.systemPrompt(this._readOnly));
-                if (phaseNote !== currentPhaseNote) { appendPhaseNote(this._history, phaseNote); currentPhaseNote = phaseNote; }
+                if (phaseNote !== currentPhaseNote && (phaseNote || currentPhaseNote)) { appendPhaseNote(this._history, phaseNote); currentPhaseNote = phaseNote; }
                 const projectedHistory = projectHistoryForModel(this._history);
                 const requestHistory = projectedHistory.history;
                 if (this._evaluationMode) {
@@ -1426,6 +1426,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 100_000);
                 if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid) {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
+                    currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
                 }
 
                 // Fenced compatibility tools return results as a normal user message.
@@ -1878,7 +1879,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'mcp_call': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'mcp_call', label: `${tool.server}/${tool.tool}` });
-                result = await this._external._handleMcpCall(tool, msgId);
+                result = await this._external._handleMcpCall(tool, msgId, signal);
                 break;
             }
             case 'lsp_symbol': {
