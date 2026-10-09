@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -286,7 +286,10 @@
         },
         "codico.chatDensity": {
           "type": "string",
-          "enum": ["comfortable", "compact"],
+          "enum": [
+            "comfortable",
+            "compact"
+          ],
           "default": "comfortable",
           "description": "Spacing of the chat panel: compact fits more on screen"
         },
