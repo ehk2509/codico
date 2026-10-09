@@ -17,7 +17,7 @@ test.after(() => { Module._load = originalLoad; });
 
 const SERVER = path.join(__dirname, 'fixtures', 'fakeMcpServer.js');
 const statusFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-mcp-')), 'status.json');
-const readStatus = (f) => JSON.parse(fs.readFileSync(f, 'utf8'));
+const readStatus = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } }; // {} until written
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const until = async (pred, ms = 3000) => { const t = Date.now(); while (Date.now() - t < ms) { if (pred()) { return true; } await new Promise(r => setTimeout(r, 25)); } return false; };
 
@@ -44,7 +44,7 @@ test('Stop cancels a running call and tells the server', async () => {
     const started = Date.now();
     await assert.rejects(call, /stopped/);
     assert.ok(Date.now() - started < 2000, 'not left waiting for the timeout');
-    assert.ok(await until(() => readStatus(file).cancelled !== null), 'the server was told');
+    assert.ok(await until(() => readStatus(file).cancelled?.requestId > 0), 'the server was told');
   } finally { client.disconnect(); }
 });
 
@@ -62,5 +62,7 @@ test('a server whose handshake fails is not left running', async () => {
   const [status] = await manager.connectAll([{ name: 'bad', command: process.execPath, args: [SERVER, 'badhandshake', file] }]);
   assert.equal(status.connected, false);
   assert.match(status.error, /refusing/);
-  assert.ok(await until(() => !alive(readStatus(file).pid)), 'the process was stopped');
+  const pid = readStatus(file).pid;
+  assert.ok(pid > 0, 'the server started');
+  assert.ok(await until(() => !alive(pid)), 'the process was stopped');
 });
