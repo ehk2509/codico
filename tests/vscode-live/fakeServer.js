@@ -30,6 +30,10 @@ const SCRIPTS = (port) => ({
   http500: [{ status: 500 }],
   verify_ok: [tool('write_file', 'filepath: live/verified.js\ncontent:\nmodule.exports = 1;'), 'Done.'],
   stuck_verify: [tool('write_file', 'filepath: live/stuck.js\ncontent:\nmodule.exports = 2;'), 'Done.'],
+  // Re-reading a file after each edit is normal work, not a loop
+  reread: [0, 1, 2].flatMap(n => [tool('read_file', 'filepath: fixtures/reread.txt'),
+    tool('edit_file', `filepath: fixtures/reread.txt\nold_str:\nn=${n}\nnew_str:\nn=${n + 1}`)])
+    .concat([tool('read_file', 'filepath: fixtures/reread.txt'), 'Done.']),
   // A model that only ever repeats the same write (and never verifies) must still be stopped
   stuck_loop: Array.from({ length: 40 }, () => tool('write_file', 'filepath: live/loop.js\ncontent:\nmodule.exports = 3;')),
   // Plan mode: the model tries to write while planning; that must be blocked

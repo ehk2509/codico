@@ -10,7 +10,8 @@ All notable changes to Codico will be documented in this file.
 - A tool result repeated unchanged later in a task (e.g. a file read twice) is sent only once.
 
 ### Fixed
-- While a change awaited verification there was no iteration limit, so a model that kept repeating a tool call already blocked as a loop ran forever. The task now stops after three such iterations in a row.
+- While a change awaited verification there was no iteration limit, so a model whose tool calls could not run (repeats blocked as a loop, phase-blocked or invalid calls) kept going forever. The task now stops after three such iterations in a row.
+- The loop guard flagged normal work as a loop: re-reading a file after editing it, or re-running the tests after a fix, was blocked from the 4th time in a task. Repeats now only count while nothing has changed (a write resets reads, searches and commands; a command resets reads); identical writes and edits still count.
 
 ## 0.3.4 - 2026-10-09
 

@@ -5,7 +5,7 @@ import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
-import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
+import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
@@ -40,6 +40,7 @@ import { planCompaction, summarizerPrompt, buildCompactedHistory, approvedPlanEx
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
+import { ToolLoopGuard } from './toolLoopGuard';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -950,19 +951,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // re-sending them (each reminder is another paid model request).
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
         let verificationNudges = 0;
-        // Iterations in a row with only blocked repeat calls: ends a stuck model when there is no iteration limit
-        const MAX_LOOP_ONLY_ITERATIONS = 3;
-        let loopOnlyIterations = 0;
+        // Iterations in a row in which no tool call could run (repeats, blocked calls): ends a stuck
+        // model, since there is no iteration limit while a change awaits verification
+        const MAX_BLOCKED_ONLY_ITERATIONS = 3;
+        let blockedOnlyIterations = 0;
         let currentPhaseNote = '';
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
 
-        // Circuit breaker: track how many times each unique tool call has been issued
-        // across all iterations. If the same call fires 3 times the model is looping —
-        // inject a hard nudge into history and stop the current iteration.
-        const _toolCallCounts = new Map<string, number>();
-        const MAX_IDENTICAL_CALLS = 3;
+        // Circuit breaker for a model repeating the same call while nothing changes
+        const loopGuard = new ToolLoopGuard();
         // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
         const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
         try {
@@ -1018,11 +1017,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         inlineToolResults.push(skipped);
                         return { keepGoing: false, result: skipped };
                     }
-                    const fp = toolFingerprint(tool);
-                    const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
-                    _toolCallCounts.set(fp, callCount);
-
-                    if (callCount > MAX_IDENTICAL_CALLS) {
+                    const { count: callCount, loop } = loopGuard.check(tool);
+                    if (loop) {
                         loopDetected = true;
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
@@ -1054,6 +1050,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         ranTool = true;
                         await this._dispatchTool(tool, msgId, signal);
+                        loopGuard.ran(tool);
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
                         if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
@@ -1085,6 +1082,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                     ranTool = true;
                     await this._dispatchTool(tool, msgId, signal);
+                    loopGuard.ran(tool);
                     let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
                     const followThrough = exploration.after(tool, result);
@@ -1415,9 +1413,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 actionNudges = 0;
                 // The model is calling tools again, so reminders are no longer "stalled"
                 verificationNudges = 0;
-                loopOnlyIterations = loopDetected && !ranTool ? loopOnlyIterations + 1 : 0;
-                if (loopOnlyIterations >= MAX_LOOP_ONLY_ITERATIONS) {
-                    this._post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: the model kept repeating the same tool call after being told it was looping.' }); break;
+                blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
+                if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
+                    this._post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────

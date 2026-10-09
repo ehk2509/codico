@@ -32,6 +32,7 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
   fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'v1\n');
   fs.writeFileSync(path.join(ws, 'fixtures/abs.txt'), 'v1\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/reread.txt'), 'n=0\n');
   // Outside the workspace, reachable only through symbolic links inside it
   fs.mkdirSync(path.join(work, 'outside'));
   fs.writeFileSync(path.join(work, 'outside/secret.txt'), 'OUTSIDE-SECRET\n');
