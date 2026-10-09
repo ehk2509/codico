@@ -36,6 +36,8 @@ import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
+import { planCompaction, summarizerPrompt, buildCompactedHistory, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
+import { looksLikeIntendedRegex } from './agentEfficiency';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -60,6 +62,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _chatMode = false;
     /** Goal of the plan being generated; planning runs under Ask-mode (read-only) rules. */
     private _planGoal: string | null = null;
+    /** Goal of a plan whose reply ended with a clarifying question; the answer continues that plan. */
+    private _planAwaitingAnswer: string | null = null;
     private get _readOnly(): boolean { return this._chatMode || this._planGoal !== null; }
     private _mcpReady = false;
     private _watchersCreated = false;
@@ -269,6 +273,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             try {
             switch (msg.type) {
                 case 'sendMessage':
+                    this._planAwaitingAnswer = null;
                     if (this._busy) {
                         // The previous turn has ended in the panel but is still finishing
                         // (saving history, compacting…). Keep the message — typically a queued
@@ -404,7 +409,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     await this._handleUserMessage(msg.executionPrompt);
                     break;
                 case 'clarifyResponse':
-                    await this._handleUserMessage(msg.text);
+                    await this._handleClarifyResponse(msg.text);
                     break;
                 case 'refreshMcp':
                     this._mcpReady = false;
@@ -669,13 +674,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     /** @param asPlan run the text as a Plan-mode goal (read-only, awaits approval) instead of a message */
-    public async runEvaluationTask(text: string, asPlan = false): Promise<EvaluationRunMetrics> {
+    /** @param kind run the text as a normal message, a Plan-mode goal, or an answer to a clarifying question */
+    public async runEvaluationTask(text: string, kind: 'message' | 'plan' | 'clarify' = 'message'): Promise<EvaluationRunMetrics> {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         this._evalSteps = this._evalToolCalls = this._evalPromptTokens = this._evalCompletionTokens = 0;
         this._evalBudgetExceeded = false; this._evalProjectedCharsOmitted = 0; this._evalTrace = [];
         this._evalTaskStartedAt = Date.now();
         await vscode.commands.executeCommand('workbench.view.extension.codico-container');
-        await (asPlan ? this._handlePlan(text) : this._handleUserMessage(text));
+        await (kind === 'plan' ? this._handlePlan(text) : kind === 'clarify' ? this._handleClarifyResponse(text) : this._handleUserMessage(text));
         return this.getEvaluationSnapshot();
     }
 
@@ -697,23 +703,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private _getInterruptedTaskSummary(): string {
-        for (const msg of this._history) {
-            if (msg.role !== 'user') { continue; }
-            const content = typeof msg.content === 'string'
-                ? msg.content
-                : (msg.content as MessageContentPart[])
-                    .filter(p => p.type === 'text')
-                    .map(p => (p as { type: 'text'; text: string }).text)
-                    .join('');
-            if (content.startsWith('[Tool Results]') ||
-                content.startsWith('[Context]') ||
-                content.startsWith('[Repository Instructions]') ||
-                content.startsWith('[Conversation Summary')) {
-                continue;
+        // The interrupted task is the latest request the user wrote (its own words, without [Context])
+        for (let i = this._history.length - 1; i >= 0; i--) {
+            if (isUserRequest(this._history[i])) {
+                return userRequestText(this._history[i], 400).replace(/\s+/g, ' ').trim().slice(0, 80) || 'previous task';
             }
-            const preambleEnd = content.lastIndexOf('\n\n');
-            const candidate = (preambleEnd > 80 && content.startsWith('[')) ? content.slice(preambleEnd + 2) : content;
-            return candidate.replace(/\s+/g, ' ').trim().slice(0, 80);
         }
         return 'previous task';
     }
@@ -870,7 +864,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (autoInject || agentContextBlock) {
             const ctxPreamble = autoInject ? await this._buildContextPreamble() : '';
             const combined = [agentContextBlock, ctxPreamble].filter(Boolean).join('\n\n');
-            const textWithCtx = combined ? `${combined}\n\n${text}` : text;
+            const textWithCtx = combined ? `${combined}\n\n${USER_REQUEST_MARKER}\n${text}` : text;
             if (contentParts && contentParts.length > 0) {
                 userContent = [
                     { type: 'text', text: textWithCtx },
@@ -889,11 +883,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (!_skipUserPush) {
             this._history.push({ role: 'user', content: userContent });
             // Track for thread display (resume view when switching threads)
-            this._displayMessages.push({ role: 'user', text: rawText.slice(0, 20_000) });
+            // A plan request is shown as the panel showed it live, not as the internal planner prompt
+            this._displayMessages.push({ role: 'user', text: this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : rawText.slice(0, 20_000) });
         }
 
         // Auto-name the thread immediately from the first user message so the sidebar updates right away
-        void this._updateThreadMeta(rawText).then(() => {
+        void this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText).then(() => {
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
         });
 
@@ -1428,11 +1423,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const thresholdMs = cfg.get<number>('completionNotificationThresholdMs', 5000);
             const elapsed = Date.now() - _taskStartMs;
             if (notifyEnabled && elapsed >= thresholdMs && !vscode.window.state.focused) {
-                const label = rawText.replace(/\s+/g, ' ').trim().slice(0, 60);
+                const shownText = this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText;
+                const label = shownText.replace(/\s+/g, ' ').trim().slice(0, 60);
                 // Not awaited: the notification can stay open indefinitely, and the agent
                 // must not stay busy (dropping queued messages) until it is dismissed.
                 void vscode.window.showInformationMessage(
-                    `Codico finished: "${label}${label.length < rawText.trim().length ? '…' : ''}"`,
+                    `Codico finished: "${label}${label.length < shownText.trim().length ? '…' : ''}"`,
                     'Open Chat'
                 ).then(action => {
                     if (action === 'Open Chat') {
@@ -1484,7 +1480,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Persist conversation history + display transcript
         await this._historyStore.update(this._historyKey, this._history);
         await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
-        await this._updateThreadMeta(rawText);
+        await this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText);
         this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
 
         // Generate follow-up suggestions (non-blocking, best-effort)
@@ -1587,34 +1583,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _compactHistory(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
-        if (this._history.length < 4) {
+        const plan = planCompaction(this._history);
+        if (!plan) {
             this._post({ type: 'compactDone', messageCount: 0 });
             return;
         }
 
         this._post({ type: 'compactStart' });
-
-        // Build flat text of all history for the summariser, capping each message at 3000 chars
-        const historyText = this._history.map(m => {
-            const content = typeof m.content === 'string'
-                ? m.content.slice(0, 3000)
-                : (m.content as MessageContentPart[])
-                    .filter(p => p.type === 'text')
-                    .map(p => (p as { type: 'text'; text: string }).text)
-                    .join('')
-                    .slice(0, 3000);
-            return `### ${m.role.toUpperCase()}\n${content}`;
-        }).join('\n\n---\n\n').slice(0, 40000);
-
-        const prompt =
-            'You are summarising a coding assistant conversation. Produce a detailed summary preserving:\n' +
-            '- All files created, modified, or deleted (with their paths)\n' +
-            '- Key decisions, trade-offs, and constraints\n' +
-            '- Code patterns, functions, and structures introduced\n' +
-            '- Errors encountered and how they were resolved\n' +
-            '- The current state of the work and any outstanding tasks\n\n' +
-            'Write in past tense. Be comprehensive — the assistant will use this summary to continue working seamlessly.\n\n' +
-            'Conversation to summarise:\n\n' + historyText;
+        const prompt = summarizerPrompt(plan);
 
         let summary = '';
         try {
@@ -1680,14 +1656,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        // Keep the last 4 messages (≤ 2 complete turns) for immediate context continuity
-        const KEEP = Math.min(4, this._history.length - 1);
-        const recentTurns = this._history.slice(-KEEP);
-
-        this._history = [
-            { role: 'user', content: `[Conversation Summary]\n\n${summary}` },
-            ...recentTurns,
-        ];
+        // The current request stays verbatim; the kept tail starts at a complete exchange
+        this._history = buildCompactedHistory(summary, plan);
         this._lastPromptTokens = 0;
 
         await this._historyStore.update(this._historyKey, this._history);
@@ -2057,35 +2027,40 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const uris = await filterAllowedWorkspaceUris(
             await vscode.workspace.findFiles(include, exclude, 600)
         );
-        const matches: string[] = [];
-
-        for (const uri of uris) {
-            if (matches.length >= 100) { break; }
-            try {
-                const bytes = await vscode.workspace.fs.readFile(uri);
-                if (bytes.byteLength > 1_000_000) { continue; }
-                const text = new TextDecoder().decode(bytes);
-                if (text.includes('\x00')) { continue; }
-                const rel = vscode.workspace.asRelativePath(uri);
-                const lines = text.split('\n');
-                for (let i = 0; i < lines.length && matches.length < 100; i++) {
-                    const line = lines[i];
-                    const hit = matcher ? matcher.test(line) : line.includes(tool.pattern);
-                    if (matcher) { matcher.lastIndex = 0; }
-                    if (hit) {
-                        matches.push(`${rel}:${i + 1}:${line.slice(0, 500)}`);
+        const scan = async (test: (line: string) => boolean): Promise<string[]> => {
+            const found: string[] = [];
+            for (const uri of uris) {
+                if (found.length >= 100) { break; }
+                try {
+                    const bytes = await vscode.workspace.fs.readFile(uri);
+                    if (bytes.byteLength > 1_000_000) { continue; }
+                    const text = new TextDecoder().decode(bytes);
+                    if (text.includes('\x00')) { continue; }
+                    const rel = vscode.workspace.asRelativePath(uri);
+                    const lines = text.split('\n');
+                    for (let i = 0; i < lines.length && found.length < 100; i++) {
+                        if (test(lines[i])) { found.push(`${rel}:${i + 1}:${lines[i].slice(0, 500)}`); }
                     }
+                } catch {
+                    // Skip unreadable files; continue searching the rest of the workspace.
                 }
-            } catch {
-                // Skip unreadable files; continue searching the rest of the workspace.
             }
+            return found;
+        };
+        let matches = await scan(matcher ? (line) => matcher!.test(line) : (line) => line.includes(tool.pattern));
+        // Models often send "a|b" without regex mode; such a literal search finds nothing
+        let note = '';
+        if (matches.length === 0 && !matcher && looksLikeIntendedRegex(tool.pattern)) {
+            const re = new RegExp(tool.pattern);
+            matches = await scan((line) => re.test(line));
+            note = ' (no literal matches; searched as a regular expression)';
         }
 
         const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
         this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
         return matches.length > 0
-            ? `[search_files: ${label}]\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
-            : `[search_files: ${label}] No matches found`;
+            ? `[search_files: ${label}]${note}\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
+            : `[search_files: ${label}] No matches found${note}`;
     }
 
     private async _handleFindFiles(tool: FindFilesTool, msgId: string): Promise<string> {
@@ -2525,10 +2500,27 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
         // The plan is generated with read-only tools (enforced in code, not just asked of the
         // model); changes are only made after the user approves it.
         this._planGoal = goal;
+        this._planAwaitingAnswer = null;
         try {
             await this._handleUserMessage(AgentProvider.PLAN_PROMPT + goal);
         } finally {
             this._planGoal = null;
+        }
+        // The planner asked a clarifying question instead of planning: the answer must
+        // continue this plan (read-only), not start a normal agent turn that edits files
+        const last = this._history[this._history.length - 1];
+        if (last?.role === 'assistant' && /<clarify>[\s\S]*?<\/clarify>/.test(messageText(last))) {
+            this._planAwaitingAnswer = goal;
+        }
+    }
+
+    private async _handleClarifyResponse(answer: string): Promise<void> {
+        const goal = this._planAwaitingAnswer;
+        this._planAwaitingAnswer = null;
+        if (goal !== null) {
+            await this._handlePlan(`${goal}\n\nThe user's answer to your clarifying question: ${answer}`);
+        } else {
+            await this._handleUserMessage(answer);
         }
     }
 

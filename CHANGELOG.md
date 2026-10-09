@@ -2,6 +2,17 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Plan mode: answering the planner's clarifying question started a normal agent turn that edited files before any plan existed. The answer now continues the plan, read-only, with the original goal.
+- Auto-compaction during a long task could erase the user's current request (the agent then lost the goal and answered something else) and leave a tool result without its call. Compaction now keeps the current request verbatim, summarises older work with recent information first, and only cuts between complete exchanges.
+- `search_files` patterns like `a|b` sent without regex mode silently found nothing; when a literal search finds nothing and the pattern is clearly a regex, it is searched as one and the result says so.
+- The "resume interrupted session" banner now names the latest request, and plan requests appear as "📋 Plan: …" in saved transcripts, thread names and notifications.
+
+### Changed
+- Codico marks where its injected `[Context]` ends and the user's own text begins (`[User request]`).
+
 ## 0.3.1 - 2026-10-09
 
 ### Fixed
