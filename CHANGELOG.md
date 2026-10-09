@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.3 - 2026-10-09
 
 ### Changed
 - Plan mode shows the plan as a card: numbered step badges, a bold title per step with its full description underneath, and inline code and bold rendered instead of raw markdown. Description lines written under a step heading are now kept; every step and its complete text are shown. The execution tracker shows each step in full.
