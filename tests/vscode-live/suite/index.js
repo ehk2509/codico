@@ -240,6 +240,35 @@ async function run() {
     await set('mcpServers', []);
     await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'refreshMcp' });
   }
+  {
+    // Regenerate cuts the last turn from the model history and sends it again
+    const before = (await getLog()).length; const t0 = Date.now();
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:regen] please do the task');
+    const first = (await getLog()).slice(before).filter(e => e.scenario === 'regen' && e.stream);
+    const mid = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'regenerate' });
+    const again = (await getLog()).slice(mid).filter(e => e.scenario === 'regen' && e.stream);
+    const same = !!first[0] && !!again[0] && JSON.stringify(again[0].roles) === JSON.stringify(first[0].roles) && again[0].lastUser === first[0].lastUser;
+    results.push({ name: 'regenerate', ms: Date.now() - t0, requests: first.length + again.length, ok: first.length === 2 && again.length === 2 && same,
+      why: `first run ${first.length} req, regenerated ${again.length} req; regenerated request identical to the original (old reply gone): ${same}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+  {
+    // A file path clicked in the chat opens that file at its line
+    const t0 = Date.now();
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'openFile', path: 'fixtures/config.txt', line: 2 });
+    const ed = vscode.window.activeTextEditor;
+    const opened = !!ed && ed.document.uri.fsPath.endsWith(path.join('fixtures', 'config.txt'));
+    const line = ed ? ed.selection.active.line + 1 : 0;
+    let outside = 'none';
+    try { await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'openFile', path: '../outside/secret.txt' }); outside = vscode.window.activeTextEditor?.document.uri.fsPath ?? 'none'; } catch (e) { outside = 'threw: ' + e.message; }
+    const blocked = !/secret\.txt$/.test(outside);
+    results.push({ name: 'open_file_link', ms: Date.now() - t0, requests: 0, ok: opened && line === 2 && blocked,
+      why: `opened: ${opened}; at line ${line}; path outside the workspace refused: ${blocked}` });
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

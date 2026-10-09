@@ -11,6 +11,9 @@
     debug_get_variables:1, debug_get_callstack:1, debug_list_breakpoints:1, update_todo:1
   };
 
+  /** Code blocks longer than this start collapsed. */
+  var COLLAPSE_LINES = 25;
+
   function esc(text) {
     return String(text)
       .replace(/&/g, '&amp;')
@@ -20,9 +23,27 @@
       .replace(/'/g, '&#39;');
   }
 
+  // A file path the panel can open: known source-file extensions only, so that code such as
+  // `msg.type` or `e.g` is not mistaken for a file. An optional :line (and :column) follows.
+  var FILE_EXT = '(?:tsx?|jsx?|mjs|cjs|json|md|css|scss|less|html?|vue|svelte|py|go|rs|java|kt|rb|php|cs|cpp|hpp|cc|c|h|swift|ya?ml|toml|ini|sh|ps1|sql|xml|txt|lock|gradle|dart|lua|ex|exs)';
+  var CODE_PATH_RE = new RegExp('^((?:\\.{1,2}/)?(?:[\\w@.-]+/)*[\\w@.-]+\\.' + FILE_EXT + ')(?::(\\d+)(?::\\d+)?)?$');
+  var TEXT_PATH_RE = new RegExp('(^|[\\s(\\[])((?:\\.{1,2}/)?(?:[\\w@.-]+/)+[\\w@.-]+\\.' + FILE_EXT + ')(?::(\\d+)(?::\\d+)?)?(?=[\\s).,;:!?\\]]|$)', 'g');
+  function fileLink(tag, shown, path, line) {
+    return '<' + tag + ' class="file-link" data-path="' + path + '"' + (line ? ' data-line="' + line + '"' : '') + ' title="Open ' + path + '">' + shown + '</' + tag + '>';
+  }
+
   function inline(text) {
     var s = esc(text);
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Plain-text paths with a folder (outside code), then code spans (a path in a code span is a link)
+    s = s.split(/(`[^`]+`)/).map(function (part) {
+      return part.charAt(0) === '`' ? part : part.replace(TEXT_PATH_RE, function (m, pre, path, line) {
+        return pre + fileLink('span', m.slice(pre.length), path, line);
+      });
+    }).join('');
+    s = s.replace(/`([^`]+)`/g, function (m, code) {
+      var p = CODE_PATH_RE.exec(code);
+      return p ? fileLink('code', code, p[1], p[2]) : '<code>' + code + '</code>';
+    });
     s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -61,8 +82,12 @@
           var escapedCode = esc(code);
           var langLabel = lang || 'plaintext';
           var la = lang ? ' class="language-' + esc(lang) + '"' : '';
-          out += '<div class="code-wrap">'
-            + '<div class="code-lang-bar"><span>' + esc(langLabel) + '</span><button data-code="' + escapedCode + '">Copy</button></div>'
+          // Long blocks start collapsed to a preview (the panel toggles them; nothing is hidden for good)
+          var long = codeLines.length > COLLAPSE_LINES;
+          out += '<div class="code-wrap' + (long ? ' collapsible collapsed' : '') + '">'
+            + '<div class="code-lang-bar"><span>' + esc(langLabel) + ' \u00b7 ' + codeLines.length + (codeLines.length === 1 ? ' line' : ' lines') + '</span>'
+            + (long ? '<button class="code-toggle" title="Show the whole block">Expand</button>' : '')
+            + '<button data-code="' + escapedCode + '">Copy</button></div>'
             + '<pre><code' + la + '>' + escapedCode + '</code></pre>'
             + '</div>';
         }

@@ -318,3 +318,151 @@ test('Plan card: formatted titles, full details, every step visible without inte
   assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
   await page.close();
 });
+
+test('a sent message gets its turn when the reply starts; edit and delete post that turn', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  await page.fill('#msg-input', 'make the button blue');
+  await page.click('#send-btn');
+  const bubble = page.locator('.msg.user').last();
+  assert.equal(await bubble.getAttribute('data-turn'), null, 'no actions before the turn starts');
+  await send({ type: 'startMessage', id: 'r1', turnId: 'turn-1', editable: true }, { type: 'appendContent', id: 'r1', text: 'Done.' }, { type: 'endMessage', id: 'r1' });
+  assert.equal(await bubble.getAttribute('data-turn'), 'turn-1');
+  assert.match(await bubble.locator('.msg-time').textContent(), /just now/);
+
+  await bubble.hover();
+  await bubble.locator('.msg-edit').click();
+  assert.equal(await bubble.locator('.msg-editor textarea').inputValue(), 'make the button blue');
+  await bubble.locator('.msg-editor textarea').fill('make the button green');
+  await bubble.locator('.msg-editor-send').click();
+  assert.deepEqual((await posted('editMessage')).pop(), { type: 'editMessage', turnId: 'turn-1', text: 'make the button green' });
+
+  await bubble.locator('.msg-editor-cancel').click();
+  await bubble.hover();
+  await bubble.locator('.msg-del').click();
+  assert.match(await bubble.locator('.msg-confirm').textContent(), /everything after it/);
+  await bubble.locator('.msg-confirm-delete').click();
+  assert.deepEqual((await posted('deleteMessage')).pop(), { type: 'deleteMessage', turnId: 'turn-1' });
+  assert.deepEqual(errors, []);
+});
+
+test('a message that started no turn, or an approval, gets no edit; actions hide while streaming', async () => {
+  const { page, send } = await openPanel();
+  await page.fill('#msg-input', 'no api key yet');
+  await page.click('#send-btn');
+  await send({ type: 'error', message: 'No API key set.' }, { type: 'turnSkipped' });
+  assert.equal(await page.locator('.msg.user').last().getAttribute('data-turn'), 'none');
+  await page.fill('#msg-input', 'second try');
+  await page.click('#send-btn');
+  await send({ type: 'startMessage', id: 'r2', turnId: 'turn-2', editable: false });
+  const second = page.locator('.msg.user').last();
+  assert.equal(await second.getAttribute('data-turn'), 'turn-2', 'the skipped bubble did not take this turn');
+  assert.equal(await second.getAttribute('data-editable'), '0');
+  await second.hover();
+  assert.equal(await second.locator('.msg-actions').isVisible(), false, 'hidden while the reply streams');
+  await send({ type: 'endMessage', id: 'r2' });
+  await second.hover();
+  assert.equal(await second.locator('.msg-del').isVisible(), true);
+  assert.equal(await second.locator('.msg-edit').isVisible(), false);
+});
+
+test('a reopened thread keeps turns and times; regenerate is on the last reply; a resend shows at once', async () => {
+  const { page, send, posted } = await openPanel();
+  const hourAgo = Date.now() - 3600_000;
+  await send({ type: 'threadLoaded', id: 'th', name: 't', displayMessages: [
+    { role: 'user', text: 'old message', at: hourAgo - 60_000 },
+    { role: 'assistant', text: 'old reply' },
+    { role: 'user', text: '📋 Plan: add login', id: 'p1', at: hourAgo, plan: 'add login' },
+    { role: 'assistant', text: '', at: hourAgo, events: [{ type: 'appendContent', text: '1. Step' }] },
+  ] });
+  const users = page.locator('.msg.user');
+  assert.equal(await users.nth(0).getAttribute('data-turn'), 'none', 'saved before turn ids: no actions');
+  assert.equal(await users.nth(1).getAttribute('data-turn'), 'p1');
+  assert.equal(await users.nth(1).getAttribute('data-edit-text'), 'add login', 'a plan edits its goal');
+  assert.match(await users.nth(1).locator('.msg-time').textContent(), /1h ago/);
+  assert.match(await page.locator('.msg.assistant').last().locator('.msg-time').textContent(), /1h ago/);
+  assert.equal(await page.locator('.regen-btn').count(), 1);
+  await page.locator('.msg.assistant').last().locator('.regen-btn').click();
+  assert.deepEqual((await posted('regenerate')).pop(), { type: 'regenerate' });
+
+  await send({ type: 'threadLoaded', id: 'th', name: 't', displayMessages: [{ role: 'user', text: 'old message' }, { role: 'assistant', text: 'old reply' }], pendingUserText: '📋 Plan: add signup' });
+  assert.equal(await users.last().textContent().then(t => t.includes('add signup')), true);
+  assert.equal(await page.locator('#stop-btn').isVisible(), true, 'its reply is on the way');
+  assert.equal(await page.locator('.regen-btn').count(), 0, 'nothing to regenerate in a thread without turns');
+});
+
+test('long code blocks are collapsed to a preview and expand on click', async () => {
+  const { page, send } = await openPanel();
+  const code = Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join('\n');
+  await send({ type: 'startMessage', id: 'c1' }, { type: 'appendContent', id: 'c1', text: '```js\n' + code + '\n```' });
+  const wrap = page.locator('.code-wrap').last();
+  assert.equal(await wrap.locator('.code-toggle').isVisible(), false, 'not collapsed while streaming');
+  await send({ type: 'endMessage', id: 'c1' });
+  const pre = wrap.locator('pre');
+  const collapsedHeight = await pre.evaluate(el => el.clientHeight);
+  await wrap.locator('.code-toggle').click();
+  assert.equal(await wrap.locator('.code-toggle').textContent(), 'Collapse');
+  assert.ok(await pre.evaluate(el => el.clientHeight) > collapsedHeight * 2, 'expanded shows the whole block');
+});
+
+test('a file dropped from the OS is attached; a drop from the Explorer is sent to the extension', async () => {
+  const { page, posted } = await openPanel();
+  await page.evaluate(() => {
+    const drop = (dt) => document.dispatchEvent(Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: dt }));
+    const files = new DataTransfer();
+    files.items.add(new File(['const a = 1;\n'], 'a.js', { type: 'text/javascript' }));
+    drop(files);
+    const explorer = new DataTransfer();
+    explorer.setData('text/uri-list', 'file:///ws/src/b.ts');
+    drop(explorer);
+  });
+  await page.waitForTimeout(150);
+  assert.match(await page.locator('#ctx-chips, .ctx-chip, .chip').first().textContent().catch(() => ''), /a\.js/);
+  assert.deepEqual((await posted('attachDroppedFiles')).pop(), { type: 'attachDroppedFiles', uris: ['file:///ws/src/b.ts'] });
+});
+
+test('Up in an empty input edits your last message; Esc stops a reply', async () => {
+  const { page, send, posted } = await openPanel();
+  await page.fill('#msg-input', 'first');
+  await page.click('#send-btn');
+  await send({ type: 'startMessage', id: 'k1', turnId: 't-1', editable: true }, { type: 'endMessage', id: 'k1' });
+  await page.focus('#msg-input');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.locator('.msg.user .msg-editor textarea').inputValue(), 'first');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.msg-editor').count(), 0, 'Esc closes the edit box');
+  await send({ type: 'startMessage', id: 'k2' });
+  await page.focus('#msg-input');
+  await page.keyboard.press('Escape');
+  assert.ok((await posted('abortStream')).length > 0, 'Esc stopped the reply');
+});
+
+test('scrolling up during a reply stops following it and offers Jump to latest', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 's1' });
+  for (let i = 0; i < 40; i++) { await page.evaluate(n => window.postMessage({ type: 'appendContent', id: 's1', text: `Paragraph ${n}\n\n` }, '*'), i); }
+  await page.waitForTimeout(100);
+  const msgs = page.locator('#messages');
+  await msgs.hover();
+  await page.mouse.wheel(0, -600);
+  await page.waitForTimeout(400);
+  const readingAt = await msgs.evaluate(el => el.scrollTop);
+  await send({ type: 'appendContent', id: 's1', text: 'More text\n\n' }, { type: 'appendContent', id: 's1', text: 'Even more\n\n' });
+  await page.waitForTimeout(200);
+  assert.ok(Math.abs(await msgs.evaluate(el => el.scrollTop) - readingAt) < 5, 'the reader stays where they are');
+  assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight > 100), 'not pulled to the bottom');
+  assert.equal(await page.locator('.jump-latest').isVisible(), true);
+  await page.locator('.jump-latest').click();
+  assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight < 5), 'back at the bottom');
+  assert.equal(await page.locator('.jump-latest').isVisible(), false);
+});
+
+test('file paths in replies and tool steps open the file', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'startMessage', id: 'f1' }, { type: 'toolStart', id: 'f1', tool: 'read_file', label: 'src/app.ts' },
+    { type: 'toolResult', id: 'f1', tool: 'read_file', label: 'src/app.ts lines 1–300 of 484', success: true },
+    { type: 'appendContent', id: 'f1', text: 'The bug is in `src/app.ts:42`.' }, { type: 'endMessage', id: 'f1' });
+  await page.locator('code.file-link').click();
+  assert.deepEqual((await posted('openFile')).pop(), { type: 'openFile', path: 'src/app.ts', line: 42 });
+  await page.locator('.step-pill-label.file-link').click();
+  assert.deepEqual((await posted('openFile')).pop(), { type: 'openFile', path: 'src/app.ts' });
+});

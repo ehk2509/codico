@@ -385,7 +385,13 @@
         }
         return;
       }
-      if (e.key === 'Escape') { slashHintEl.style.display = 'none'; _setHintMode(null); return; }
+      if (e.key === 'Escape') { e.preventDefault(); slashHintEl.style.display = 'none'; _setHintMode(null); return; }
+    }
+    // Up in an empty input edits your last message (like most chat apps)
+    if (e.key === 'ArrowUp' && !input.value && !streaming) {
+      var mine = msgs.querySelectorAll('.msg.user[data-editable="1"]');
+      if (mine.length > 0) { e.preventDefault(); _startEditUserMsg(mine[mine.length - 1]); }
+      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -523,7 +529,7 @@
   document.getElementById('thread-search-close').addEventListener('click', _closeSearch);
 
   _searchInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { _closeSearch(); }
+    if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       var first = _searchResults.querySelector('.ts-result');
@@ -599,7 +605,7 @@
             if (p && p.classList.contains('ts-result')) { p.focus(); }
             else { _searchInput.focus(); }
           }
-          if (e.key === 'Escape') { _closeSearch(); }
+          if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
         });
       })(items[k]);
     }
@@ -1082,6 +1088,8 @@
 
   function setStreaming(on) {
     streaming = on;
+    // Message actions (edit, delete, regenerate, code toggles) are hidden while a reply streams
+    document.body.classList.toggle('is-streaming', !!on);
     if (on) {
       sendBtn.textContent = 'Queue \u2192';
       sendBtn.title = 'Queue a follow-up (sent after current response)';
@@ -1138,15 +1146,221 @@
     if (_queuedBarEl) { _queuedBarEl.parentNode && _queuedBarEl.parentNode.removeChild(_queuedBarEl); _queuedBarEl = null; }
   }
 
+  // Esc stops the reply, unless something else (a menu, an edit box) used it first
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && streaming && !e.defaultPrevented) { e.preventDefault(); stopBtn.click(); }
+  });
+
   stopBtn.addEventListener('click', function() {
     _queuedMsg = null;
     _hideQueuedBanner();
     vscode.postMessage({ type: 'abortStream' });
   });
 
-  function appendUserMsg(text, ctxLabels, images) {
+  // ── Message actions: edit & resend, delete, regenerate ─────────────────────
+  // A user message carries its turn id (data-turn); "none" means it cannot be changed.
+  /** A tool step's label; for file tools it opens the file ("src/a.ts lines 1–300 of 484" → src/a.ts). */
+  function _pillLabelHtml(tool, label) {
+    var FILE_TOOLS = { read_file: 1, edit_file: 1, write_file: 1 };
+    if (!FILE_TOOLS[tool] || !label) { return '<span class="step-pill-label">' + esc(label) + '</span>'; }
+    var path = String(label).split(' lines ')[0];
+    return '<span class="step-pill-label file-link" data-path="' + esc(path) + '" title="Open ' + esc(path) + '">' + esc(label) + '</span>';
+  }
+
+  function _tagUserMsg(el, turnId, editable) {
+    el.dataset.turn = turnId || 'none';
+    el.dataset.editable = turnId && editable ? '1' : '0';
+  }
+
+  function _oldestUntaggedUserMsg() {
+    return msgs.querySelector('.msg.user:not([data-turn])');
+  }
+
+  /** Regenerate is offered on the reply to the newest message that can be changed. */
+  function _placeRegenerate() {
+    document.querySelectorAll('.regen-btn').forEach(function (b) { b.remove(); });
+    var users = msgs.querySelectorAll('.msg.user');
+    var last = users[users.length - 1];
+    if (!last || !last.dataset.turn || last.dataset.turn === 'none') { return; }
+    var reply = last.nextElementSibling;
+    while (reply && !reply.classList.contains('assistant')) { reply = reply.nextElementSibling; }
+    if (!reply) { return; }
+    var btn = document.createElement('button');
+    btn.className = 'regen-btn';
+    btn.title = 'Run this message again and replace the reply';
+    btn.textContent = '↻ Regenerate';
+    reply.appendChild(btn);
+  }
+
+  function _startEditUserMsg(el) {
+    if (el.querySelector('.msg-editor')) { return; }
+    var bubble = el.querySelector('.user-bubble');
+    var editor = document.createElement('div');
+    editor.className = 'msg-editor';
+    var area = document.createElement('textarea');
+    area.value = el.dataset.editText || '';
+    area.rows = Math.min(12, Math.max(3, area.value.split('\n').length));
+    var hint = document.createElement('div');
+    hint.className = 'msg-editor-hint';
+    hint.textContent = 'Sending replaces this message and everything after it.';
+    var send = document.createElement('button');
+    send.className = 'msg-editor-send';
+    send.textContent = 'Send';
+    var cancel = document.createElement('button');
+    cancel.className = 'msg-editor-cancel';
+    cancel.textContent = 'Cancel';
+    var close = function () { editor.remove(); if (bubble) { bubble.style.display = ''; } };
+    send.addEventListener('click', function () {
+      var text = area.value.trim();
+      if (!text || streaming) { return; }
+      vscode.postMessage({ type: 'editMessage', turnId: el.dataset.turn, text: text });
+    });
+    cancel.addEventListener('click', close);
+    area.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send.click(); }
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    editor.appendChild(area);
+    editor.appendChild(hint);
+    editor.appendChild(send);
+    editor.appendChild(cancel);
+    if (bubble) { bubble.style.display = 'none'; bubble.parentNode.insertBefore(editor, bubble.nextSibling); } else { el.appendChild(editor); }
+    area.focus();
+  }
+
+  function _confirmDeleteUserMsg(el) {
+    if (el.querySelector('.msg-confirm')) { return; }
+    var row = document.createElement('div');
+    row.className = 'msg-confirm';
+    var text = document.createElement('span');
+    text.textContent = 'Delete this message and everything after it?';
+    var del = document.createElement('button');
+    del.className = 'msg-confirm-delete';
+    del.textContent = 'Delete';
+    var cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    del.addEventListener('click', function () {
+      if (!streaming) { vscode.postMessage({ type: 'deleteMessage', turnId: el.dataset.turn }); }
+    });
+    cancel.addEventListener('click', function () { row.remove(); });
+    row.appendChild(text);
+    row.appendChild(del);
+    row.appendChild(cancel);
+    el.appendChild(row);
+  }
+
+  // One listener for every message: actions, regenerate, and code block toggles
+  msgs.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link') : null;
+    if (!btn) { return; }
+    if (btn.classList.contains('file-link')) {
+      var line = Number(btn.dataset.line);
+      vscode.postMessage(line > 0 ? { type: 'openFile', path: btn.dataset.path, line: line } : { type: 'openFile', path: btn.dataset.path });
+      return;
+    }
+    if (btn.classList.contains('code-toggle')) {
+      var wrap = btn.closest('.code-wrap');
+      var collapsed = wrap.classList.toggle('collapsed');
+      btn.textContent = collapsed ? 'Expand' : 'Collapse';
+      btn.title = collapsed ? 'Show the whole block' : 'Collapse the block';
+      return;
+    }
+    if (streaming) { return; }
+    if (btn.classList.contains('regen-btn')) { vscode.postMessage({ type: 'regenerate' }); return; }
+    var el = btn.closest('.msg.user');
+    if (!el || !el.dataset.turn || el.dataset.turn === 'none') { return; }
+    if (btn.classList.contains('msg-edit')) { _startEditUserMsg(el); } else { _confirmDeleteUserMsg(el); }
+  });
+
+  // ── Message times ("2m ago"), refreshed every minute ─────────────────────────
+  function _relTime(ts) {
+    var s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 45) { return 'just now'; }
+    if (s < 3600) { return Math.max(1, Math.round(s / 60)) + 'm ago'; }
+    if (s < 86400) { return Math.floor(s / 3600) + 'h ago'; }
+    if (s < 7 * 86400) { return Math.floor(s / 86400) + 'd ago'; }
+    return new Date(ts).toLocaleDateString();
+  }
+  function _timeHtml(ts) {
+    return '<span class="msg-time" data-ts="' + Number(ts) + '" title="' + esc(new Date(ts).toLocaleString()) + '">' + _relTime(ts) + '</span>';
+  }
+  function _refreshTime(el) {
+    var ts = Number(el.dataset.ts);
+    if (!ts) { return; }
+    el.textContent = _relTime(ts);
+    el.title = new Date(ts).toLocaleString();
+  }
+  setInterval(function () { document.querySelectorAll('.msg-time').forEach(_refreshTime); }, 60000);
+
+  // ── Drag and drop files onto the chat ────────────────────────────────────────
+  // From the OS the files themselves arrive; from VS Code's Explorer (hold Shift) only their
+  // URIs, which the extension reads. Images become image attachments, other files file context.
+  var IMAGE_NAME_RE = /\.(png|jpe?g|gif|webp)$/i;
+  var _dropDepth = 0;
+  var _dropOverlay = null;
+  function _isFileDrag(e) {
+    var types = e.dataTransfer && e.dataTransfer.types;
+    return !!types && Array.prototype.some.call(types, function (t) {
+      return t === 'Files' || t === 'text/uri-list' || t === 'application/vnd.code.uri-list';
+    });
+  }
+  function _showDropOverlay(on) {
+    if (on && !_dropOverlay) {
+      _dropOverlay = document.createElement('div');
+      _dropOverlay.className = 'drop-overlay';
+      _dropOverlay.textContent = 'Drop files to attach them (hold Shift when dragging from the Explorer)';
+      document.body.appendChild(_dropOverlay);
+    }
+    if (_dropOverlay) { _dropOverlay.style.display = on ? 'flex' : 'none'; }
+  }
+  document.addEventListener('dragenter', function (e) {
+    if (!_isFileDrag(e)) { return; }
+    e.preventDefault();
+    _dropDepth++;
+    _showDropOverlay(true);
+  });
+  document.addEventListener('dragover', function (e) {
+    if (!_isFileDrag(e)) { return; }
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+  document.addEventListener('dragleave', function () {
+    _dropDepth = Math.max(0, _dropDepth - 1);
+    if (_dropDepth === 0) { _showDropOverlay(false); }
+  });
+  document.addEventListener('drop', function (e) {
+    if (!_isFileDrag(e)) { return; }
+    e.preventDefault();
+    _dropDepth = 0;
+    _showDropOverlay(false);
+    var dt = e.dataTransfer;
+    var uris = (dt.getData('application/vnd.code.uri-list') || dt.getData('text/uri-list') || '')
+      .split(/\r?\n/).map(function (u) { return u.trim(); }).filter(function (u) { return u && u.charAt(0) !== '#'; });
+    var files = Array.prototype.slice.call(dt.files || []);
+    // Only paths (a drag from the Explorer): the extension reads them, applying .codicoignore
+    if (files.length === 0) {
+      if (uris.length > 0) { vscode.postMessage({ type: 'attachDroppedFiles', uris: uris }); }
+      return;
+    }
+    files.forEach(function (f) {
+      if (/^image\//.test(f.type) || IMAGE_NAME_RE.test(f.name)) { _readImageFile(f); return; }
+      if (f.size > 1024 * 1024) { showError('Cannot attach ' + f.name + ': larger than 1 MB.'); return; }
+      f.text().then(function (text) {
+        if (text.indexOf('\u0000') >= 0) { showError('Cannot attach ' + f.name + ': it is not a text file.'); return; }
+        addCtxAttachment('file', f.name, 'File: ' + f.name + '\n```\n' + text.slice(0, 20000) + '\n```' + (text.length > 20000 ? '\n\u2026 (truncated)' : ''));
+      });
+    });
+  });
+
+  /**
+   * @param meta for a saved message: { id, at, editable, editText }. A live message gets its turn
+   * id when its reply starts (startMessage); until then it has no actions.
+   */
+  function appendUserMsg(text, ctxLabels, images, meta) {
     var d = document.createElement('div');
     d.className = 'msg user';
+    d.dataset.editText = (meta && meta.editText) || text;
+    if (meta) { _tagUserMsg(d, meta.id, meta.editable); }
     var ctxHtml = '';
     if (ctxLabels && ctxLabels.length > 0) {
       ctxHtml = '<div class="user-ctx">' +
@@ -1171,12 +1385,16 @@
     }
 
     d.innerHTML =
-      '<div class="msg-label">You</div>' +
+      '<div class="msg-label">You' + _timeHtml(meta && meta.at || Date.now()) +
+        '<span class="msg-actions">' +
+          '<button class="msg-act msg-edit" title="Edit and resend">\u270E</button>' +
+          '<button class="msg-act msg-del" title="Delete this message and everything after it">\uD83D\uDDD1</button>' +
+        '</span></div>' +
       ctxHtml +
       '<div class="user-bubble">' + agentBadgeHtml + esc(displayText) + '</div>' +
       imgHtml;
     msgs.appendChild(d);
-    scrollBottom();
+    scrollBottom(true);
   }
 
   function addCompactNotice(messageCount) {
@@ -1207,7 +1425,7 @@
 
     var label = document.createElement('div');
     label.className = 'msg-label';
-    label.textContent = 'Codico';
+    label.innerHTML = 'Codico' + _timeHtml(Date.now());
 
     // Think-wraps are created dynamically by appendThinking() at the current DOM
     // position so they appear inline in execution order rather than all at the top.
@@ -1412,6 +1630,7 @@
 
   function endMsg(id) {
     setStreaming(false);
+    _placeRegenerate();
     // Mark any still-pending tool pills as interrupted (token limit / early stop)
     var wrap = document.getElementById('msg-' + id);
     if (wrap) {
@@ -1965,7 +2184,7 @@
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
         debug_get_variables: 'Inspecting', debug_get_callstack: 'Reading stack', debug_list_breakpoints: 'Listing'
       }[tool] || 'Running') + '\u2026</span>' +
-      '<span class="step-pill-label">' + esc(label) + '</span>';
+      _pillLabelHtml(tool, label);
 
     // Insert pill before copyBtn so it appears in correct DOM order
     if (copyBtn) { wrap.insertBefore(pill, copyBtn); }
@@ -2023,7 +2242,7 @@
         '<span class="step-pill-verb ' + (granted ? 'ok' : 'fail') + '">' +
           (granted ? 'Written' : (error ? 'Error' : 'Denied')) +
         '</span>' +
-        '<span class="step-pill-label">' + esc(filepath) + '</span>';
+        _pillLabelHtml('write_file', filepath);
       var copyBtn = document.getElementById('copy-' + id);
       if (copyBtn) { wrap.insertBefore(pill, copyBtn); } else { wrap.appendChild(pill); }
       targetPill = pill;
@@ -2110,7 +2329,7 @@
       pill.innerHTML =
         '<span class="step-pill-icon">' + icon + '</span>' +
         '<span class="step-pill-verb ' + (success ? 'ok' : 'fail') + '">' + verb + '</span>' +
-        '<span class="step-pill-label">' + esc(label) + '</span>';
+        _pillLabelHtml(tool, label);
       wrap.appendChild(pill);
       targetPill = pill;
     }
@@ -2277,7 +2496,46 @@
     return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   }
 
-  function scrollBottom() { msgs.scrollTop = msgs.scrollHeight; }
+  // While a reply streams, the view follows it only if the reader is at the bottom; scrolling up
+  // to read stops that and offers a "Jump to latest" pill. Sending or opening a thread re-attaches.
+  var _followStream = true;
+  var _lastAutoTop = 0;
+  var _jumpPill = null;
+  function scrollBottom(force) {
+    if (force) { _followStream = true; }
+    // Scroll events arrive a frame late: if the view moved up since our last scroll, the reader did it
+    else if (msgs.scrollTop < _lastAutoTop - 4) { _followStream = false; }
+    if (_followStream) {
+      // Instant: a smooth (animated) scroll per chunk lags behind the stream and its in-between
+      // positions would look like the reader scrolling up
+      msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'instant' });
+      _lastAutoTop = msgs.scrollTop;
+      _showJumpPill(false);
+    } else {
+      _showJumpPill(true);
+    }
+  }
+  function _showJumpPill(on) {
+    if (on && !_jumpPill) {
+      _jumpPill = document.createElement('button');
+      _jumpPill.className = 'jump-latest';
+      _jumpPill.textContent = '\u2193 Jump to latest';
+      _jumpPill.addEventListener('click', function () { scrollBottom(true); });
+      document.body.appendChild(_jumpPill);
+    }
+    if (!_jumpPill) { return; }
+    var inputArea = document.getElementById('input-area');
+    _jumpPill.style.bottom = ((inputArea ? inputArea.offsetHeight : 0) + 10) + 'px';
+    _jumpPill.style.display = on ? 'block' : 'none';
+  }
+  msgs.addEventListener('scroll', function () {
+    var atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40;
+    if (atBottom) { _followStream = true; _lastAutoTop = msgs.scrollTop; _showJumpPill(false); }
+    else if (msgs.scrollTop < _lastAutoTop - 4) { _followStream = false; }
+  });
+  // Upward wheel or touch movement stops following at once, before the next chunk renders
+  msgs.addEventListener('wheel', function (e) { if (e.deltaY < 0) { _followStream = false; } }, { passive: true });
+  msgs.addEventListener('touchmove', function () { _followStream = false; }, { passive: true });
 
   function _relativeTime(ts) {
     var diff = Math.max(0, Date.now() - ts);
@@ -2394,7 +2652,7 @@
     inp.addEventListener('blur', commit);
     inp.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
-      if (e.key === 'Escape') { inp.value = thread.name; inp.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); inp.value = thread.name; inp.blur(); }
     });
   }
 
@@ -2615,18 +2873,26 @@
   // Rebuilds a stored assistant reply by replaying the events it streamed through
   // the normal handlers, so a reopened thread looks exactly like the live one.
   var _replaySeq = 0;
-  function _replayAssistant(events) {
+  function _replayAssistant(events, at) {
     var rid = 'replay-' + (++_replaySeq);
     handleExtMessage({ type: 'startMessage', id: rid });
     events.forEach(function(ev) { handleExtMessage(Object.assign({}, ev, { id: rid })); });
     handleExtMessage({ type: 'endMessage', id: rid });
+    // Saved replies show when they were written, not when they were replayed
+    var t = document.querySelector('#msg-' + rid + ' .msg-time');
+    if (t) { if (at) { t.dataset.ts = String(at); _refreshTime(t); } else { t.remove(); } }
   }
 
   function handleExtMessage(data) {
     switch (data.type) {
       // setStreaming: replies the extension starts itself (CodeLens, editor commands, /test…)
       // must also show Stop and a working status, not only ones sent from this panel
-      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); if (data.planGoal) { _planGoals[data.id] = data.planGoal; } startMsg(data.id); setStreaming(true); break;
+      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); if (data.planGoal) { _planGoals[data.id] = data.planGoal; }
+        // Messages start their turns in the order they were sent: the oldest untagged bubble is this turn's
+        if (data.turnId) { var ub = _oldestUntaggedUserMsg(); if (ub) { _tagUserMsg(ub, data.turnId, data.editable); if (data.planGoal) { ub.dataset.editText = data.planGoal; } } }
+        startMsg(data.id); setStreaming(true); break;
+      case 'turnSkipped':     var sb = _oldestUntaggedUserMsg(); if (sb) { _tagUserMsg(sb, null, false); } break;
+      case 'droppedImage':    _pastedImages.push({ dataUrl: data.dataUrl }); _renderImgPreviews(); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
@@ -2926,15 +3192,16 @@
           welcome.style.display = 'none';
           data.displayMessages.forEach(function(m) {
             if (m.role === 'user') {
-              appendUserMsg(m.text, [], []);
+              appendUserMsg(m.text, [], [], { id: m.id, at: m.at, editable: !!m.id && (m.plan !== undefined || m.prompt === undefined),
+                editText: m.plan !== undefined ? m.plan : m.text });
             } else if (m.events && m.events.length > 0) {
-              _replayAssistant(m.events);
+              _replayAssistant(m.events, m.at);
             } else {
               var d = document.createElement('div');
               d.className = 'msg assistant';
               var lbl = document.createElement('div');
               lbl.className = 'msg-label';
-              lbl.textContent = 'Codico Agent';
+              lbl.innerHTML = 'Codico Agent' + (m.at ? _timeHtml(m.at) : '');
               var out = document.createElement('div');
               out.className = 'agent-out';
               out.innerHTML = renderMd(m.text + (m.text.length >= 297 ? '\n\n*\u2026 (truncated)*' : ''));
@@ -2946,7 +3213,14 @@
         } else {
           welcome.style.display = 'flex';
         }
-        scrollBottom();
+        // An edited or regenerated message is being sent again: show it, its reply follows
+        if (data.pendingUserText) {
+          hideWelcome();
+          appendUserMsg(data.pendingUserText, [], []);
+          setStreaming(true);
+        }
+        _placeRegenerate();
+        scrollBottom(true);
         break;
     }
   }

@@ -20,6 +20,14 @@ export interface DisplayMessage {
     text: string;
     /** Events that rebuild the full reply (text, reasoning, tool steps, terminal output). */
     events?: ReplayEvent[];
+    /** User messages: the turn they started (matches the history message's turnId). */
+    id?: string;
+    /** When the message was sent or the reply finished (ms since epoch). */
+    at?: number;
+    /** User messages of Plan mode: the goal. */
+    plan?: string;
+    /** User messages: the text actually sent, when it differs from what is shown. */
+    prompt?: string;
 }
 
 /** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
@@ -77,10 +85,19 @@ export type WebviewMessage =
     | { type: 'toggleAutoCommit'; enabled: boolean }
     | { type: 'compactChat' }
     | { type: 'toggleAutoCompact'; enabled: boolean }
-    | { type: 'toggleChatMode'; chatMode: boolean };
+    | { type: 'toggleChatMode'; chatMode: boolean }
+    | { type: 'editMessage'; turnId: string; text: string }
+    | { type: 'deleteMessage'; turnId: string }
+    | { type: 'regenerate' }
+    | { type: 'attachDroppedFiles'; uris: string[] }
+    | { type: 'openFile'; path: string; line?: number };
 
 export type ExtensionMessage =
-    | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string }
+    | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string; /** The turn this reply answers; tags its user message. */ turnId?: string; /** Whether that message can be edited. */ editable?: boolean }
+    /** A sent message did not start a turn (e.g. no API key): its bubble gets no actions. */
+    | { type: 'turnSkipped' }
+    /** An image file dropped onto the chat, to attach like a pasted image. */
+    | { type: 'droppedImage'; dataUrl: string; name: string }
     | { type: 'appendThinking'; id: string; text: string }
     | { type: 'appendContent'; id: string; text: string }
     | { type: 'endMessage'; id: string }
@@ -106,7 +123,7 @@ export type ExtensionMessage =
     | { type: 'allProposalsResolved' }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
-    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[] }
+    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }
     | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
