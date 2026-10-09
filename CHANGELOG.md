@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.4 - 2026-10-09
 
 ### Fixed
 - Stop was ignored while a turn was still preparing its request (reading keys, building context, `/pr` and `@agent` lookups), so the whole task ran anyway; a thread switch or Clear in that window waited for the entire task. Stop now cancels the turn from its first moment.
