@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.6 - 2026-10-09
 
 ### Added
 - Edit and resend a message (✎ on hover): the conversation is cut back to that message and the edited text is sent; for a Plan-mode message the goal is edited. Delete (🗑) removes a message and everything after it, after a confirmation. The panel, the saved thread and the history the model sees are cut at the same point. Messages already folded into a compaction summary cannot be changed.
