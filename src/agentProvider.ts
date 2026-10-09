@@ -119,7 +119,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _abortController: AbortController | null = null;
     private _followUpAbortController: AbortController | null = null;
     private _busy = false;
-    private _thinkingEffort: 'high' | 'medium' | 'low' = 'high';
+    // Medium by default: high effort costs noticeably more reasoning tokens on every step
+    private _thinkingEffort: 'high' | 'medium' | 'low' = 'medium';
     private _repoInstructions: string | null | undefined = undefined; // undefined = not yet read
     /** Pending inline write-permission requests: permId → resolve fn */
     private _pendingWritePermissions = new Map<string, (result: { granted: boolean; editedContent?: string }) => void>();

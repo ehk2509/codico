@@ -148,8 +148,8 @@
   var effortDrop = _makeDrop(document.getElementById('effort-csel'), function (v) {
     vscode.postMessage({ type: 'changeEffort', effort: v });
   });
-  effortDrop.addOpt('high',   '\uD83E\uDDE0 High', true);
-  effortDrop.addOpt('medium', '\uD83E\uDDE0 Med',  false);
+  effortDrop.addOpt('high',   '\uD83E\uDDE0 High', false);
+  effortDrop.addOpt('medium', '\uD83E\uDDE0 Med',  true);
   effortDrop.addOpt('low',    '\uD83E\uDDE0 Low',  false);
 
   var streaming = false;

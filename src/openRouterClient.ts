@@ -251,7 +251,7 @@ export function streamOpenRouter(
     model: string,
     customSystemPromptPrefix?: string,
     signal?: AbortSignal,
-    thinkingEffort: 'high' | 'medium' | 'low' = 'high',
+    thinkingEffort: 'high' | 'medium' | 'low' = 'medium',
     overrideSystemPrompt?: string,
     nativeTools: NativeToolDefinition[] = [],
     endpoint: OpenRouterEndpoint = { protocol: 'https:', hostname: 'openrouter.ai', path: '/api/v1/chat/completions' },

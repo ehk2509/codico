@@ -570,3 +570,8 @@ test('compact density and hidden reasoning follow the settings', async () => {
   assert.equal(await page.locator('.think-wrap').first().isVisible(), false);
   assert.equal(await page.evaluate(() => document.body.classList.contains('density-compact')), true);
 });
+
+test('thinking effort starts at Medium', async () => {
+  const { page } = await openPanel();
+  assert.match(await page.locator('#effort-csel .csel-val').textContent(), /Med/);
+});

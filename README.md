@@ -523,7 +523,7 @@ Switch models from the chat header dropdown. Models are grouped by tier:
 - `ollama/deepseek-r1:7b`, `:14b`, `deepseek-coder-v2`
 - `ollama/codellama:13b`, `llama3.1:8b`, `mistral:7b`, `gemma3:4b`, `:12b`
 
-Adjust the **thinking effort** (High / Medium / Low) for reasoning models via the header selector.
+Adjust the **thinking effort** (High / Medium / Low) for reasoning models via the header selector. The default is **Medium**: High spends noticeably more reasoning tokens on every step.
 
 ---
 

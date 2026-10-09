@@ -14,6 +14,7 @@ All notable changes to Codico will be documented in this file.
 - Settings `codico.chatDensity` (comfortable / compact) and `codico.showReasoning`.
 
 ### Changed
+- Thinking effort now defaults to Medium instead of High (High spends noticeably more reasoning tokens on every step); High is still one click away in the header.
 - Approval cards: Allow comes first, "Allow all writes / commands this task" says what it covers, Deny comes last.
 - Attachment chips show their size, and warn when a file was cut to 20,000 characters.
 
