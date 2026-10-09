@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.3.1 - 2026-10-09
+
+### Fixed
+- Plan mode withheld Approve & Execute for valid plans whose steps were written in bold, as headings, or as "Step N:" ("No plan steps were produced"). Those formats are now recognised, and a reply ending with "Approve the plan to begin execution" is always approvable.
+
 ## 0.3.0 - 2026-10-08
 
 ### Added
