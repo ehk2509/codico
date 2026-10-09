@@ -2,6 +2,16 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- Prompt caching: requests to Claude models (direct and through OpenRouter) now ask the provider to cache the conversation, so each request in a task re-reads what was already sent at about a tenth of the price. The system prompt and tool list no longer change during a task (phase guidance is added to the conversation instead), so providers that cache automatically (OpenAI, DeepSeek, Gemini, Grok…) get cache hits too. The token counter shows the cached share. On a recorded 63-request task, billed input dropped from ~6.0M to the equivalent of ~0.9M tokens at Claude cache pricing.
+- Approving a plan removes the planning turn's file reads from the context (the plan stays); the agent re-reads what it needs. About 1M fewer tokens sent on the same task.
+- A tool result repeated unchanged later in a task (e.g. a file read twice) is sent only once.
+
+### Fixed
+- While a change awaited verification there was no iteration limit, so a model that kept repeating a tool call already blocked as a loop ran forever. The task now stops after three such iterations in a row.
+
 ## 0.3.4 - 2026-10-09
 
 ### Fixed

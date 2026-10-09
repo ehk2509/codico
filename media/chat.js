@@ -2665,6 +2665,10 @@
           var tokText = data.totalTokens
             ? (_fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
             : '';
+          // Share of the prompt the provider served from its cache (billed at a fraction of the price)
+          if (data.cachedTokens && data.promptTokens) {
+            tokText += ' (' + Math.round(100 * data.cachedTokens / data.promptTokens) + '% cached)';
+          }
           if (data.taskTokens) {
             tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok';
             if (typeof data.taskCostUsd === 'number') {
@@ -2672,7 +2676,9 @@
             }
           }
           sTokens.textContent = tokText;
-          sTokens.title = 'Last request: ' + data.promptTokens + ' prompt + ' + data.completionTokens + ' completion tokens' +
+          sTokens.title = 'Last request: ' + data.promptTokens + ' prompt' +
+            (data.cachedTokens ? ' (' + data.cachedTokens + ' from cache)' : '') +
+            ' + ' + data.completionTokens + ' completion tokens' +
             (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' : '') +
             (typeof data.taskCostUsd === 'number' ? ' (provider-reported cost $' + data.taskCostUsd.toFixed(4) + ')' : '');
         }

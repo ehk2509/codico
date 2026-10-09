@@ -30,6 +30,8 @@ const SCRIPTS = (port) => ({
   http500: [{ status: 500 }],
   verify_ok: [tool('write_file', 'filepath: live/verified.js\ncontent:\nmodule.exports = 1;'), 'Done.'],
   stuck_verify: [tool('write_file', 'filepath: live/stuck.js\ncontent:\nmodule.exports = 2;'), 'Done.'],
+  // A model that only ever repeats the same write (and never verifies) must still be stopped
+  stuck_loop: Array.from({ length: 40 }, () => tool('write_file', 'filepath: live/loop.js\ncontent:\nmodule.exports = 3;')),
   // Plan mode: the model tries to write while planning; that must be blocked
   plan_readonly: [tool('write_file', 'filepath: live/planned.js\ncontent:\nmodule.exports = 3;'),
     '1. Read the config\n2. Update the port\n\n## Files Affected\n- fixtures/config.txt\n\n> Approve the plan to begin execution.'],
@@ -75,7 +77,9 @@ const SCRIPTS = (port) => ({
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.text || '').join('') : '';
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = /\[SCENARIO:(\w+)\]/.exec(messages[i].role === 'user' ? textOf(messages[i].content) : '');
+    // Phase notes quote the task (and so its scenario tag) but are not the request
+    const text = messages[i].role === 'user' ? textOf(messages[i].content).split('[System Phase]')[0] : '';
+    const m = /\[SCENARIO:(\w+)\]/.exec(text);
     // Verification replies are not part of the scenario script
     if (m) { return { scenario: m[1], step: messages.slice(i + 1).filter(x => x.role === 'assistant' && !/LIVE-VERIFY/.test(textOf(x.content))).length }; }
   }
@@ -102,7 +106,7 @@ function start(port0) {
       let json = {}; try { json = JSON.parse(body); } catch {}
       const messages = json.messages || [];
       const { scenario, step } = locate(messages);
-      const lastUser = textOf((messages.filter(m => m.role === 'user').pop() || {}).content);
+      const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
@@ -116,7 +120,7 @@ function start(port0) {
       }
       let entry;
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
-      if (needsVerify && scenario !== 'stuck_verify') { entry = VERIFY; }
+      if (needsVerify && !scenario.startsWith('stuck_')) { entry = VERIFY; }
       else if (scenario === 'compaction') { entry = SCRIPTS(port).compaction[compactionReplies++] ?? 'Done.'; }
       else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }

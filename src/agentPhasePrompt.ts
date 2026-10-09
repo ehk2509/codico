@@ -1,4 +1,4 @@
-import { CHAT_SYSTEM_PROMPT, MUTATION_ONLY_SYSTEM_PROMPT, SYSTEM_PROMPT } from './openRouterClient';
+import { ChatMessage, CHAT_SYSTEM_PROMPT, MUTATION_ONLY_SYSTEM_PROMPT, SYSTEM_PROMPT } from './openRouterClient';
 
 /**
  * Strong action guidance after prolonged exploration. Discovery remains
@@ -83,4 +83,31 @@ export function systemPromptForAgentPhase(
     }
 
     return undefined;
+}
+
+/**
+ * Splits a phase's prompt into the task's fixed system prompt and its phase guidance.
+ * Changing the system prompt between requests would make every provider re-read the
+ * whole conversation at full price; the guidance is sent after the conversation instead.
+ */
+export function splitPhasePrompt(prompt: string | undefined): { systemPrompt: string | undefined; phaseNote: string } {
+    if (prompt?.startsWith(`${SYSTEM_PROMPT}\n\n`)) {
+        return { systemPrompt: undefined, phaseNote: prompt.slice(SYSTEM_PROMPT.length).trim() };
+    }
+    return { systemPrompt: prompt, phaseNote: '' };
+}
+
+/**
+ * Records a phase change in the conversation. It joins the newest message when that is a
+ * plain user message not yet sent (roles keep alternating), and is otherwise added after it.
+ * Earlier messages are never changed, so the provider's cached prefix stays valid.
+ */
+export function appendPhaseNote(history: ChatMessage[], phaseNote: string): void {
+    const note = `[System Phase]\n${phaseNote || 'The previous phase is complete; continue the task normally.'}`;
+    const last = history[history.length - 1];
+    if (last?.role === 'user' && typeof last.content === 'string') {
+        history[history.length - 1] = { ...last, content: `${last.content}\n\n${note}` };
+    } else {
+        history.push({ role: 'user', content: note });
+    }
 }

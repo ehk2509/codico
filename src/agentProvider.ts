@@ -36,9 +36,10 @@ import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
-import { planCompaction, summarizerPrompt, buildCompactedHistory, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
+import { planCompaction, summarizerPrompt, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
+import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -429,9 +430,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'startPlan':
                 await this._handlePlan(msg.goal);
                 break;
-            case 'approvePlan':
-                await this._handleUserMessage(msg.executionPrompt);
+            case 'approvePlan': {
+                // The approved plan is what execution needs; the planning reads would be resent with every request
+                const run = approvedPlanExecution(this._history, AgentProvider.PLAN_PROMPT.slice(0, 40), msg.executionPrompt);
+                if (!this._busy) { this._history = run.history; }
+                await this._handleUserMessage(this._busy ? msg.executionPrompt : run.prompt);
                 break;
+            }
             case 'clarifyResponse':
                 await this._handleClarifyResponse(msg.text);
                 break;
@@ -945,6 +950,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // re-sending them (each reminder is another paid model request).
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
         let verificationNudges = 0;
+        // Iterations in a row with only blocked repeat calls: ends a stuck model when there is no iteration limit
+        const MAX_LOOP_ONLY_ITERATIONS = 3;
+        let loopOnlyIterations = 0;
+        let currentPhaseNote = '';
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
@@ -1002,6 +1011,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Once a loop is detected, the rest of this response is not executed either
                 let loopDetected = false;
+                let ranTool = false;
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
@@ -1042,6 +1052,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                                 target: evaluationToolTarget(tool),
                             });
                         }
+                        ranTool = true;
                         await this._dispatchTool(tool, msgId, signal);
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
@@ -1072,6 +1083,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             target: evaluationToolTarget(tool),
                         });
                     }
+                    ranTool = true;
                     await this._dispatchTool(tool, msgId, signal);
                     let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
@@ -1152,17 +1164,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const systemPromptOverride = exploration.systemPrompt(this._readOnly);
+                // The system prompt and tool list stay the same for the whole task so providers can reuse
+                // their prompt cache. A phase change is added to the conversation instead (append-only).
+                const { systemPrompt: systemPromptOverride, phaseNote } = splitPhasePrompt(exploration.systemPrompt(this._readOnly));
+                if (phaseNote !== currentPhaseNote) { appendPhaseNote(this._history, phaseNote); currentPhaseNote = phaseNote; }
                 const projectedHistory = projectHistoryForModel(this._history);
+                const requestHistory = projectedHistory.history;
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                const iterationNativeTools = exploration.nativeTools(nativeTools);
                 for await (const chunk of isOllama
-                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
+                    ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
+                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools)
+                        : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1211,7 +1226,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
                         taskUsage.add(chunk.totalTokens, chunk.costUsd);
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd });
+                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1400,6 +1415,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 actionNudges = 0;
                 // The model is calling tools again, so reminders are no longer "stalled"
                 verificationNudges = 0;
+                loopOnlyIterations = loopDetected && !ranTool ? loopOnlyIterations + 1 : 0;
+                if (loopOnlyIterations >= MAX_LOOP_ONLY_ITERATIONS) {
+                    this._post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: the model kept repeating the same tool call after being told it was looping.' }); break;
+                }
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so

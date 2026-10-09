@@ -263,3 +263,19 @@ test('a provider that stops sending is reported as a recoverable interruption', 
     setStreamStallTimeout(300);
   }
 });
+
+test('Claude models are asked to cache the prompt; cached tokens are reported', async () => {
+  const bodies = [];
+  const run = (model) => withFakeServer((req, res) => {
+    let raw = ''; req.on('data', d => raw += d); req.on('end', () => {
+      bodies.push(JSON.parse(raw));
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":5,"total_tokens":1005,"prompt_tokens_details":{"cached_tokens":900}}}\n\ndata: [DONE]\n\n');
+    });
+  }, endpoint => collect(streamOpenRouter('k', [{ role: 'user', content: 'hi' }], model, undefined, undefined, 'low', undefined, [], endpoint)));
+  const chunks = await run('anthropic/claude-sonnet-5.5');
+  await run('deepseek/deepseek-v4-flash');
+  assert.deepEqual(bodies[0].cache_control, { type: 'ephemeral' });
+  assert.equal(bodies[1].cache_control, undefined, 'other providers cache automatically');
+  assert.equal(chunks.find(c => c.type === 'usage').cachedTokens, 900);
+});

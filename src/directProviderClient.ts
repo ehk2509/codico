@@ -293,6 +293,8 @@ function _streamAnthropic(
         messages,
         max_tokens: 8192,
         stream: true,
+        // Caches the request up to its last block; the next request in the task reuses it
+        cache_control: { type: 'ephemeral' },
         ...(nativeTools.length > 0 ? {
             tools: nativeTools.map(tool => ({
                 name: tool.name,
@@ -325,6 +327,7 @@ function _streamAnthropic(
             const completion = new StreamCompletionGuard();
             const toolBlocks = new Map<number, { id?: string; name: string; args: string }>();
             let inputTokens = 0;
+            let cachedTokens = 0;
             let outputTokens = 0;
 
             res.setEncoding('utf8'); // keeps characters split across chunks intact
@@ -342,7 +345,10 @@ function _streamAnthropic(
                         const type = json.type ?? lastEvent;
                         lastEvent = '';
                         if (type === 'message_start') {
-                            inputTokens = json.message?.usage?.input_tokens ?? 0;
+                            // input_tokens excludes cached tokens: the prompt is all three together
+                            const u = json.message?.usage ?? {};
+                            cachedTokens = u.cache_read_input_tokens ?? 0;
+                            inputTokens = (u.input_tokens ?? 0) + cachedTokens + (u.cache_creation_input_tokens ?? 0);
                         } else if (type === 'content_block_start') {
                             const block = json.content_block ?? {};
                             if (block.type === 'tool_use' && block.name) {
@@ -388,7 +394,7 @@ function _streamAnthropic(
                         } else if (type === 'message_stop') {
                             completion.markTerminal();
                             const total = inputTokens + outputTokens;
-                            if (total > 0) { push({ type: 'usage', promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total }); }
+                            if (total > 0) { push({ type: 'usage', promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total, ...(cachedTokens ? { cachedTokens } : {}) }); }
                             push(null);
                         }
                     } catch { /* malformed */ }
