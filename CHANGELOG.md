@@ -2,6 +2,18 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Edit and resend a message (✎ on hover): the conversation is cut back to that message and the edited text is sent; for a Plan-mode message the goal is edited. Delete (🗑) removes a message and everything after it, after a confirmation. The panel, the saved thread and the history the model sees are cut at the same point. Messages already folded into a compaction summary cannot be changed.
+- Regenerate (↻) on the latest reply runs its message again and replaces the reply.
+- Message times ("2m ago", full date on hover), saved with the thread so reopened conversations show when messages were sent.
+- Long code blocks (over 25 lines) in finished replies are collapsed to a preview with an Expand button; the header shows the line count.
+- Drag and drop files onto the chat to attach them: text files as file context, images as image attachments. From VS Code's Explorer hold Shift while dragging; workspace files excluded by `.codicoignore` are refused.
+
+### Changed
+- An approved plan is saved in the thread as "✅ Plan approved — executing…", as shown live, instead of the full execution prompt.
+
 ## 0.3.5 - 2026-10-09
 
 ### Changed

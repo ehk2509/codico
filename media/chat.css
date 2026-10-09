@@ -1381,3 +1381,52 @@ body { overflow-x: hidden; }
   #messages { padding: 8px 5px; }
   #sessions-active-name { font-size: 10.5px; }
 }
+
+/* ── Message times and actions (edit, delete, regenerate) ── */
+.msg-time{margin-left:6px;opacity:.75;text-transform:none;letter-spacing:0;font-weight:400}
+.msg-actions{display:none;margin-left:6px;gap:2px;vertical-align:middle}
+.msg.user[data-turn]:not([data-turn="none"]):hover .msg-actions,
+.msg.user[data-turn]:not([data-turn="none"]):focus-within .msg-actions{display:inline-flex}
+.msg.user[data-editable="0"] .msg-edit{display:none}
+body.is-streaming .msg-actions,body.is-streaming .regen-btn,body.is-streaming .msg-confirm{display:none!important}
+.msg-act{
+  background:none;border:none;cursor:pointer;padding:0 3px;border-radius:3px;
+  color:var(--vscode-descriptionForeground);font-size:11px;line-height:16px;
+}
+.msg-act:hover{background:var(--vscode-toolbar-hoverBackground);color:var(--vscode-foreground)}
+.msg-editor{width:88%;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.msg-editor textarea{
+  width:100%;box-sizing:border-box;resize:vertical;font:inherit;font-size:13px;
+  background:var(--vscode-input-background);color:var(--vscode-input-foreground);
+  border:1px solid var(--vscode-focusBorder);border-radius:6px;padding:6px 8px;
+}
+.msg-editor-hint{flex:1 1 100%;font-size:11px;color:var(--vscode-descriptionForeground);text-align:right}
+.msg-editor button,.msg-confirm button{
+  border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px;
+  background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);
+}
+.msg-editor .msg-editor-send,.msg-confirm .msg-confirm-delete{
+  background:var(--vscode-button-background);color:var(--vscode-button-foreground);
+}
+.msg-confirm{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--vscode-descriptionForeground)}
+.regen-btn{
+  margin-top:4px;background:none;border:1px solid var(--vscode-panel-border);border-radius:4px;
+  color:var(--vscode-descriptionForeground);font-size:11px;padding:2px 8px;cursor:pointer;
+}
+.regen-btn:hover{color:var(--vscode-foreground);background:var(--vscode-toolbar-hoverBackground)}
+
+/* ── Collapsible code blocks: long blocks show a preview until expanded (not while streaming) ── */
+.code-lang-bar .code-toggle{margin-left:auto}
+.stream-cursor .code-toggle{display:none}
+.agent-out:not(.stream-cursor) .code-wrap.collapsed pre{
+  max-height:15em;overflow:hidden;
+  -webkit-mask-image:linear-gradient(to bottom,#000 70%,transparent);mask-image:linear-gradient(to bottom,#000 70%,transparent);
+}
+
+/* ── Drag and drop ── */
+.drop-overlay{
+  position:fixed;inset:6px;z-index:1000;display:flex;align-items:center;justify-content:center;
+  border:2px dashed var(--vscode-focusBorder);border-radius:8px;pointer-events:none;
+  background:color-mix(in srgb,var(--vscode-editor-background) 85%,transparent);
+  color:var(--vscode-foreground);font-size:13px;text-align:center;padding:16px;
+}

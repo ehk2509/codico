@@ -68,6 +68,8 @@ const SCRIPTS = (port) => ({
     tool('write_file', 'filepath: fixtures/dangling\ncontent:\nescaped'), 'Done.'],
   // An MCP tool returning far more than the model should receive
   mcp_big: [tool('mcp_call', 'server: fake\ntool: big\nsize: 50000'), 'Done.'],
+  // Regenerate: the same request must be sent again, without the first reply
+  regen: [tool('read_file', 'filepath: fixtures/notes.txt'), 'First answer.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only

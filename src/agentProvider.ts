@@ -10,7 +10,6 @@ import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
 import { WorkspaceIndex } from './workspaceIndex';
-import { buildSymbolContext } from './symbolProvider';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
@@ -19,7 +18,7 @@ import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
 import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
-import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
+import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
@@ -40,6 +39,10 @@ import { planCompaction, summarizerPrompt, buildCompactedHistory, approvedPlanEx
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
+import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
+import { cutAtTurn, lastTurnId } from './threadEditing';
+import { readDroppedFile } from './droppedFiles';
+import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
@@ -55,6 +58,27 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _confirmOverwrite(message: string): Promise<boolean> {
         if (this._evaluationMode) { return false; }
         return await vscode.window.showWarningMessage(message, { modal: true }, 'Overwrite') === 'Overwrite';
+    }
+
+    /** Edit (and resend), delete, or regenerate a turn: the conversation is cut back to just before it. */
+    private async _redoTurn(msg: Extract<WebviewMessage, { type: 'editMessage' | 'deleteMessage' | 'regenerate' }>): Promise<void> {
+        if (this._busy) { this._post({ type: 'error', message: 'Wait for the current reply to finish, or stop it, first.' }); return; }
+        const turnId = msg.type === 'regenerate' ? lastTurnId(this._displayMessages) : msg.turnId;
+        const cut = turnId ? cutAtTurn(this._displayMessages, this._history, turnId) : { error: 'There is no message to regenerate.' };
+        if ('error' in cut) { this._post({ type: 'error', message: cut.error }); return; }
+        const { turn } = cut;
+        if (msg.type === 'editMessage' && turn.shownAs) { this._post({ type: 'error', message: 'This message cannot be edited.' }); return; }
+        this._history = cut.history;
+        this._displayMessages = cut.display;
+        this._planAwaitingAnswer = null;
+        await this._historyStore.update(this._historyKey, this._history);
+        await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
+        const text = msg.type === 'editMessage' ? msg.text : msg.type === 'regenerate' ? turn.plan ?? turn.text : undefined;
+        const shown = text === undefined ? undefined : turn.plan !== undefined ? `\uD83D\uDCCB Plan: ${text}` : turn.shownAs ?? text;
+        const name = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === this._activeThreadId)?.name ?? '';
+        this._post({ type: 'threadLoaded', id: this._activeThreadId, name, displayMessages: this._displayMessages, pendingUserText: shown });
+        if (text === undefined) { return; }
+        await (turn.plan !== undefined ? this._handlePlan(text) : this._handleUserMessage(text, turn.parts, false, false, turn.shownAs));
     }
 
     /** Runs Undo or Redo and reports the outcome (shared by the panel and the commands). */
@@ -102,7 +126,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Resolves the pending step checkpoint: true = keep going, false = stop. */
     private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
     /** Messages sent while the previous turn was still finishing; run in order once free. */
-    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; skipUserPush?: boolean; planGoal?: string }> = [];
+    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; skipUserPush?: boolean; planGoal?: string; shownAs?: string }> = [];
     /** Resolved when the agent next becomes idle (used to stop a turn before switching threads). */
     private _idleWaiters: Array<() => void> = [];
     /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
@@ -433,9 +457,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             case 'approvePlan': {
                 // The approved plan is what execution needs; the planning reads would be resent with every request
-                const run = approvedPlanExecution(this._history, AgentProvider.PLAN_PROMPT.slice(0, 40), msg.executionPrompt);
+                const run = approvedPlanExecution(this._history, PLAN_PROMPT.slice(0, 40), msg.executionPrompt);
                 if (!this._busy) { this._history = run.history; }
-                await this._handleUserMessage(this._busy ? msg.executionPrompt : run.prompt);
+                await this._handleUserMessage(this._busy ? msg.executionPrompt : run.prompt, undefined, false, false, '\u2705 Plan approved \u2014 executing\u2026');
                 break;
             }
             case 'clarifyResponse':
@@ -586,6 +610,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             case 'toggleChatMode':
                 this._chatMode = msg.chatMode;
+                break;
+            case 'editMessage':
+            case 'deleteMessage':
+            case 'regenerate':
+                await this._redoTurn(msg);
+                break;
+            case 'attachDroppedFiles':
+                for (const uri of msg.uris.slice(0, 10)) {
+                    const file = await readDroppedFile(uri);
+                    this._post('error' in file ? { type: 'error', message: file.error }
+                        : 'image' in file ? { type: 'droppedImage', dataUrl: file.image, name: file.name } : { type: 'contextSnippet', kind: 'file', ...file });
+                }
                 break;
         }
         } catch (err: unknown) {
@@ -744,18 +780,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._handleUserMessage(this._getInterruptedTaskSummary(), undefined, false, true);
     }
 
-    private async _handleUserMessage(rawText: string, contentParts?: MessageContentPart[], injectActiveDiagnostics?: boolean, _skipUserPush = false): Promise<void> {
+    /** @param shownAs what the panel shows for this message when it is not rawText (an approved plan) */
+    private async _handleUserMessage(rawText: string, contentParts?: MessageContentPart[], injectActiveDiagnostics?: boolean, _skipUserPush = false, shownAs?: string): Promise<void> {
         if (this._busy) {
             // The previous turn is still running or finishing (saving history, compacting…).
             // Queue rather than drop: Approve, follow-ups, clarify answers, Review and
             // editor commands all arrive here, not only the panel's Send button.
-            this._pendingUserMessages.push({ text: rawText, contentParts, injectActiveDiagnostics, skipUserPush: _skipUserPush });
+            this._pendingUserMessages.push({ text: rawText, contentParts, injectActiveDiagnostics, skipUserPush: _skipUserPush, shownAs });
             return;
         }
         this._busy = true;
         // Created before setup (keys, context, /pr, @agent lookups can take seconds) so
         // Stop, a thread switch or Clear can cancel the turn from its very start
         const abortController = new AbortController();
+        let turnStarted = false;
         this._abortController = abortController;
         const { signal } = abortController;
         const _taskStartMs = Date.now();
@@ -898,7 +936,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Optionally prepend active editor context (invisible in chat, visible to AI)
         let userContent: string | MessageContentPart[] = text;
         if (autoInject || agentContextBlock) {
-            const ctxPreamble = autoInject ? await this._buildContextPreamble() : '';
+            const ctxPreamble = autoInject ? await buildContextPreamble() : '';
             const combined = [agentContextBlock, ctxPreamble].filter(Boolean).join('\n\n');
             const textWithCtx = combined ? `${combined}\n\n${USER_REQUEST_MARKER}\n${text}` : text;
             if (contentParts && contentParts.length > 0) {
@@ -919,11 +957,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const historyRollbackLen = this._history.length;
         const displayRollbackLen = this._displayMessages.length;
 
-        if (!_skipUserPush) {
-            this._history.push({ role: 'user', content: userContent });
-            // Track for thread display (resume view when switching threads)
-            // A plan request is shown as the panel showed it live, not as the internal planner prompt
-            this._displayMessages.push({ role: 'user', text: this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : rawText.slice(0, 20_000) });
+        // Ties the panel message, the saved transcript and the model history together (edit, delete, regenerate)
+        const turnId = _skipUserPush ? undefined : this._newId();
+        if (turnId) {
+            this._history.push({ role: 'user', content: userContent, turnId });
+            // Saved as the panel showed it live (a plan goal, not the planner prompt); `prompt` keeps what was sent
+            const shown = this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : shownAs ?? rawText.slice(0, 20_000);
+            this._displayMessages.push({ role: 'user', text: shown, id: turnId, at: Date.now(), plan: this._planGoal ?? undefined,
+                prompt: this._planGoal === null && shown !== rawText ? rawText : undefined });
         }
 
         // Auto-name the thread immediately from the first user message so the sidebar updates right away
@@ -933,7 +974,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         const msgId = Date.now().toString();
         // planGoal marks this reply as a plan: the panel offers Approve only on it
-        this._post({ type: 'startMessage', id: msgId, planGoal: this._planGoal ?? undefined });
+        this._post({ type: 'startMessage', id: msgId, planGoal: this._planGoal ?? undefined, turnId, editable: turnId ? this._planGoal !== null || (!shownAs && rawText.length <= 20_000) : undefined });
+        turnStarted = true;
         this._recording = { msgId, events: [], size: 0, truncated: false };
 
         // Abort any in-flight follow-up request from the previous message
@@ -1514,7 +1556,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
         }
         if (summaryText || (recording && recording.events.length > 0)) {
-            this._displayMessages.push({ role: 'assistant', text: summaryText, events: recording?.events });
+            this._displayMessages.push({ role: 'assistant', text: summaryText, events: recording?.events, at: Date.now() });
         }
 
         // In edits mode: surface queued proposals for review
@@ -1564,6 +1606,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         } finally {
             if (this._abortController === abortController) { this._abortController = null; }
+            // The panel already shows this message: it started no turn, so it gets no actions
+            if (!turnStarted && !_skipUserPush) { this._post({ type: 'turnSkipped' }); }
             this._releaseBusy();
         }
     }
@@ -1598,7 +1642,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const next = this._pendingUserMessages.shift();
         // Nobody awaits a queued item, so its errors are reported here
         if (next?.planGoal !== undefined) { this._handlePlan(next.planGoal).catch(err => this._postError(err)); }
-        else if (next) { this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics, next.skipUserPush).catch(err => this._postError(err)); }
+        else if (next) { this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics, next.skipUserPush, next.shownAs).catch(err => this._postError(err)); }
     }
 
     /** Resolves once no task is running (immediately when idle). */
@@ -2316,78 +2360,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _buildContextPreamble(): Promise<string> {
-        const config = vscode.workspace.getConfiguration('codico');
-        const parts: string[] = [];
-        const folders = vscode.workspace.workspaceFolders;
-        if (folders && folders.length > 0) {
-            parts.push(`Workspace: ${folders[0].uri.fsPath}`);
-        }
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-            const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-            const lang = editor.document.languageId;
-            const lines = editor.document.lineCount;
-            parts.push(`Active file: ${relPath} (${lang}, ${lines} lines)`);
-            if (!editor.selection.isEmpty) {
-                const sel = editor.selection;
-                const selText = editor.document.getText(editor.selection);
-                const cap = 10_000;
-                const truncated = selText.length > cap;
-                parts.push(
-                    `Selected code (${relPath} lines ${sel.start.line + 1}–${sel.end.line + 1}):\n` +
-                    `\`\`\`${lang}\n${selText.slice(0, cap)}${truncated ? '\n… (truncated)' : ''}\n\`\`\``
-                );
-            }
-        }
-
-        // Auto-inject workspace diagnostics (all Problems panel errors/warnings)
-        if (config.get<boolean>('autoInjectDiagnostics', true)) {
-            const diagSummary = buildWorkspaceDiagnosticsSummary();
-            if (diagSummary) { parts.push(diagSummary); }
-        }
-
-        // Inject open tabs context if enabled
-        if (config.get<boolean>('openTabsContext', true)) {
-            const activeUri = editor?.document.uri.toString();
-            const candidateUris: vscode.Uri[] = [];
-            for (const group of vscode.window.tabGroups.all) {
-                for (const tab of group.tabs) {
-                    if (candidateUris.length >= 5) { break; }
-                    const input = tab.input as { uri?: vscode.Uri } | undefined;
-                    if (!input?.uri) { continue; }
-                    if (input.uri.toString() === activeUri) { continue; }
-                    candidateUris.push(input.uri);
-                }
-                if (candidateUris.length >= 5) { break; }
-            }
-            // Open all candidate tabs in parallel instead of sequentially
-            const tabSnippets = (await Promise.all(
-                candidateUris.map(async (uri) => {
-                    try {
-                        const doc = await vscode.workspace.openTextDocument(uri);
-                        const relPath = vscode.workspace.asRelativePath(uri);
-                        const text = doc.getText();
-                        return `// ${relPath}\n${text.slice(0, 5000)}${text.length > 5000 ? '\n… (truncated)' : ''}`;
-                    } catch { return null; }
-                })
-            )).filter((s): s is string => s !== null);
-            if (tabSnippets.length > 0) {
-                parts.push(`Open tabs (${tabSnippets.length}):\n${tabSnippets.join('\n\n')}`);
-            }
-        }
-
-        // Symbol-aware context: LSP info for symbol under cursor
-        if (editor && config.get<boolean>('symbolContextEnabled', true)) {
-            try {
-                const symCtx = await buildSymbolContext(editor.document, editor.selection.active);
-                if (symCtx) { parts.push(symCtx); }
-            } catch { /* LSP may not be ready */ }
-        }
-
-        return parts.length > 0 ? `[Context]\n${parts.join('\n')}` : '';
-    }
-
     // ── Line diff (LCS-based) ─────────────────────────────────────────────────
     /**
      * Produces a compact unified-style diff string (lines prefixed with +, -, or space).
@@ -2510,39 +2482,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     // ─── Code Review ─────────────────────────────────────────────────────────
 
-    private static readonly PLAN_PROMPT = `You are a task planner. The user has described a goal. Break it down into a clear, numbered step-by-step plan.
-
-Rules:
-- Each step must be a single, concrete, actionable task (no vague steps like "set up the project").
-- Number steps as 1. 2. 3. etc.
-- After the numbered list, add a section: ## Files Affected — list every file that will be created or modified.
-- Do NOT write any code yet. Do NOT execute anything. Only produce the plan.
-- End with a single line: > Approve the plan to begin execution.
-
-Goal: `;
-
-    private static readonly REVIEW_PROMPT = `You are performing a thorough code review. Analyse the code provided and produce a structured report with these exact sections:
-
-## Overview
-One paragraph describing what the code does and its overall quality.
-
-## Issues
-List every issue found, each prefixed with a severity badge:
-- 🔴 **Critical** — bugs, security vulnerabilities, data loss risks
-- 🟡 **Warning** — logic errors, poor error handling, performance problems, deprecated APIs
-- 🔵 **Info** — style inconsistencies, naming, missing docs, minor improvements
-
-For each issue include: file/line reference (if determinable), a clear explanation, and a concrete fix or code snippet.
-If there are no issues in a category, omit that category.
-
-## Suggestions
-Up to 5 actionable improvement ideas that are not bugs but would meaningfully improve the code (architecture, testability, readability, performance).
-
-## Summary
-One-sentence verdict: e.g. "Ready to merge with minor changes" / "Needs significant rework before merging".
-
-Be thorough, specific, and constructive. Reference exact line numbers or code snippets wherever possible.`;
-
     private async _handleRunAndFixTests(): Promise<void> {
         const folders = vscode.workspace.workspaceFolders;
         if (!folders?.length) {
@@ -2578,7 +2517,7 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
         this._planGoal = goal;
         this._planAwaitingAnswer = null;
         try {
-            await this._handleUserMessage(AgentProvider.PLAN_PROMPT + goal);
+            await this._handleUserMessage(PLAN_PROMPT + goal);
         } finally {
             this._planGoal = null;
         }
@@ -2632,7 +2571,7 @@ Be thorough, specific, and constructive. Reference exact line numbers or code sn
 
         this._post({ type: 'reviewReady', label: displayLabel, error: undefined });
 
-        const reviewMessage = `${codeContext}\n\n${AgentProvider.REVIEW_PROMPT}`;
+        const reviewMessage = `${codeContext}\n\n${REVIEW_PROMPT}`;
         await this._handleUserMessage(reviewMessage);
     }
 

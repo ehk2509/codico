@@ -20,7 +20,7 @@ export type MessageContentPart =
 
 export type ChatMessage =
     | { role: 'system'; content: string | MessageContentPart[] }
-    | { role: 'user'; content: string | MessageContentPart[] }
+    | { role: 'user'; content: string | MessageContentPart[]; /** Identifies the turn this request started (edit, delete, regenerate). */ turnId?: string }
     | { role: 'assistant'; content: string | MessageContentPart[]; nativeToolCalls?: NativeToolCall[] }
     | { role: 'tool'; content: string; toolCallId: string; toolName: string };
 
