@@ -44,6 +44,11 @@ const SCRIPTS = (port) => ({
   // Busy-agent queueing: A answers slowly; B arrives meanwhile and must be queued, not dropped
   queue_a: [{ text: 'Done A.', delay: 1500 }],
   queue_b: ['Done B.'],
+  // A failing panel action during A must not unlock the agent: B still waits for A
+  herr_a: [{ text: tool('read_file', 'filepath: fixtures/notes.txt'), delay: 1500 }, 'Done A.'],
+  herr_b: ['Done B.'],
+  // Stopped during setup: must never reach the model
+  stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only
   plan_q_a: [{ text: '1. First plan step\n\n> Approve the plan to begin execution.', delay: 1500 }],
   plan_q_b: [tool('write_file', 'filepath: live/queued-plan.js\ncontent:\nmodule.exports = 5;'), '1. Second plan step\n\n> Approve the plan to begin execution.'],

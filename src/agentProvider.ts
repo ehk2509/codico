@@ -272,298 +272,309 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._context.subscriptions.push(instrWatcher);
         }
 
-        webviewView.webview.onDidReceiveMessage(async (msg: WebviewMessage) => {
-            try {
-            switch (msg.type) {
-                case 'sendMessage':
-                    this._planAwaitingAnswer = null;
-                    await this._handleUserMessage(msg.text, msg.contentParts as MessageContentPart[] | undefined, msg.injectActiveDiagnostics);
-                    break;
-                case 'clearChat':
-                    await this._stopTurnAndWait();
-                    this._history = [];
-                    this._displayMessages = [];
-                    await this._historyStore.update(this._historyKey, []);
-                    await this._store.update(this._threadDisplayKey(this._activeThreadId), []);
-                    await this._updateThreadMeta('');
-                    if (this._editsMode) {
-                        this._editsMode = false;
-                        this._editProposals.rejectAll();
-                        this._post({ type: 'allProposalsResolved' });
-                    }
-                    this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-                    break;
-                case 'setApiKey':
-                    await vscode.commands.executeCommand('codico.setApiKey');
-                    break;
-                case 'openSettings': {
-                    const choice = await vscode.window.showQuickPick([
-                        { label: '$(key) OpenRouter API Key', detail: 'Used for all OpenRouter models (free & premium)', cmd: 'codico.setApiKey' },
-                        { label: '$(key) Direct Provider API Key', detail: 'Set a key for Anthropic, OpenAI, Google, Groq, DeepSeek…', cmd: 'codico.setDirectApiKey' },
-                        { label: '$(server) Ollama Base URL', detail: 'Configure local Ollama server address', cmd: 'codico.setOllamaUrl' },
-                        { label: '$(git-pull-request) GitHub Token', detail: 'Used for /pr PR review context', cmd: 'codico.setGithubToken' },
-                    ], { title: 'Codico Settings', placeHolder: 'Select a setting to configure' });
-                    if (choice) { await vscode.commands.executeCommand(choice.cmd); }
-                    break;
-                }
-                case 'closePanel':
-                    await vscode.commands.executeCommand('workbench.action.closeSidebar');
-                    break;
-                case 'checkpointResponse':
-                    this._checkpointResolver?.(msg.continue === true);
-                    this._checkpointResolver = null;
-                    break;
-                case 'killBackgroundProcesses':
-                    this._killBackgroundProcesses();
-                    break;
-                case 'abortStream':
-                    this._abortController?.abort();
-                    // A message waiting for the previous turn to finish is cancelled too; the
-                    // panel already shows it as running, so end that state explicitly.
-                    if (this._pendingUserMessages.length > 0) {
-                        this._pendingUserMessages.length = 0;
-                        this._post({ type: 'endMessage', id: '' });
-                    }
-                    // Resolve all pending permission dialogs as denied so their Promises unblock
-                    this._cancelTurnPrompts();
-                    this._allowAllWrites = false;
-                    this._allowAllTerminal = false;
-                    this._external.resetTurnPermissions();
-                    break;
-                case 'writePermissionResponse': {
-                    const resolve = this._pendingWritePermissions.get(msg.permId);
-                    if (resolve) {
-                        this._pendingWritePermissions.delete(msg.permId);
-                        resolve({ granted: msg.granted });
-                    }
-                    break;
-                }
-                case 'terminalPermissionResponse': {
-                    const resolve = this._pendingTerminalPermissions.get(msg.permId);
-                    if (resolve) {
-                        this._pendingTerminalPermissions.delete(msg.permId);
-                        resolve(msg.granted);
-                    }
-                    break;
-                }
-                case 'allowAllWrites': {
-                    this._allowAllWrites = true;
-                    const resolve = this._pendingWritePermissions.get(msg.permId);
-                    if (resolve) {
-                        this._pendingWritePermissions.delete(msg.permId);
-                        resolve({ granted: true });
-                    }
-                    break;
-                }
-                case 'writePermissionEdit': {
-                    const resolve = this._pendingWritePermissions.get(msg.permId);
-                    if (resolve) {
-                        this._pendingWritePermissions.delete(msg.permId);
-                        resolve({ granted: true, editedContent: msg.content });
-                    }
-                    break;
-                }
-                case 'allowAllTerminal': {
-                    this._allowAllTerminal = true;
-                    const resolve = this._pendingTerminalPermissions.get(msg.permId);
-                    if (resolve) {
-                        this._pendingTerminalPermissions.delete(msg.permId);
-                        resolve(true);
-                    }
-                    break;
-                }
-                case 'changeModel': {
-                    // Validate against known model IDs before persisting
-                    if (!this._webviewAssets.isValidModelId(msg.model)) {
-                        this._post({ type: 'error', message: `Unknown model ID rejected: "${msg.model}"` });
-                        break;
-                    }
-                    await vscode.workspace
-                        .getConfiguration('codico')
-                        .update('model', msg.model, vscode.ConfigurationTarget.Global);
-                    break;
-                }
-                case 'changeEffort':
-                    this._thinkingEffort = msg.effort;
-                    break;
-                case 'requestContext':
-                    await this._handleContextRequest(msg.kind);
-                    break;
-                case 'startReview':
-                    await this._handleReview(msg.target);
-                    break;
-                case 'startPlan':
-                    await this._handlePlan(msg.goal);
-                    break;
-                case 'approvePlan':
-                    await this._handleUserMessage(msg.executionPrompt);
-                    break;
-                case 'clarifyResponse':
-                    await this._handleClarifyResponse(msg.text);
-                    break;
-                case 'refreshMcp':
-                    this._mcpReady = false;
-                    this._mcp.disconnectAll();
-                    await this._connectMcpServers();
-                    break;
-                case 'undo': {
-                    const fp = await this._undoRedo.undo();
-                    if (fp) {
-                        vscode.window.showInformationMessage(`Codico: undid changes to ${fp}`);
-                    } else {
-                        vscode.window.showInformationMessage('Codico: nothing to undo');
-                    }
-                    this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                    break;
-                }
-                case 'redo': {
-                    const fp = await this._undoRedo.redo();
-                    if (fp) {
-                        vscode.window.showInformationMessage(`Codico: redid changes to ${fp}`);
-                    } else {
-                        vscode.window.showInformationMessage('Codico: nothing to redo');
-                    }
-                    this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                    break;
-                }
-                case 'toggleEditsMode':
-                    this._editsMode = msg.enabled;
-                    if (!msg.enabled) {
-                        // Discard any pending proposals when leaving edits mode
-                        this._editProposals.rejectAll();
-                        this._post({ type: 'allProposalsResolved' });
-                    }
-                    break;
-                case 'toggleAutoCommit':
-                    this._autoCommit = msg.enabled;
-                    break;
-                case 'previewEditDiff':
-                    await this._editProposals.openDiff(msg.filepath);
-                    break;
-                case 'acceptEdit': {
-                    await this._editProposals.applyOne(msg.filepath, (before, after, fp, label) => {
-                        this._undoRedo.push({ filepath: fp, before, after, label });
-                    });
-                    this._post({ type: 'proposalAccepted', filepath: msg.filepath });
-                    this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                    if (!this._editProposals.hasProposals) {
-                        this._post({ type: 'allProposalsResolved' });
-                    }
-                    break;
-                }
-                case 'rejectEdit':
-                    this._editProposals.rejectOne(msg.filepath);
-                    this._post({ type: 'proposalRejected', filepath: msg.filepath });
-                    if (!this._editProposals.hasProposals) {
-                        this._post({ type: 'allProposalsResolved' });
-                    }
-                    break;
-                case 'acceptAllEdits': {
-                    await this._editProposals.applyAll((before, after, fp, label) => {
-                        this._undoRedo.push({ filepath: fp, before, after, label });
-                    });
-                    this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                    this._post({ type: 'allProposalsResolved' });
-                    break;
-                }
-                case 'rejectAllEdits':
+        webviewView.webview.onDidReceiveMessage((msg: WebviewMessage) => this._onWebviewMessage(msg));
+    }
+
+    /** Test-only: delivers a message as if the panel had sent it. */
+    public async handleEvaluationWebviewMessage(msg: WebviewMessage): Promise<void> {
+        if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
+        await this._onWebviewMessage(msg);
+    }
+
+    private async _onWebviewMessage(msg: WebviewMessage): Promise<void> {
+        try {
+        switch (msg.type) {
+            case 'sendMessage':
+                this._planAwaitingAnswer = null;
+                await this._handleUserMessage(msg.text, msg.contentParts as MessageContentPart[] | undefined, msg.injectActiveDiagnostics);
+                break;
+            case 'clearChat':
+                await this._stopTurnAndWait();
+                this._history = [];
+                this._displayMessages = [];
+                await this._historyStore.update(this._historyKey, []);
+                await this._store.update(this._threadDisplayKey(this._activeThreadId), []);
+                await this._updateThreadMeta('');
+                if (this._editsMode) {
+                    this._editsMode = false;
                     this._editProposals.rejectAll();
                     this._post({ type: 'allProposalsResolved' });
-                    break;
-                case 'sendFollowUp':
-                    await this._handleUserMessage(msg.text);
-                    break;
-                case 'generateTestsFromCoverage':
-                    await vscode.commands.executeCommand('codico.generateTestsFromCoverage');
-                    break;
-                case 'runAndFixTests':
-                    await this._handleRunAndFixTests();
-                    break;
-                case 'openProblems':
-                    await vscode.commands.executeCommand('workbench.actions.view.problems');
-                    break;
-                case 'createThread':
-                    await this._stopTurnAndWait();
-                    await this._createThread(msg.name);
-                    break;
-                case 'switchThread':
-                    await this._stopTurnAndWait();
-                    await this._switchThread(msg.id);
-                    break;
-                case 'renameThread':
-                    await this._renameThread(msg.id, msg.name);
-                    break;
-                case 'deleteThread':
-                    await this._stopTurnAndWait();
-                    await this._deleteThread(msg.id);
-                    break;
-                case 'threadContextMenu':
-                    await this._handleThreadContextMenu(msg.id);
-                    break;
-                case 'searchThreads':
-                    this._post({ type: 'threadSearchResults', query: msg.query, results: this._searchThreads(msg.query) });
-                    break;
-                case 'resumeSession': {
-                    if (!this._busy) {
-                        void this._resumeInterruptedSession();
-                    }
-                    break;
                 }
-                case 'compactChat': {
-                    if (this._busy) { break; }
-                    // Claim busy before any await, or a message sent meanwhile would run concurrently
-                    this._busy = true;
-                    try {
-                        const compactCfg = vscode.workspace.getConfiguration('codico');
-                        const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
-                        const isCompactOllama = compactModel.startsWith('ollama/');
-                        const isCompactDirect = compactModel.startsWith('direct:');
-                        const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
-                        const compactOllamaModel = compactModel.slice('ollama/'.length);
-                        const compactDirectParsed = isCompactDirect ? parseDirectModelId(compactModel) : null;
-                        let compactApiKey = '';
-                        let compactDirectKey = '';
-                        if (isCompactOllama) {
-                            // no key needed
-                        } else if (isCompactDirect) {
-                            if (compactDirectParsed) {
-                                compactDirectKey = await this._context.secrets.get(directSecretKey(compactDirectParsed.providerId)) ?? '';
-                            }
-                            if (!compactDirectKey) {
-                                this._post({ type: 'error', message: 'No API key set for this provider. Run "Codico: Set Direct Provider API Key".' });
-                                break;
-                            }
-                        } else {
-                            compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
-                            if (!compactApiKey) {
-                                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
-                                break;
-                            }
-                        }
-                        await this._compactHistory(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
-                    } finally {
-                        this._releaseBusy();
-                    }
-                    break;
-                }
-                case 'toggleAutoCompact':
-                    this._autoCompact = msg.enabled;
-                    break;
-                case 'toggleChatMode':
-                    this._chatMode = msg.chatMode;
-                    break;
+                this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+                break;
+            case 'setApiKey':
+                await vscode.commands.executeCommand('codico.setApiKey');
+                break;
+            case 'openSettings': {
+                const choice = await vscode.window.showQuickPick([
+                    { label: '$(key) OpenRouter API Key', detail: 'Used for all OpenRouter models (free & premium)', cmd: 'codico.setApiKey' },
+                    { label: '$(key) Direct Provider API Key', detail: 'Set a key for Anthropic, OpenAI, Google, Groq, DeepSeek…', cmd: 'codico.setDirectApiKey' },
+                    { label: '$(server) Ollama Base URL', detail: 'Configure local Ollama server address', cmd: 'codico.setOllamaUrl' },
+                    { label: '$(git-pull-request) GitHub Token', detail: 'Used for /pr PR review context', cmd: 'codico.setGithubToken' },
+                ], { title: 'Codico Settings', placeHolder: 'Select a setting to configure' });
+                if (choice) { await vscode.commands.executeCommand(choice.cmd); }
+                break;
             }
-            } catch (err: unknown) {
-                // Prevent unhandled promise rejections from silently killing the handler.
-                // If _busy was set before the error escaped, clear it so the UI isn't locked.
-                if (this._busy) {
+            case 'closePanel':
+                await vscode.commands.executeCommand('workbench.action.closeSidebar');
+                break;
+            case 'checkpointResponse':
+                this._checkpointResolver?.(msg.continue === true);
+                this._checkpointResolver = null;
+                break;
+            case 'killBackgroundProcesses':
+                this._killBackgroundProcesses();
+                break;
+            case 'abortStream':
+                this._abortController?.abort();
+                // A message waiting for the previous turn to finish is cancelled too; the
+                // panel already shows it as running, so end that state explicitly.
+                if (this._pendingUserMessages.length > 0) {
+                    this._pendingUserMessages.length = 0;
                     this._post({ type: 'endMessage', id: '' });
+                }
+                // Resolve all pending permission dialogs as denied so their Promises unblock
+                this._cancelTurnPrompts();
+                this._allowAllWrites = false;
+                this._allowAllTerminal = false;
+                this._external.resetTurnPermissions();
+                break;
+            case 'writePermissionResponse': {
+                const resolve = this._pendingWritePermissions.get(msg.permId);
+                if (resolve) {
+                    this._pendingWritePermissions.delete(msg.permId);
+                    resolve({ granted: msg.granted });
+                }
+                break;
+            }
+            case 'terminalPermissionResponse': {
+                const resolve = this._pendingTerminalPermissions.get(msg.permId);
+                if (resolve) {
+                    this._pendingTerminalPermissions.delete(msg.permId);
+                    resolve(msg.granted);
+                }
+                break;
+            }
+            case 'allowAllWrites': {
+                this._allowAllWrites = true;
+                const resolve = this._pendingWritePermissions.get(msg.permId);
+                if (resolve) {
+                    this._pendingWritePermissions.delete(msg.permId);
+                    resolve({ granted: true });
+                }
+                break;
+            }
+            case 'writePermissionEdit': {
+                const resolve = this._pendingWritePermissions.get(msg.permId);
+                if (resolve) {
+                    this._pendingWritePermissions.delete(msg.permId);
+                    resolve({ granted: true, editedContent: msg.content });
+                }
+                break;
+            }
+            case 'allowAllTerminal': {
+                this._allowAllTerminal = true;
+                const resolve = this._pendingTerminalPermissions.get(msg.permId);
+                if (resolve) {
+                    this._pendingTerminalPermissions.delete(msg.permId);
+                    resolve(true);
+                }
+                break;
+            }
+            case 'changeModel': {
+                // Validate against known model IDs before persisting
+                if (!this._webviewAssets.isValidModelId(msg.model)) {
+                    this._post({ type: 'error', message: `Unknown model ID rejected: "${msg.model}"` });
+                    break;
+                }
+                await vscode.workspace
+                    .getConfiguration('codico')
+                    .update('model', msg.model, vscode.ConfigurationTarget.Global);
+                break;
+            }
+            case 'changeEffort':
+                this._thinkingEffort = msg.effort;
+                break;
+            case 'requestContext':
+                await this._handleContextRequest(msg.kind);
+                break;
+            case 'startReview':
+                await this._handleReview(msg.target);
+                break;
+            case 'startPlan':
+                await this._handlePlan(msg.goal);
+                break;
+            case 'approvePlan':
+                await this._handleUserMessage(msg.executionPrompt);
+                break;
+            case 'clarifyResponse':
+                await this._handleClarifyResponse(msg.text);
+                break;
+            case 'refreshMcp':
+                // Not under a running task: it may be calling one of these servers
+                await this._whenIdle();
+                this._mcpReady = false;
+                this._mcp.disconnectAll();
+                await this._connectMcpServers();
+                break;
+            case 'undo': {
+                const fp = await this._undoRedo.undo();
+                if (fp) {
+                    vscode.window.showInformationMessage(`Codico: undid changes to ${fp}`);
+                } else {
+                    vscode.window.showInformationMessage('Codico: nothing to undo');
+                }
+                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+                break;
+            }
+            case 'redo': {
+                const fp = await this._undoRedo.redo();
+                if (fp) {
+                    vscode.window.showInformationMessage(`Codico: redid changes to ${fp}`);
+                } else {
+                    vscode.window.showInformationMessage('Codico: nothing to redo');
+                }
+                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+                break;
+            }
+            case 'toggleEditsMode':
+                // A running task keeps the mode it started in (its proposals would be lost)
+                await this._whenIdle();
+                this._editsMode = msg.enabled;
+                if (!msg.enabled) {
+                    // Discard any pending proposals when leaving edits mode
+                    this._editProposals.rejectAll();
+                    this._post({ type: 'allProposalsResolved' });
+                }
+                break;
+            case 'toggleAutoCommit':
+                this._autoCommit = msg.enabled;
+                break;
+            case 'previewEditDiff':
+                await this._editProposals.openDiff(msg.filepath);
+                break;
+            case 'acceptEdit': {
+                await this._editProposals.applyOne(msg.filepath, (before, after, fp, label) => {
+                    this._undoRedo.push({ filepath: fp, before, after, label });
+                });
+                this._post({ type: 'proposalAccepted', filepath: msg.filepath });
+                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+                if (!this._editProposals.hasProposals) {
+                    this._post({ type: 'allProposalsResolved' });
+                }
+                break;
+            }
+            case 'rejectEdit':
+                this._editProposals.rejectOne(msg.filepath);
+                this._post({ type: 'proposalRejected', filepath: msg.filepath });
+                if (!this._editProposals.hasProposals) {
+                    this._post({ type: 'allProposalsResolved' });
+                }
+                break;
+            case 'acceptAllEdits': {
+                await this._editProposals.applyAll((before, after, fp, label) => {
+                    this._undoRedo.push({ filepath: fp, before, after, label });
+                });
+                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
+                this._post({ type: 'allProposalsResolved' });
+                break;
+            }
+            case 'rejectAllEdits':
+                this._editProposals.rejectAll();
+                this._post({ type: 'allProposalsResolved' });
+                break;
+            case 'sendFollowUp':
+                await this._handleUserMessage(msg.text);
+                break;
+            case 'generateTestsFromCoverage':
+                await vscode.commands.executeCommand('codico.generateTestsFromCoverage');
+                break;
+            case 'runAndFixTests':
+                await this._handleRunAndFixTests();
+                break;
+            case 'openProblems':
+                await vscode.commands.executeCommand('workbench.actions.view.problems');
+                break;
+            case 'createThread':
+                await this._stopTurnAndWait();
+                await this._createThread(msg.name);
+                break;
+            case 'switchThread':
+                await this._stopTurnAndWait();
+                await this._switchThread(msg.id);
+                break;
+            case 'renameThread':
+                await this._renameThread(msg.id, msg.name);
+                break;
+            case 'deleteThread':
+                await this._stopTurnAndWait();
+                await this._deleteThread(msg.id);
+                break;
+            case 'threadContextMenu':
+                await this._handleThreadContextMenu(msg.id);
+                break;
+            case 'searchThreads':
+                this._post({ type: 'threadSearchResults', query: msg.query, results: this._searchThreads(msg.query) });
+                break;
+            case 'resumeSession': {
+                if (!this._busy) {
+                    void this._resumeInterruptedSession().catch(err => this._postError(err));
+                }
+                break;
+            }
+            case 'compactChat': {
+                if (this._busy) { break; }
+                // Claim busy before any await, or a message sent meanwhile would run concurrently
+                this._busy = true;
+                try {
+                    const compactCfg = vscode.workspace.getConfiguration('codico');
+                    const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
+                    const isCompactOllama = compactModel.startsWith('ollama/');
+                    const isCompactDirect = compactModel.startsWith('direct:');
+                    const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
+                    const compactOllamaModel = compactModel.slice('ollama/'.length);
+                    const compactDirectParsed = isCompactDirect ? parseDirectModelId(compactModel) : null;
+                    let compactApiKey = '';
+                    let compactDirectKey = '';
+                    if (isCompactOllama) {
+                        // no key needed
+                    } else if (isCompactDirect) {
+                        if (compactDirectParsed) {
+                            compactDirectKey = await this._context.secrets.get(directSecretKey(compactDirectParsed.providerId)) ?? '';
+                        }
+                        if (!compactDirectKey) {
+                            this._post({ type: 'error', message: 'No API key set for this provider. Run "Codico: Set Direct Provider API Key".' });
+                            break;
+                        }
+                    } else {
+                        compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
+                        if (!compactApiKey) {
+                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                            break;
+                        }
+                    }
+                    await this._compactHistory(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
+                } finally {
                     this._releaseBusy();
                 }
-                const message = err instanceof Error ? err.message : String(err);
-                this._post({ type: 'error', message });
+                break;
             }
-        });
+            case 'toggleAutoCompact':
+                this._autoCompact = msg.enabled;
+                break;
+            case 'toggleChatMode':
+                this._chatMode = msg.chatMode;
+                break;
+        }
+        } catch (err: unknown) {
+            // Turns and Compact release the agent themselves. The failed action may be
+            // unrelated to a task that is still running, so the busy state is left alone.
+            this._postError(err);
+        }
+    }
+
+    private _postError(err: unknown): void {
+        this._post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
     }
 
     // ─── MCP connection ──────────────────────────────────────────────────────
@@ -720,6 +731,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return;
         }
         this._busy = true;
+        // Created before setup (keys, context, /pr, @agent lookups can take seconds) so
+        // Stop, a thread switch or Clear can cancel the turn from its very start
+        const abortController = new AbortController();
+        this._abortController = abortController;
+        const { signal } = abortController;
         const _taskStartMs = Date.now();
         this._filesWrittenThisTurn = 0;
         this._evalSteps = 0;
@@ -756,9 +772,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._allowAllWrites  = this._evaluationMode;
         this._allowAllTerminal = this._evaluationMode;
         this._external.resetTurnPermissions();
-
-        // Cancel any ongoing stream
-        this._abortController?.abort();
 
         // ── /pr slash command: inject PR context then re-prompt as a review ──
         const prMatch = text.match(/^\/pr(?:\s+(.*))?$/is);
@@ -877,6 +890,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             userContent = contentParts;
         }
 
+        // Stopped during setup: nothing was sent or recorded yet; end the panel's busy state
+        if (signal.aborted) { this._post({ type: 'endMessage', id: '' }); return; }
+
         const historyRollbackLen = this._history.length;
         const displayRollbackLen = this._displayMessages.length;
 
@@ -896,9 +912,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // planGoal marks this reply as a plan: the panel offers Approve only on it
         this._post({ type: 'startMessage', id: msgId, planGoal: this._planGoal ?? undefined });
         this._recording = { msgId, events: [], size: 0, truncated: false };
-
-        this._abortController = new AbortController();
-        const { signal } = this._abortController;
 
         // Abort any in-flight follow-up request from the previous message
         this._followUpAbortController?.abort();
@@ -1507,6 +1520,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         } finally {
+            if (this._abortController === abortController) { this._abortController = null; }
             this._releaseBusy();
         }
     }
@@ -1539,15 +1553,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _drainPending(): void {
         if (this._busy) { return; } // something started meanwhile; its release drains again
         const next = this._pendingUserMessages.shift();
-        if (next?.planGoal !== undefined) { void this._handlePlan(next.planGoal); }
-        else if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics, next.skipUserPush); }
+        // Nobody awaits a queued item, so its errors are reported here
+        if (next?.planGoal !== undefined) { this._handlePlan(next.planGoal).catch(err => this._postError(err)); }
+        else if (next) { this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics, next.skipUserPush).catch(err => this._postError(err)); }
+    }
+
+    /** Resolves once no task is running (immediately when idle). */
+    private _whenIdle(): Promise<void> {
+        return this._busy ? new Promise<void>(resolve => this._idleWaiters.push(resolve)) : Promise.resolve();
     }
 
     /** Cancels the running turn (like Stop) and resolves once the agent is idle. */
     private async _stopTurnAndWait(): Promise<void> {
         this._pendingUserMessages.length = 0;
         if (!this._busy) { return; }
-        const idle = new Promise<void>(resolve => this._idleWaiters.push(resolve));
+        const idle = this._whenIdle();
         this._abortController?.abort();
         this._cancelTurnPrompts();
         await idle;

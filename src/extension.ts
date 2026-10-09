@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentProvider } from './agentProvider';
+import { WebviewMessage } from './chatProtocol';
 import { InlineCompletionProvider } from './inlineCompletionProvider';
 import { handleInlineChat, registerInlineDiffCommands } from './inlineChatProvider';
 import { generateCommitMessage } from './commitMessageProvider';
@@ -62,6 +63,7 @@ export function activate(context: vscode.ExtensionContext): void {
             }),
             vscode.commands.registerCommand('codico.__evalAnswerClarify', async (answer: string) => provider.runEvaluationTask(answer, 'clarify')),
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
+            vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );
     }
 
