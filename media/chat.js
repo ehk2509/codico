@@ -2717,6 +2717,13 @@
         }
         break;
       }
+      case 'compactCancelled': {
+        // Compaction was stopped with the turn: drop the "Compacting…" indicator quietly
+        var cmpPill = curId ? document.getElementById('compact-inline-' + curId) : null;
+        if (cmpPill) { cmpPill.remove(); }
+        if (!streaming) { var cmpSt2 = document.getElementById('s-text'); if (cmpSt2) { cmpSt2.textContent = 'Ready'; } }
+        break;
+      }
       case 'compactError': {
         var cmpEr = document.getElementById('s-text');
         if (cmpEr) { cmpEr.textContent = 'Ready'; }

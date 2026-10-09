@@ -38,6 +38,7 @@ import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
 import { planCompaction, summarizerPrompt, buildCompactedHistory, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
 import { looksLikeIntendedRegex } from './agentEfficiency';
+import { computeLineDiff } from './lineDiff';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -83,7 +84,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Resolves the pending step checkpoint: true = keep going, false = stop. */
     private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
     /** Messages sent while the previous turn was still finishing; run in order once free. */
-    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; planGoal?: string }> = [];
+    private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; skipUserPush?: boolean; planGoal?: string }> = [];
+    /** Resolved when the agent next becomes idle (used to stop a turn before switching threads). */
+    private _idleWaiters: Array<() => void> = [];
     /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
     private readonly _bgProcesses = new Map<number, { command: string; startedAt: number }>();
     private _bgPollTimer: ReturnType<typeof setInterval> | undefined;
@@ -274,20 +277,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             switch (msg.type) {
                 case 'sendMessage':
                     this._planAwaitingAnswer = null;
-                    if (this._busy) {
-                        // The previous turn has ended in the panel but is still finishing
-                        // (saving history, compacting…). Keep the message — typically a queued
-                        // follow-up — and run it as soon as the agent is free.
-                        this._pendingUserMessages.push({
-                            text: msg.text,
-                            contentParts: msg.contentParts as MessageContentPart[] | undefined,
-                            injectActiveDiagnostics: msg.injectActiveDiagnostics,
-                        });
-                        break;
-                    }
                     await this._handleUserMessage(msg.text, msg.contentParts as MessageContentPart[] | undefined, msg.injectActiveDiagnostics);
                     break;
                 case 'clearChat':
+                    await this._stopTurnAndWait();
                     this._history = [];
                     this._displayMessages = [];
                     await this._historyStore.update(this._historyKey, []);
@@ -332,10 +325,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._post({ type: 'endMessage', id: '' });
                     }
                     // Resolve all pending permission dialogs as denied so their Promises unblock
-                    for (const resolve of this._pendingWritePermissions.values()) { resolve({ granted: false }); }
-                    this._pendingWritePermissions.clear();
-                    for (const resolve of this._pendingTerminalPermissions.values()) { resolve(false); }
-                    this._pendingTerminalPermissions.clear();
+                    this._cancelTurnPrompts();
                     this._allowAllWrites = false;
                     this._allowAllTerminal = false;
                     this._external.resetTurnPermissions();
@@ -493,15 +483,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     await vscode.commands.executeCommand('workbench.actions.view.problems');
                     break;
                 case 'createThread':
+                    await this._stopTurnAndWait();
                     await this._createThread(msg.name);
                     break;
                 case 'switchThread':
+                    await this._stopTurnAndWait();
                     await this._switchThread(msg.id);
                     break;
                 case 'renameThread':
                     await this._renameThread(msg.id, msg.name);
                     break;
                 case 'deleteThread':
+                    await this._stopTurnAndWait();
                     await this._deleteThread(msg.id);
                     break;
                 case 'threadContextMenu':
@@ -518,34 +511,35 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 }
                 case 'compactChat': {
                     if (this._busy) { break; }
-                    const compactCfg = vscode.workspace.getConfiguration('codico');
-                    const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
-                    const isCompactOllama = compactModel.startsWith('ollama/');
-                    const isCompactDirect = compactModel.startsWith('direct:');
-                    const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
-                    const compactOllamaModel = compactModel.slice('ollama/'.length);
-                    const compactDirectParsed = isCompactDirect ? parseDirectModelId(compactModel) : null;
-                    let compactApiKey = '';
-                    let compactDirectKey = '';
-                    if (isCompactOllama) {
-                        // no key needed
-                    } else if (isCompactDirect) {
-                        if (compactDirectParsed) {
-                            compactDirectKey = await this._context.secrets.get(directSecretKey(compactDirectParsed.providerId)) ?? '';
-                        }
-                        if (!compactDirectKey) {
-                            this._post({ type: 'error', message: 'No API key set for this provider. Run "Codico: Set Direct Provider API Key".' });
-                            break;
-                        }
-                    } else {
-                        compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
-                        if (!compactApiKey) {
-                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
-                            break;
-                        }
-                    }
+                    // Claim busy before any await, or a message sent meanwhile would run concurrently
                     this._busy = true;
                     try {
+                        const compactCfg = vscode.workspace.getConfiguration('codico');
+                        const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
+                        const isCompactOllama = compactModel.startsWith('ollama/');
+                        const isCompactDirect = compactModel.startsWith('direct:');
+                        const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
+                        const compactOllamaModel = compactModel.slice('ollama/'.length);
+                        const compactDirectParsed = isCompactDirect ? parseDirectModelId(compactModel) : null;
+                        let compactApiKey = '';
+                        let compactDirectKey = '';
+                        if (isCompactOllama) {
+                            // no key needed
+                        } else if (isCompactDirect) {
+                            if (compactDirectParsed) {
+                                compactDirectKey = await this._context.secrets.get(directSecretKey(compactDirectParsed.providerId)) ?? '';
+                            }
+                            if (!compactDirectKey) {
+                                this._post({ type: 'error', message: 'No API key set for this provider. Run "Codico: Set Direct Provider API Key".' });
+                                break;
+                            }
+                        } else {
+                            compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
+                            if (!compactApiKey) {
+                                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                                break;
+                            }
+                        }
                         await this._compactHistory(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
                     } finally {
                         this._releaseBusy();
@@ -718,7 +712,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     private async _handleUserMessage(rawText: string, contentParts?: MessageContentPart[], injectActiveDiagnostics?: boolean, _skipUserPush = false): Promise<void> {
-        if (this._busy) { return; }
+        if (this._busy) {
+            // The previous turn is still running or finishing (saving history, compacting…).
+            // Queue rather than drop: Approve, follow-ups, clarify answers, Review and
+            // editor commands all arrive here, not only the panel's Send button.
+            this._pendingUserMessages.push({ text: rawText, contentParts, injectActiveDiagnostics, skipUserPush: _skipUserPush });
+            return;
+        }
         this._busy = true;
         const _taskStartMs = Date.now();
         this._filesWrittenThisTurn = 0;
@@ -1370,7 +1370,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // streaming state and continues as soon as compaction finishes.
                 const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 100_000);
                 if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid) {
-                    await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
+                    await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
                 }
 
                 // Fenced compatibility tools return results as a normal user message.
@@ -1398,8 +1398,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             // contains assistant replies (length > rollback+1), those iterations wrote files
             // that are now on disk — wiping them from history would make chat state diverge
             // from the file system.  Keep completed history; only trim an orphaned user message.
-            if (this._history.length <= historyRollbackLen + 1) {
+            // Only ever shorten: if mid-turn compaction already replaced the history it can be
+            // shorter than historyRollbackLen, and assigning length would pad it with holes.
+            if (this._history.length > historyRollbackLen && this._history.length <= historyRollbackLen + 1) {
                 this._history.length = historyRollbackLen;
+            }
+            if (this._displayMessages.length > displayRollbackLen) {
                 this._displayMessages.length = displayRollbackLen;
             }
             if (!signal.aborted) {
@@ -1499,7 +1503,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // ── Auto-compact: summarize history when prompt tokens exceed threshold ──
         const autoCompactThreshold = config.get<number>('autoCompactThreshold', 100_000);
         if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold) {
-            await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
+            await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
         }
 
         } finally {
@@ -1509,6 +1513,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     /** Shows a Continue / Stop prompt and resolves with the user's choice (Stop or abort = false). */
     private async _awaitCheckpoint(msgId: string, steps: number, signal: AbortSignal, reason?: string): Promise<boolean> {
+        // An already-aborted signal never fires 'abort' again
+        if (signal.aborted) { return false; }
         const keepGoing = await new Promise<boolean>((resolve) => {
             this._checkpointResolver = resolve;
             signal.addEventListener('abort', () => resolve(false), { once: true });
@@ -1521,9 +1527,40 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Marks the agent free and runs the next message that arrived while it was busy. */
     private _releaseBusy(): void {
         this._busy = false;
+        const waiters = this._idleWaiters;
+        this._idleWaiters = [];
+        waiters.forEach(resolve => resolve());
+        // Deferred: callers (e.g. _handlePlan) still have cleanup to run after the turn
+        // returns. Starting the next item synchronously let that cleanup clobber its state
+        // (a queued plan lost its read-only mode).
+        setTimeout(() => this._drainPending(), 0);
+    }
+
+    private _drainPending(): void {
+        if (this._busy) { return; } // something started meanwhile; its release drains again
         const next = this._pendingUserMessages.shift();
         if (next?.planGoal !== undefined) { void this._handlePlan(next.planGoal); }
-        else if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics); }
+        else if (next) { void this._handleUserMessage(next.text, next.contentParts, next.injectActiveDiagnostics, next.skipUserPush); }
+    }
+
+    /** Cancels the running turn (like Stop) and resolves once the agent is idle. */
+    private async _stopTurnAndWait(): Promise<void> {
+        this._pendingUserMessages.length = 0;
+        if (!this._busy) { return; }
+        const idle = new Promise<void>(resolve => this._idleWaiters.push(resolve));
+        this._abortController?.abort();
+        this._cancelTurnPrompts();
+        await idle;
+    }
+
+    /** Resolves open permission prompts and checkpoints as declined so a stopped turn can end. */
+    private _cancelTurnPrompts(): void {
+        for (const resolve of this._pendingWritePermissions.values()) { resolve({ granted: false }); }
+        this._pendingWritePermissions.clear();
+        for (const resolve of this._pendingTerminalPermissions.values()) { resolve(false); }
+        this._pendingTerminalPermissions.clear();
+        this._checkpointResolver?.(false);
+        this._checkpointResolver = null;
     }
 
     private async _generateFollowUps(msgId: string, apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, signal: AbortSignal, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
@@ -1582,7 +1619,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _compactHistory(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
+    private async _compactHistory(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, isDirect = false, directKey = '', directProviderId = '', directModelId = '', signal: AbortSignal = this._sessionAbort.signal): Promise<void> {
+        if (signal.aborted) { this._post({ type: 'compactCancelled' }); return; }
         const plan = planCompaction(this._history);
         if (!plan) {
             this._post({ type: 'compactDone', messageCount: 0 });
@@ -1599,10 +1637,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ollamaBaseUrl,
                     [{ role: 'user', content: prompt }],
                     ollamaModel,
-                    1500
+                    1500,
+                    signal
                 );
             } else if (isDirect) {
-                summary = await directSingleCompletion(directKey, directProviderId, directModelId, prompt, 1500, this._sessionAbort.signal);
+                summary = await directSingleCompletion(directKey, directProviderId, directModelId, prompt, 1500, signal);
             } else {
                 const body = JSON.stringify({
                     model,
@@ -1641,13 +1680,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     );
                     req.setTimeout(30_000, () => { req.destroy(); resolve(''); });
                     req.on('error', () => resolve(''));
+                    signal.addEventListener('abort', () => { req.destroy(); resolve(''); }, { once: true });
                     req.write(body);
                     req.end();
                 });
             }
         } catch (err: unknown) {
+            if (signal.aborted) { this._post({ type: 'compactCancelled' }); return; }
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'compactError', message });
+            return;
+        }
+
+        // Stopped while summarising: keep the history as it was, and don't bill another step
+        if (signal.aborted) {
+            this._post({ type: 'compactCancelled' });
             return;
         }
 
@@ -2095,8 +2142,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _handleEditFile(tool: EditFileTool, msgId: string): Promise<string> {
         try {
             const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
-            const bytes = await vscode.workspace.fs.readFile(fileUri);
-            const rawContent = new TextDecoder().decode(bytes);
+            // Edits mode: a file can have a queued (unwritten) proposal. Build on it, or earlier
+            // edits to the same file are lost and edits to a file created by write_file fail.
+            const pending = this._editsMode ? this._editProposals.pending(tool.filepath) : undefined;
+            const bytes = pending ? pending.originalContent : await vscode.workspace.fs.readFile(fileUri);
+            const rawContent = pending ? pending.proposedContent : new TextDecoder().decode(bytes!);
 
             // Normalize CRLF → LF for matching; oldStr from the parser is always LF-only.
             // Without this, edit_file fails with "old_str not found" on any CRLF file.
@@ -2265,62 +2315,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
      * O(n×m) LCS stays fast even for large files.
      */
     private _computeLineDiff(before: string, after: string, maxOutputLines = 200): string {
-        const CAP = 500;
-        const rawA = before.split('\n');
-        const rawB = after.split('\n');
-        const truncated = rawA.length > CAP || rawB.length > CAP;
-        const a = rawA.slice(0, CAP);
-        const b = rawB.slice(0, CAP);
-
-        const n = a.length, m = b.length;
-        // LCS length table
-        const dp: number[][] = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0) as number[]);
-        for (let i = 1; i <= n; i++) {
-            for (let j = 1; j <= m; j++) {
-                dp[i][j] = a[i - 1] === b[j - 1]
-                    ? dp[i - 1][j - 1] + 1
-                    : Math.max(dp[i - 1][j], dp[i][j - 1]);
-            }
-        }
-
-        // Iterative backtrack to produce edit script
-        const ops: Array<['+' | '-' | ' ', string]> = [];
-        let i = n, j = m;
-        while (i > 0 || j > 0) {
-            if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-                ops.unshift([' ', a[i - 1]]); i--; j--;
-            } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-                ops.unshift(['+', b[j - 1]]); j--;
-            } else {
-                ops.unshift(['-', a[i - 1]]); i--;
-            }
-        }
-
-        // Format with 3 context lines around each changed region
-        const CTX = 3;
-        const show = new Set<number>();
-        for (let k = 0; k < ops.length; k++) {
-            if (ops[k][0] !== ' ') {
-                for (let c = Math.max(0, k - CTX); c <= Math.min(ops.length - 1, k + CTX); c++) {
-                    show.add(c);
-                }
-            }
-        }
-
-        if (show.size === 0) { return ''; } // files are identical
-
-        const lines: string[] = [];
-        let prevShown = -1;
-        for (let k = 0; k < ops.length; k++) {
-            if (!show.has(k)) { continue; }
-            if (prevShown >= 0 && k > prevShown + 1) { lines.push('@@'); }
-            lines.push(ops[k][0] + ops[k][1]);
-            prevShown = k;
-            if (lines.length >= maxOutputLines) { lines.push('…'); break; }
-        }
-
-        if (truncated) { lines.push('… (diff truncated — file exceeds 500 lines)'); }
-        return lines.join('\n');
+        return computeLineDiff(before, after, maxOutputLines);
     }
 
     /** Read .codico-instructions.md (or .github/codico-instructions.md) once per session. */

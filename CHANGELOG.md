@@ -9,6 +9,15 @@ All notable changes to Codico will be documented in this file.
 
 ### Fixed
 - Bold text inside a plan step no longer loses its formatting.
+- Switching, creating, deleting or clearing a thread while the agent was working let the running turn write into the other thread. These actions now stop the running turn first.
+- A plan queued behind another plan could run without read-only mode; queued work now starts after the previous turn has fully finished.
+- Edits mode kept only the last of several edits to the same file, and could not edit a file created by a pending write; edits now build on the pending proposal.
+- Approve & Execute, follow-up chips, clarify answers, Review and editor commands were silently dropped while the agent was finishing a turn; they are now queued.
+- Approval diffs were empty when every change was below line 500; diffs now cover the whole file.
+- Pressing Stop just before a checkpoint could leave the turn waiting for a click.
+- An error after mid-task compaction could corrupt the history with empty entries.
+- Stop now also cancels an in-progress compaction summary (no further request is billed and the history is left unchanged).
+- The Compact button could run at the same time as a message sent while it was starting.
 
 ## 0.3.2 - 2026-10-09
 

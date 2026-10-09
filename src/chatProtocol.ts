@@ -125,6 +125,7 @@ export type ExtensionMessage =
     | { type: 'todoUpdate'; id: string; items: Array<{ status: 'pending' | 'active' | 'done' | 'failed'; text: string }> }
     | { type: 'compactStart' }
     | { type: 'compactDone'; messageCount: number }
+    | { type: 'compactCancelled' }
     | { type: 'compactError'; message: string }
     | { type: 'iterationLimit'; id: string; limit: number }
     | { type: 'selectionBadge'; label: string };
