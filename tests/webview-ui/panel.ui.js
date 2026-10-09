@@ -260,3 +260,29 @@ test('Plan mode: a plan reply without steps offers nothing to approve', async ()
   assert.match(await page.locator('#msg-p1').innerText(), /No plan steps were produced/);
   await page.close();
 });
+
+test('Plan mode: steps written in bold, headings or "Step N:" form still get Approve', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'add future trading option');
+  const boldPlan = 'Now I understand the codebase.\n\n## Plan: Future Trading\n\n' +
+    '**1. Add `POST /api/orders/future` endpoint**  \nCreate a new route in `orderRoutes.js`.\n\n' +
+    '**2. Add `GET /api/orders/future` endpoint**  \nReturn the registered orders.\n\n' +
+    '### 3. Add a price-monitoring loop\n\n- **Step 4:** Add the `FutureOrders.js` component\n\n' +
+    '## Files Affected\n- crypto-trading-bot/server/routes/orderRoutes.js\n\n> Approve the plan to begin execution.';
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'add future trading option' }, { type: 'appendContent', id: 'p1', text: boldPlan }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
+  assert.equal(await page.locator('#msg-p1').innerText().then(t => /No plan steps were produced/.test(t)), false);
+  const steps = await page.locator('#msg-p1 .plan-checklist .todo-text').allInnerTexts();
+  assert.deepEqual(steps, ['1. Add `POST /api/orders/future` endpoint', '2. Add `GET /api/orders/future` endpoint',
+    '3. Add a price-monitoring loop', '4. Add the `FutureOrders.js` component']);
+  await page.close();
+});
+
+test('Plan mode: a plan with the closing line is approvable even if its steps are unrecognised', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'add future trading option');
+  const oddPlan = 'First, add the endpoint.\nThen, add the UI.\n\n## Files Affected\n- a.js\n\n> Approve the plan to begin execution.';
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'add future trading option' }, { type: 'appendContent', id: 'p1', text: oddPlan }, { type: 'endMessage', id: 'p1' });
+  assert.equal(await page.locator('#msg-p1 .plan-approve-btn').count(), 1);
+  await page.close();
+});

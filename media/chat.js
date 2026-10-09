@@ -1518,17 +1518,14 @@
     if (planGoal) {
       var planContent = savedContent;
 
-      // Parse numbered steps
-      _planTasks = [];
-      var stepRe = /^\s*(\d+)\.\s+(.+)/gm;
-      var m;
-      while ((m = stepRe.exec(planContent)) !== null) {
-        _planTasks.push({ n: parseInt(m[1], 10), text: m[2].trim(), status: 'pending' });
-      }
+      _planTasks = _parsePlanSteps(planContent);
+      // The planner prompt asks the model to end with this line, so a reply carrying it
+      // is a real plan even if its steps use a format the parser doesn't recognise
+      var hasPlanFooter = /approve the plan to begin execution/i.test(planContent);
 
       var wrap = document.getElementById('msg-' + id);
-      if (wrap && _planTasks.length === 0) {
-        // No numbered steps (failed or empty reply): there is nothing to approve
+      if (wrap && _planTasks.length === 0 && !hasPlanFooter) {
+        // No steps and no plan footer (failed or empty reply): there is nothing to approve
         var noPlan = document.createElement('div');
         noPlan.className = 'stream-stop-notice warn';
         noPlan.textContent = '\u26A0 No plan steps were produced, so there is nothing to approve. Rephrase the goal or try again.';
@@ -2203,6 +2200,23 @@
 
     msgs.appendChild(el);
     scrollBottom();
+  }
+
+  // Numbered plan steps in the formats models actually use: "1. x", "1) x", "**1. x**",
+  // "### 1. x", "- **Step 1:** x", "Step 1 — x". Markdown emphasis is stripped from the text.
+  // ":" and dash separators only count after the word "Step", so "10:30 …" is not a step.
+  var PLAN_STEP_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:#{1,6}[ \t]+)?(?:\*\*|__)?[ \t]*(step[ \t]+)?(\d{1,3})[ \t]*([.):]|[—–-])[ \t]*(.+)$/gim;
+  function _parsePlanSteps(text) {
+    var steps = [];
+    var m;
+    PLAN_STEP_RE.lastIndex = 0;
+    while ((m = PLAN_STEP_RE.exec(text)) !== null) {
+      var sep = m[3];
+      if (!m[1] && sep !== '.' && sep !== ')') { continue; }
+      var stepText = m[4].replace(/\*\*|__/g, '').replace(/\s+$/, '').trim();
+      if (stepText) { steps.push({ n: parseInt(m[2], 10), text: stepText, status: 'pending' }); }
+    }
+    return steps;
   }
 
   // 950 -> "950", 12345 -> "12.3k", 2400000 -> "2.4M"
