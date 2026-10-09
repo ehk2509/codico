@@ -2,6 +2,21 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Grouped tool steps: when a reply finishes, runs of three or more steps collapse into one line ("12 steps · read 7 files, searched 3×, ran 2 commands") that expands on click. Failed steps, terminal output and diffs stay visible; steps are shown live while the agent works.
+- Progress header for tasks that take more than a moment: current activity, elapsed time, plan step ("step 3 of 6") and the task's tokens and cost.
+- "Open diff" on every change the agent made opens VS Code's diff editor (the file before the change against now). Long diffs in the chat show their first 40 lines, with "Show all".
+- Thread list: grouped into Pinned / Today / Yesterday / This week / Older, pin to the top, a preview line, and each thread's total tokens and cost on hover.
+- Suggestions on an empty panel (explain the project, fix the N errors in the Problems panel, tests and improvements for the open file).
+- Long replies get an outline of their headings and a link to their summary.
+- Settings `codico.chatDensity` (comfortable / compact) and `codico.showReasoning`.
+
+### Changed
+- Approval cards: Allow comes first, "Allow all writes / commands this task" says what it covers, Deny comes last.
+- Attachment chips show their size, and warn when a file was cut to 20,000 characters.
+
 ## 0.3.6 - 2026-10-09
 
 ### Added

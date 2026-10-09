@@ -9,6 +9,11 @@ export interface ThreadEntry {
     messageCount: number;
     preview: string;
     hasBeenNamed?: boolean;
+    /** Pinned threads are listed first. */
+    pinned?: boolean;
+    /** Tokens and provider-reported cost (USD) of all tasks in the thread. */
+    tokens?: number;
+    costUsd?: number;
 }
 
 /** A webview event recorded while an assistant reply streamed, without its message id. */
@@ -90,12 +95,16 @@ export type WebviewMessage =
     | { type: 'deleteMessage'; turnId: string }
     | { type: 'regenerate' }
     | { type: 'attachDroppedFiles'; uris: string[] }
-    | { type: 'openFile'; path: string; line?: number };
+    | { type: 'openFile'; path: string; line?: number }
+    | { type: 'openChangeDiff'; path: string }
+    | { type: 'pinThread'; id: string };
 
 export type ExtensionMessage =
     | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string; /** The turn this reply answers; tags its user message. */ turnId?: string; /** Whether that message can be edited. */ editable?: boolean }
     /** A sent message did not start a turn (e.g. no API key): its bubble gets no actions. */
     | { type: 'turnSkipped' }
+    /** Display preferences (codico.chatDensity, codico.showReasoning). */
+    | { type: 'uiSettings'; density: 'comfortable' | 'compact'; showReasoning: boolean }
     /** An image file dropped onto the chat, to attach like a pasted image. */
     | { type: 'droppedImage'; dataUrl: string; name: string }
     | { type: 'appendThinking'; id: string; text: string }

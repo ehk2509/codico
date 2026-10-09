@@ -1443,3 +1443,77 @@ body.is-streaming .msg-actions,body.is-streaming .regen-btn,body.is-streaming .m
   box-shadow:0 2px 8px rgba(0,0,0,.3);
 }
 .jump-latest:hover{background:var(--vscode-button-hoverBackground)}
+
+/* ── Grouped tool steps ── */
+.step-hidden{display:none!important}
+.step-summary{
+  display:flex;align-items:center;gap:6px;margin:3px 0;padding:2px 8px;border-radius:10px;
+  background:none;border:1px solid var(--vscode-panel-border);cursor:pointer;
+  color:var(--vscode-descriptionForeground);font-size:11px;text-align:left;max-width:100%;
+}
+.step-summary:hover{color:var(--vscode-foreground);background:var(--vscode-toolbar-hoverBackground)}
+
+/* ── Progress header while a task runs ── */
+#task-progress{
+  display:none;align-items:center;gap:8px;padding:4px 10px;font-size:11px;
+  border-bottom:1px solid var(--vscode-panel-border);
+  background:var(--vscode-sideBar-background,var(--vscode-editor-background));
+  color:var(--vscode-descriptionForeground);flex:0 0 auto;min-width:0;
+}
+#task-progress .tp-activity{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vscode-foreground)}
+#task-progress .tp-meta{flex:0 0 auto;white-space:nowrap}
+#task-progress .tp-spinner{
+  width:9px;height:9px;border-radius:50%;flex:0 0 auto;
+  border:2px solid var(--vscode-progressBar-background,#0e70c0);border-right-color:transparent;
+  animation:tp-spin .8s linear infinite;
+}
+@keyframes tp-spin{to{transform:rotate(360deg)}}
+
+/* ── Diffs: open in the diff editor, long ones clipped ── */
+.diff-open-btn{
+  margin-left:auto;background:none;border:1px solid var(--vscode-panel-border);border-radius:3px;
+  color:var(--vscode-descriptionForeground);font-size:10px;padding:0 6px;cursor:pointer;
+}
+.diff-open-btn:hover{color:var(--vscode-foreground);background:var(--vscode-toolbar-hoverBackground)}
+.diff-clipped .diff-more{display:none}
+.diff-show-all{
+  display:block;width:100%;background:none;border:none;border-top:1px dashed var(--vscode-panel-border);
+  color:var(--vscode-textLink-foreground);font-size:11px;padding:3px;cursor:pointer;
+}
+
+/* ── Attachment chips ── */
+.chip-size{opacity:.65;margin-left:5px;font-size:10px}
+.chip.chip-warn{border-color:var(--vscode-editorWarning-foreground,#d4a017)}
+
+/* ── Thread list ── */
+.session-group{
+  font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:8px 10px 2px;
+  color:var(--vscode-descriptionForeground);
+}
+.session-card-text{min-width:0;flex:1 1 auto}
+.session-card-preview{font-size:11px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.session-action-btn.pinned{opacity:1}
+
+/* ── Welcome suggestions ── */
+.wlc-starters{display:flex;flex-direction:column;gap:6px;margin:14px 0 10px;width:100%;max-width:320px}
+.wlc-starter{
+  text-align:left;padding:7px 10px;border-radius:6px;cursor:pointer;font-size:12px;
+  background:var(--vscode-input-background);color:var(--vscode-foreground);
+  border:1px solid var(--vscode-panel-border);
+}
+.wlc-starter:hover{border-color:var(--vscode-focusBorder);background:var(--vscode-list-hoverBackground)}
+
+/* ── Outline of long replies ── */
+.reply-outline{display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 6px}
+.reply-outline-link{
+  background:none;border:1px solid var(--vscode-panel-border);border-radius:10px;padding:1px 8px;
+  font-size:10px;color:var(--vscode-textLink-foreground);cursor:pointer;
+}
+.reply-outline-link:hover{background:var(--vscode-toolbar-hoverBackground)}
+
+/* ── Display settings: compact density, hidden reasoning ── */
+body.density-compact .msg{margin-bottom:6px}
+body.density-compact .user-bubble{padding:4px 9px;font-size:12px}
+body.density-compact .agent-out{font-size:12px;line-height:1.45}
+body.density-compact .step-pill{margin:1px 0}
+body.hide-reasoning .think-wrap{display:none!important}

@@ -269,6 +269,25 @@ async function run() {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
+  {
+    // "Open diff" on a change shows VS Code's diff editor: the file before the change against now
+    const t0 = Date.now();
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:diff_change] please do the task');
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'openChangeDiff', path: 'fixtures/diffme.txt' });
+    const tab = vscode.window.tabGroups.activeTabGroup.activeTab;
+    const input = tab && tab.input;
+    const isDiff = input instanceof vscode.TabInputTextDiff;
+    let before = '', after = '';
+    if (isDiff) {
+      before = (await vscode.workspace.openTextDocument(input.original)).getText();
+      after = (await vscode.workspace.openTextDocument(input.modified)).getText();
+    }
+    results.push({ name: 'open_change_diff', ms: Date.now() - t0, requests: 0, ok: isDiff && before === 'before\n' && /^after/.test(after),
+      why: `diff editor opened: ${isDiff}; before ${JSON.stringify(before)} → now ${JSON.stringify(after)}` });
+    await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

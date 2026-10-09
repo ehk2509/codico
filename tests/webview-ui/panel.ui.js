@@ -466,3 +466,107 @@ test('file paths in replies and tool steps open the file', async () => {
   await page.locator('.step-pill-label.file-link').click();
   assert.deepEqual((await posted('openFile')).pop(), { type: 'openFile', path: 'src/app.ts' });
 });
+
+test('when a reply ends, runs of tool steps collapse into one summary line; failures stay visible', async () => {
+  const { page, send } = await openPanel();
+  const step = (tool, label, ok = true) => [{ type: 'toolStart', id: 'g1', tool, label }, { type: 'toolResult', id: 'g1', tool, label, success: ok }];
+  await send({ type: 'startMessage', id: 'g1' }, ...step('read_file', 'a.ts'), ...step('read_file', 'b.ts'), ...step('search_files', 'foo'),
+    ...step('run_terminal', 'npm test', false), ...step('read_file', 'c.ts'));
+  assert.equal(await page.locator('.step-pill:visible').count(), 5, 'all steps visible while working');
+  await send({ type: 'appendContent', id: 'g1', text: 'Done.' }, { type: 'endMessage', id: 'g1' });
+  const summary = page.locator('.step-summary');
+  assert.equal(await summary.count(), 1);
+  assert.match(await summary.textContent(), /5 steps · read 3 files, searched, ran 1 command/);
+  assert.equal(await page.locator('.step-pill:visible').count(), 1, 'only the failed step stays visible');
+  await summary.click();
+  assert.equal(await page.locator('.step-pill:visible').count(), 5);
+});
+
+test('a running task shows a progress header with activity, time, plan step and cost', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 'p1' }, { type: 'toolStart', id: 'p1', tool: 'edit_file', label: 'src/app.ts' },
+    { type: 'tokenUsage', promptTokens: 9000, completionTokens: 100, totalTokens: 9100, taskTokens: 25000, taskCostUsd: 0.042 });
+  await page.waitForTimeout(1700);
+  const header = page.locator('#task-progress');
+  assert.equal(await header.isVisible(), true);
+  assert.match(await header.locator('.tp-activity').textContent(), /Editing… src\/app\.ts/);
+  assert.match(await header.locator('.tp-meta').textContent(), /0:0\d · 25(\.0)?k tok · \$0\.042/);
+  await send({ type: 'endMessage', id: 'p1' });
+  assert.equal(await header.isVisible(), false);
+});
+
+test('a made change offers Open diff; long diffs show their start first', async () => {
+  const { page, send, posted } = await openPanel();
+  const diff = Array.from({ length: 60 }, (_, i) => '+line ' + i).join('\n');
+  await send({ type: 'startMessage', id: 'd1' }, { type: 'toolStart', id: 'd1', tool: 'edit_file', label: 'src/app.ts' },
+    { type: 'toolResult', id: 'd1', tool: 'edit_file', label: 'src/app.ts', success: true, diff });
+  const block = page.locator('.diff-block').last();
+  await block.locator('.diff-open-btn').click();
+  assert.deepEqual((await posted('openChangeDiff')).pop(), { type: 'openChangeDiff', path: 'src/app.ts' });
+  assert.equal(await block.evaluate(b => b.classList.contains('open')), false, 'the button does not toggle the diff');
+  await block.locator('.diff-toggle').click();
+  assert.equal(await block.locator('.diff-line:visible').count(), 40);
+  await block.locator('.diff-show-all').click();
+  assert.equal(await block.locator('.diff-line:visible').count(), 60);
+});
+
+test('approval cards put Allow first and say what "allow all" covers', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 'a1' }, { type: 'terminalPermissionRequest', id: 'a1', permId: 'x1', command: 'npm test' });
+  const labels = await page.locator('#perm-x1 .write-perm-btn').allTextContents();
+  assert.deepEqual(labels, ['Allow', 'Allow all commands this task', 'Deny']);
+});
+
+test('attachment chips show their size and warn when the content was cut', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'contextSnippet', kind: 'file', label: 'small.ts', text: 'File: small.ts\n```\na\nb\n```' },
+    { type: 'contextSnippet', kind: 'file', label: 'huge.ts', text: 'File: huge.ts\n```\nx\n```\n… (truncated)' });
+  assert.match(await page.locator('.chip', { hasText: 'small.ts' }).textContent(), /small\.ts5 lines/);
+  const huge = page.locator('.chip', { hasText: 'huge.ts' });
+  assert.match(await huge.textContent(), /cut/);
+  assert.equal(await huge.evaluate(c => c.classList.contains('chip-warn')), true);
+});
+
+test('threads are grouped (pinned first), show a preview and their cost, and can be pinned', async () => {
+  const { page, send, posted } = await openPanel();
+  const now = Date.now();
+  await send({ type: 'threadList', threads: [
+    { id: 'p', name: 'Pinned work', updatedAt: now - 30 * 86400000, preview: 'fix the login', messageCount: 3, pinned: true, tokens: 125000, costUsd: 0.31, active: false },
+    { id: 't', name: 'Today', updatedAt: now, preview: 'add tests', messageCount: 1, active: true },
+    { id: 'o', name: 'Old', updatedAt: now - 30 * 86400000, preview: 'Old', messageCount: 2, active: false },
+  ] });
+  assert.deepEqual(await page.locator('.session-group').allTextContents(), ['Pinned', 'Today', 'Older']);
+  const pinned = page.locator('.session-card[data-id="p"]');
+  assert.match(await pinned.locator('.session-card-preview').textContent(), /fix the login/);
+  assert.match(await pinned.getAttribute('title'), /125(\.0)?k tokens · \$0\.31/);
+  assert.equal(await page.locator('.session-card[data-id="o"] .session-card-preview').count(), 0, 'no preview repeating the name');
+  await page.evaluate(() => document.querySelector('.session-card[data-id="t"] .session-action-btn').click());
+  assert.deepEqual((await posted('pinThread')).pop(), { type: 'pinThread', id: 't' });
+});
+
+test('the empty panel offers suggestions, including fixing the workspace errors', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'diagnosticsChanged', errorCount: 3, warningCount: 1 });
+  const starters = await page.locator('.wlc-starter').allTextContents();
+  assert.ok(starters.includes('Fix the 3 errors in the Problems panel'), starters.join(' | '));
+  await page.locator('.wlc-starter', { hasText: 'Explain how this project' }).click();
+  assert.equal((await posted('sendMessage')).pop().text, 'Explain how this project is organised');
+});
+
+test('a long reply gets an outline and a link to its summary', async () => {
+  const { page, send } = await openPanel();
+  const filler = 'Words that make the reply long. '.repeat(40);
+  const text = `## Context\n\n${filler}\n\n## Changes\n\n${filler}\n\n## Risks\n\n${filler}\n\n---\n\n**Summary**\n\n- done`;
+  await send({ type: 'startMessage', id: 'o1' }, { type: 'appendContent', id: 'o1', text }, { type: 'endMessage', id: 'o1' });
+  await page.waitForTimeout(50);
+  assert.deepEqual(await page.locator('.reply-outline-link').allTextContents(), ['Context', 'Changes', 'Risks', '↓ Summary']);
+});
+
+test('compact density and hidden reasoning follow the settings', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 'r1' }, { type: 'appendThinking', id: 'r1', text: 'pondering' }, { type: 'endMessage', id: 'r1' });
+  assert.equal(await page.locator('.think-wrap').first().isVisible(), true);
+  await send({ type: 'uiSettings', density: 'compact', showReasoning: false });
+  assert.equal(await page.locator('.think-wrap').first().isVisible(), false);
+  assert.equal(await page.evaluate(() => document.body.classList.contains('density-compact')), true);
+});
