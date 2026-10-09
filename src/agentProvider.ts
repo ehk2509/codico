@@ -35,7 +35,7 @@ import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
-import { planCompaction, summarizerPrompt, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
+import { planCompaction, summarizerPrompt, summaryProblem, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -146,6 +146,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _lastInlineResult: string | undefined = undefined;
     /** Whether auto-compact is enabled for this session (toggled via chat UI). */
     private _autoCompact = true;
+    /** After a failed automatic compaction, the history length to reach before trying again. */
+    private _compactRetryAt = 0;
     /** Prompt token count from the most recent API response; used for auto-compact threshold. */
     private _lastPromptTokens = 0;
     /** Test-only autonomous coding benchmark mode. Never enabled in production extension mode. */
@@ -1489,7 +1491,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // silently between the current and next iteration; the UI stays in the
                 // streaming state and continues as soon as compaction finishes.
                 const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 100_000);
-                if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid) {
+                if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid && this._history.length >= this._compactRetryAt) {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
                     currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
                 }
@@ -1623,7 +1625,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // ── Auto-compact: summarize history when prompt tokens exceed threshold ──
         const autoCompactThreshold = config.get<number>('autoCompactThreshold', 100_000);
-        if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold) {
+        if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold && this._history.length >= this._compactRetryAt) {
             await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
         }
 
@@ -1759,27 +1761,23 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         this._post({ type: 'compactStart' });
         const prompt = summarizerPrompt(plan);
+        // Room for the summary even when a reasoning model spends part of the budget thinking
+        const SUMMARY_MAX_TOKENS = 4000;
 
-        let summary = '';
-        try {
+        const ask = async (): Promise<string> => {
             if (isOllama) {
-                summary = await ollamaChatCompletion(
-                    ollamaBaseUrl,
-                    [{ role: 'user', content: prompt }],
-                    ollamaModel,
-                    1500,
-                    signal
-                );
+                return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal);
             } else if (isDirect) {
-                summary = await directSingleCompletion(directKey, directProviderId, directModelId, prompt, 1500, signal);
+                return directSingleCompletion(directKey, directProviderId, directModelId, prompt, SUMMARY_MAX_TOKENS, signal);
             } else {
                 const body = JSON.stringify({
                     model,
                     messages: [{ role: 'user', content: prompt }],
-                    max_tokens: 1500,
+                    max_tokens: SUMMARY_MAX_TOKENS,
                     temperature: 0.1,
+                    reasoning: { effort: 'low' },
                 });
-                summary = await new Promise<string>((resolve) => {
+                return new Promise<string>((resolve) => {
                     const req = https.request(
                         {
                             hostname: 'openrouter.ai',
@@ -1816,11 +1814,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     req.end();
                 });
             }
+        };
+
+        // A bad summary would replace the history and the agent would forget its work: check it,
+        // retry once, and otherwise keep the history as it is
+        let summary = '';
+        let problem: string | null = null;
+        try {
+            for (let attempt = 0; attempt < 2 && !signal.aborted; attempt++) {
+                summary = await ask();
+                problem = summaryProblem(summary, plan);
+                if (!problem) { break; }
+            }
         } catch (err: unknown) {
             if (signal.aborted) { this._post({ type: 'compactCancelled' }); return; }
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'compactError', message });
-            return;
+            problem = err instanceof Error ? err.message : String(err);
         }
 
         // Stopped while summarising: keep the history as it was, and don't bill another step
@@ -1829,10 +1837,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        if (!summary.trim()) {
-            this._post({ type: 'compactError', message: 'Summary generation returned empty result' });
+        if (problem) {
+            // Not retried on every step: wait until the history has grown
+            this._compactRetryAt = this._history.length + 10;
+            this._post({ type: 'compactError', message: `History kept as it is: ${problem}.` });
             return;
         }
+        this._compactRetryAt = 0;
 
         // The current request stays verbatim; the kept tail starts at a complete exchange
         this._history = buildCompactedHistory(summary, plan);

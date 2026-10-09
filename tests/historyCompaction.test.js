@@ -128,3 +128,22 @@ test('approving a plan drops the planning steps but keeps the request and the pl
   const later = [request, ...steps, plan, user('something else'), assistant('ok')];
   assert.equal(dropPlanningSteps(later, PLAN).history, later);
 });
+
+test('the summary prompt delimits the transcript and repeats the instruction after it', () => {
+  const { history } = reportedThread();
+  const prompt = summarizerPrompt(planCompaction(history), 12000);
+  assert.match(prompt, /<transcript>\n## Earlier conversation[\s\S]*<\/transcript>\n\nNow write the summary/);
+  assert.ok(prompt.trimEnd().endsWith('format.'), 'the instruction is the last thing the model reads');
+});
+
+test('a summary that copies the transcript, or is far too short, is rejected', () => {
+  const { summaryProblem } = require('../out/historyCompaction.js');
+  const plan = planCompaction(reportedThread().history);
+  // The broken summary a real compaction produced (DeepSeek V4 Flash continued the transcript)
+  const copied = 'Let me update the README and CHANGELOG, then compile and test.\n\n[tool calls: read_file {"filepath":"README.md","start_line":100,"end_line":140}]\n\n---\n\n### TOOL RESULT (read_file)\n[read_file: README.md lines 100–140 of 763]\n\n---\n\n### ASSISTANT\n\n[tool calls: search_files {"glob":"README.md"}]';
+  assert.match(summaryProblem(copied, plan), /copied the transcript/);
+  assert.match(summaryProblem('Done.', plan), /too short/);
+  assert.match(summaryProblem('   ', plan), /empty/);
+  const good = '## Files changed\n- src/f1.ts … src/f17.ts were read to plan the codico features.\n\n## Decisions\n- The crypto bot features 0–11 were built earlier; the current request is a feature plan.\n\n## Outstanding\n- Write the plan for the new codico features based on the files read.';
+  assert.equal(summaryProblem(good, plan), null);
+});

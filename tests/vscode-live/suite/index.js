@@ -76,6 +76,18 @@ async function run() {
     return { ok: after.length > 0 && keptRequest && wellFormed,
       why: `${reqs.length} req, ${after.length} after compaction; request kept: ${keptRequest}; roles alternate: ${wellFormed}` };
   }, 90000);
+  {
+    // A summary that copies the transcript must not replace the history (the agent would forget its work)
+    const before = (await getLog()).length; const t0 = Date.now(); let error = null;
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:bad_summary] please do the task'); } catch (e) { error = String(e && e.message || e); }
+    const all = (await getLog()).slice(before).filter(e => e.scenario === 'bad_summary');
+    const asks = all.filter(e => e.summaryRequest), reqs = all.filter(e => e.stream);
+    const replaced = reqs.some(r => r.copiedSummary), kept = reqs.every(r => r.hasRequest);
+    results.push({ name: 'bad_summary', ms: Date.now() - t0, requests: reqs.length,
+      ok: !error && asks.length >= 2 && asks.length <= 4 && !replaced && kept && reqs.length >= 7,
+      why: `summary attempts: ${asks.length} (one retry, then waits for the history to grow); history replaced by the bad summary: ${replaced}; request kept in every step: ${kept}; task finished: ${!error} (${reqs.length} req)` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
   await set('autoCompactThreshold', 100000);
 
   {

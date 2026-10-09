@@ -137,9 +137,30 @@ export function summarizerPrompt(plan: CompactionPlan, budget = 40_000): string 
         'focus on what is relevant to continuing it. Prefer recent information. Write in past tense.',
     ];
     if (plan.request) { sections.push('## Current request (kept separately)\n' + userRequestText(plan.request)); }
-    if (plan.earlier.length) { sections.push('## Earlier conversation (oldest first)\n' + recentFirst(plan.earlier, earlierBudget, 3000)); }
-    if (plan.progress.length) { sections.push('## Progress so far on the current request (oldest first)\n' + recentFirst(plan.progress, progressBudget, 3000)); }
+    // The transcript is delimited and the instruction repeated after it: models given a long
+    // transcript last tend to continue it in its own format instead of summarising it
+    const transcript: string[] = [];
+    if (plan.earlier.length) { transcript.push('## Earlier conversation (oldest first)\n' + recentFirst(plan.earlier, earlierBudget, 3000)); }
+    if (plan.progress.length) { transcript.push('## Progress so far on the current request (oldest first)\n' + recentFirst(plan.progress, progressBudget, 3000)); }
+    sections.push('<transcript>\n' + transcript.join('\n\n') + '\n</transcript>');
+    sections.push(SUMMARY_INSTRUCTION);
     return sections.join('\n\n');
+}
+
+const SUMMARY_INSTRUCTION = 'Now write the summary of the transcript above, in your own words: short paragraphs and bullet points ' +
+    'covering files changed, decisions, facts found, errors and what is still outstanding. Do not continue the conversation, ' +
+    'do not call tools, and do not copy its messages or its "### ROLE" / "[tool calls: …]" format.';
+
+/** Why a summary must not replace the history, or null when it is usable. */
+export function summaryProblem(summary: string, plan: CompactionPlan): string | null {
+    const text = summary.trim();
+    if (!text) { return 'the summary was empty'; }
+    if (/^###\s+(USER|ASSISTANT|TOOL RESULT)\b/m.test(text) || text.includes('[tool calls: ') || /^\[Tool Results\]/m.test(text)) {
+        return 'the model copied the transcript instead of summarising it';
+    }
+    const replaced = [...plan.earlier, ...plan.progress].reduce((sum, m) => sum + size(m), 0);
+    if (replaced > 20_000 && text.length < 150) { return 'the summary was too short for what it would replace'; }
+    return null;
 }
 
 /** Roles alternate: summary (user) → ack (assistant) → request (user) → tail (starts with assistant). */

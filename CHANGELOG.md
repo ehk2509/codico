@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Compaction could replace the conversation with a broken "summary": some models (seen with DeepSeek V4 Flash) continued the transcript in its own format instead of summarising it, Codico accepted any non-empty answer, and the agent forgot the work it had done (then re-read files to recover). The transcript is now delimited with the instruction repeated after it; an answer that copies the transcript or is far too short is rejected and retried once, and otherwise the history is kept unchanged. A failed automatic compaction is not retried on every step, and the summary has more room (4,000 tokens, low reasoning effort on OpenRouter).
+
 ## 0.3.7 - 2026-10-09
 
 ### Added
