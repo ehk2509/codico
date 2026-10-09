@@ -74,15 +74,26 @@ After each response the agent executes any tool calls, feeds the results back to
 
 - **No step limit by default** (`codico.maxIterations`, `0` = unlimited). The status bar shows the current step.
 - **Checkpoints** — every `codico.checkpointSteps` steps (default 50) the agent pauses and asks **▶ Continue** or **Stop here**, so a run that has gone off track can't spend tokens indefinitely.
-- **Token and cost tracking** — the status bar shows the last request's tokens plus the running total for the current task. With OpenRouter it also shows the task's actual cost as reported by OpenRouter; other providers report tokens only.
+- **Token and cost tracking** — the status bar shows the last request's tokens (and the share served from the provider's prompt cache) plus the running total for the current task. With OpenRouter it also shows the task's actual cost as reported by OpenRouter; other providers report tokens only. Each thread keeps its total tokens and cost.
+- **Progress header** — a task that runs more than a moment shows what it is doing ("Editing… src/app.ts"), the elapsed time, the plan step and the task's tokens and cost.
 - **Token budget** — set `codico.taskTokenBudget` (default `0` = off) to pause with **▶ Continue** / **Stop here** each time a task uses that many more tokens.
-- **Loop detection** — a tool call repeated with identical arguments more than 3 times is blocked and the model is told to try a different approach.
-- **Automatic recovery** — if a response is cut off (output-token limit or dropped connection), the agent resumes in the same message: half-written tool calls are re-issued, repeated text is trimmed, and up to 5 retries are made with backoff. The status bar shows *Reconnecting…* meanwhile.
+- **Loop detection** — a tool call repeated with identical arguments more than 3 times *while nothing has changed* is blocked and the model is told to try a different approach. Re-reading a file after editing it, or re-running the tests after a fix, is normal work and is not counted. After three iterations in a row in which none of the model's tool calls could run, the task stops.
+- **Automatic recovery** — if a response is cut off (output-token limit or dropped connection), or the provider stops sending for `codico.streamStallTimeoutSeconds` (default 300 s), the agent resumes in the same message: half-written tool calls are re-issued, repeated text is trimmed, and up to 5 retries are made with backoff. The status bar shows *Reconnecting…* meanwhile.
 - **Stalled turns** — if the model announces an action ("I'll read the file…") but emits no tool call, or forgets to close its last tool call, the agent recovers instead of stopping.
 - **Native tool calling** — OpenRouter and supported direct providers use their structured function/tool API by default. Fenced tool blocks remain available as a compatibility fallback (and are still used for Ollama). Set `codico.nativeToolCalling=false` to force compatibility mode.
 
 ### Live Thinking Visualization
-For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-thought is shown in a collapsible "Reasoning trace" panel above each response, streamed in real time.
+For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-thought is shown in a collapsible "Reasoning trace" panel above each response, streamed in real time. Hide these blocks with `codico.showReasoning`.
+
+---
+
+### Token Efficiency
+Long agent tasks resend the conversation with every step, so Codico keeps what is resent small and cacheable:
+
+- **Prompt caching** — requests to Claude models (direct and through OpenRouter) ask the provider to cache the conversation; OpenAI, DeepSeek, Gemini, Grok and Moonshot cache automatically. The system prompt and tool list stay identical for the whole task (phase guidance is added to the conversation instead), so cached reads keep matching. Replaying a recorded 63-request task, this cut billed input by an estimated 85% at Claude cache pricing.
+- **Plan approval** — approving a plan drops the planning turn's file reads from the context; the plan itself stays and the agent re-reads what it needs.
+- **Trimmed history** — older large tool results are shortened, and a result repeated unchanged (a file read twice) is sent only once.
+- **Compaction** — see *Context Compaction* below.
 
 ---
 
@@ -107,7 +118,9 @@ For reasoning models (DeepSeek R1, Qwen3, etc.) the agent's internal chain-of-th
 | `debug_get_callstack` | Read full call stack across all threads |
 | `debug_list_breakpoints` | List all breakpoints with location, condition, and enabled state |
 
-Every tool that modifies files or runs code shows a **permission dialog** — you can allow or deny each one individually, or click **Allow All** to approve the rest of the current response (permissions reset with each new message).
+Every tool that modifies files or runs code shows a **permission card** — **Allow**, **Allow all writes / commands this task**, **Edit** (for writes) or **Deny**. Permissions reset with each new message; after the agent has read web or MCP content, commands are asked about again even when allowed for the task.
+
+Your own changes are never silently overwritten: if you edit a file while its approval card is open, an edit is re-applied to the current content (and a whole-file write is not made); files open with unsaved changes are read from and written through the editor; Undo, Redo and accepting an Edits-mode proposal ask before overwriting a file that changed since.
 
 File content passed to `write_file` / `edit_file` may itself contain Markdown code fences (for example a README), as long as each inner fence names a language (`` ```bash ``); the agent may also open the tool call with four backticks.
 
@@ -131,6 +144,8 @@ When the agent runs a shell command, output streams directly into the chat panel
 - On completion the indicator changes to ✓ Done (green) or ✗ Failed (red)
 - Successful runs auto-collapse after 2 seconds; click the header to expand/collapse at any time
 - Commands are killed after `codico.terminalTimeoutSeconds` (default 300 s), together with every process they started; **■ Stop** does the same immediately
+- Commands get no input, so one that prompts (an `npx` install, `npm init`) fails at once instead of waiting for the timeout
+- The model sees the start and, mostly, the end of long output — where test failures and summaries are
 - A command that leaves a process running in the background (e.g. `nohup npm start &`) no longer blocks the agent. The status bar shows a **⚙ N background processes ✕** chip — hover to see the commands, click to stop them. They are also stopped when VS Code closes.
 
 ---
@@ -156,8 +171,9 @@ Every file write and edit shows a colored diff before and after the change:
 
 - **Permission cards** show a `+N −M lines changed` diff preview before you approve
 - **Result pills** show the same diff after acceptance so you can review what changed
-- Green `+` / red `−` lines with context, `@@` hunk separators, and scroll truncation for large files
+- Green `+` / red `−` lines with context and `@@` hunk separators; long diffs show their first 40 lines with **Show all**
 - Click `▶ +N −M lines changed` to expand/collapse
+- **Open diff** on a change opens VS Code's diff editor (the file before the change against now), side by side and highlighted
 
 ---
 
@@ -205,11 +221,23 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 ### Named Chat Threads
 Manage multiple independent conversations per project:
 
-- A **thread bar** shows all sessions as vertical cards with name, timestamp, rename (✏) and delete (🗑) buttons
+- A **thread list** groups sessions into Pinned / Today / Yesterday / This week / Older, with a preview line, pin (📌), rename (✏) and delete (🗑) buttons, and each thread's total tokens and cost on hover
 - Click **+** to create a new thread; click 🔍 to search across all threads
 - The first message in a new thread auto-names it immediately
 - Reopening a thread — or reloading the window — restores the full conversation exactly as it streamed: text, reasoning, tool steps, diffs and terminal output (about 400k characters per reply are stored; threads saved by older versions show short summaries)
 - If the window closed while the agent was mid-task, a **Session was interrupted — resume?** banner offers to continue it
+- Messages show when they were sent ("2m ago", full date on hover)
+
+---
+
+### Editing, Deleting and Regenerating Messages
+Hover one of your messages:
+
+- **✎ Edit and resend** (or press `↑` in an empty input to edit your last one) — the conversation is cut back to that message and the edited text is sent. For a Plan-mode message you edit the goal.
+- **🗑 Delete** — removes the message and everything after it, after a confirmation.
+- **↻ Regenerate** on the latest reply runs its message again and replaces the reply.
+
+The panel, the saved thread and the history the model sees are always cut at the same point. Messages already folded into a compaction summary cannot be changed.
 - Threads are persisted to `workspaceState` (per-project) or `globalState` (cross-window) depending on `codico.globalHistory`
 
 ---
@@ -221,7 +249,9 @@ Manage multiple independent conversations per project:
 | `Ctrl+Shift+L` / `Cmd+Shift+L` | Focus the chat panel and input box |
 | `Ctrl+I` | Inline Chat: edit selected code with AI |
 | `Ctrl+Enter` | Accept inline diff |
-| `Esc` | Reject inline diff |
+| `Esc` | Reject inline diff (editor) · stop the reply (chat panel) |
+| `↑` (empty chat input) | Edit and resend your last message |
+| `Enter` / `Shift+Enter` | Send / new line |
 
 ---
 
@@ -294,9 +324,22 @@ Attach live workspace context to any message via the toolbar above the input box
 
 **Auto selection injection** — when you highlight code in any editor, a `✂ filename:line-range` chip automatically appears in the input area and the selected code is included in the next message context. The chip disappears when you deselect. No click required.
 
-Context chips appear as removable badges before sending.
+Context chips appear as removable badges before sending, with their size; a chip warns when a file was cut to its first 20,000 characters.
+
+**Drag and drop** — drop files onto the chat to attach them: text files as file context, images as image attachments. From VS Code's Explorer, hold **Shift** while dragging (a VS Code requirement); workspace files excluded by `.codicoignore` are refused.
 
 **Images** — attach screenshots or diagrams with the **📎** button, by pasting, or by drag-and-drop (requires a vision-capable model).
+
+---
+
+### Reading Replies
+- **File paths open the file** — `src/app.ts:42` in a reply, or a path in a tool step (Reading / Editing / Written), opens the file at that line
+- **Grouped steps** — when a reply finishes, runs of three or more tool steps collapse into one line ("12 steps · read 7 files, searched 3×, ran 2 commands"); failed steps, terminal output and diffs stay visible
+- **Long code blocks** start as a preview with an **Expand** button; the header shows the line count
+- **Long replies** get an outline of their headings and a **↓ Summary** link
+- **Scrolling** — scroll up while a reply streams to read; it stops following, and **↓ Jump to latest** takes you back
+- **Density** — `codico.chatDensity` switches between comfortable and compact spacing
+- An empty panel offers suggestions to start from, including fixing the errors in the Problems panel
 
 ---
 
@@ -342,11 +385,12 @@ Toggle with `codico.codeLensEnabled`.
 - Pick a command: `/fix`, `/doc`, or a custom instruction — these stream a diff directly into the editor buffer with red/green highlighting
 - `/explain` and `/tests` route to the sidebar chat
 - Press `Ctrl+Enter` to accept the diff or `Esc` to discard
+- Needs an OpenRouter model (as do Next Edit Suggestions, Suggest Rename and commit message generation)
 
 ---
 
 ### Inline Completions (Ghost Text)
-As you type, the agent suggests completions inline (grey ghost text). Press `Tab` to accept. Works with all providers. Configure with:
+As you type, the agent suggests completions inline (grey ghost text). Press `Tab` to accept. Works with OpenRouter and Ollama models; with a direct-provider model selected Codico says it is not supported instead of sending requests. Configure with:
 
 - `codico.inlineCompletionsEnabled` — enable/disable (default: `true`)
 - `codico.inlineCompletionsDebounceMs` — delay before triggering (default: `600`)
@@ -398,7 +442,7 @@ Right-click a changed file in SCM → **Ask Codico about this diff** to explain,
 ---
 
 ### Commit Message Generation
-Click the **Codico** button in the Source Control panel header to generate a commit message from the current staged diff. Works with all providers.
+Click the **Codico** button in the Source Control panel header to generate a commit message from the current staged diff. Needs an OpenRouter model (the agent's own auto-commit works with every provider).
 
 ---
 
@@ -435,6 +479,10 @@ Existing `.copilotignore` files are still read for compatibility; `.codicoignore
 
 ### MCP (Model Context Protocol) Servers
 Connect any MCP-compatible tool server via settings or a `.mcp.json` file in the workspace root. Connected tools appear in the system prompt and can be called with `mcp_call` blocks.
+
+- Workspace-defined servers need your approval the first time; an invalid `.mcp.json` is reported instead of silently ignored
+- Results are treated as untrusted content and capped at 20,000 characters
+- **■ Stop** cancels a running MCP call (and tells the server); calls may otherwise run up to 5 minutes
 
 ---
 
@@ -542,6 +590,9 @@ Or click the Codico icon in the Activity Bar.
 | `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
 | `codico.taskTokenBudget` | `number` | `0` | Pause and ask whether to continue each time a task uses this many more tokens (`0` = no budget) |
 | `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
+| `codico.streamStallTimeoutSeconds` | `number` | `300` | Treat a response that sends nothing for this long as a dropped connection and reconnect |
+| `codico.verificationGraceIterations` | `number` | `4` | Extra steps allowed to verify a change after the step limit is reached |
+| `codico.mutationGraceIterations` | `number` | `3` | Extra steps allowed to make a required code change after the step limit is reached |
 | `codico.nativeToolCalling` | `boolean` | `true` | Prefer provider-native structured tools; disable to force fenced compatibility mode |
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
@@ -562,6 +613,8 @@ Or click the Codico icon in the Activity Bar.
 | `codico.renameSuggestionsEnabled` | `boolean` | `true` | Pre-fill the rename input (F2) with an AI-suggested name |
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `100000` | Token count that triggers auto-compaction (when enabled) |
+| `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |
+| `codico.showReasoning` | `boolean` | `true` | Show the model's reasoning blocks in the chat |
 
 ---
 
@@ -572,6 +625,20 @@ codico/
 ├── src/
 │   ├── extension.ts                 # Activation, command registration
 │   ├── agentProvider.ts             # Agent orchestration loop, workspace tools, thread/session coordination
+│   ├── agentPrompts.ts              # Plan-mode and code-review prompts
+│   ├── agentPhasePrompt.ts          # Phase guidance (act, verify), sent as conversation notes
+│   ├── explorationController.ts     # Exploration/verification phases of a task
+│   ├── iterationBudget.ts           # Whether another autonomous step may run
+│   ├── toolLoopGuard.ts             # Repeated-call detection that ignores repeats after changes
+│   ├── contextPreamble.ts           # The [Context] block sent with each message
+│   ├── contextProjection.ts         # Shortens older/duplicate tool results sent to the model
+│   ├── historyCompaction.ts         # Compaction planning; plan-approval context slimming
+│   ├── threadEditing.ts             # Edit / delete / regenerate: cut the thread at a turn
+│   ├── taskUsage.ts                 # Per-task token and cost accounting and budget
+│   ├── chatFiles.ts                 # Dropped files, file links, change diffs
+│   ├── workspaceText.ts             # Reads/writes that respect unsaved editors and later changes
+│   ├── lineDiff.ts                  # Line diffs for approval cards and results
+│   ├── editorModel.ts               # Which models the editor features can use
 │   ├── externalToolRuntime.ts       # Browser/network/MCP/LSP/debug tool handlers
 │   ├── chatProtocol.ts              # Shared extension↔webview message contracts
 │   ├── webviewAssets.ts             # Webview asset preload, CSP and URI rendering
@@ -586,7 +653,8 @@ codico/
 │   ├── agentHistory.ts              # Provider-aware assistant/tool-result history mutation
 │   ├── workspaceDiagnostics.ts      # Workspace Problems summary/count helpers
 │   ├── streamCompletion.ts          # Stream cutoff detection and resume helpers
-│   ├── networkSecurity.ts           # Public-address/DNS validation and pinned lookups
+│   ├── networkSecurity.ts           # Public-address/DNS validation (incl. IPv4 embedded in IPv6) and pinned lookups
+│   ├── untrustedContent.ts          # Marks web/browser/MCP content as untrusted for the model
 │   ├── browserNetworkPolicy.ts      # Browser public/private-network request policy
 │   ├── urlFetcher.ts                # Secure public URL fetch + redirect/text handling
 │   ├── terminalProcess.ts           # Cross-platform command/process-tree lifecycle + scrubbed environment
@@ -633,7 +701,7 @@ codico/
 
 ## Security
 
-- **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics
+- **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics; paths that lead outside the workspace through a symbolic link (or a dangling one) are refused
 - **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Terminal secret scrubbing** — approved shell commands inherit only an execution/toolchain allowlist (PATH, HOME, Java/Go/Python/Node toolchain roots, temp/system paths, locale), not arbitrary VS Code process secrets
@@ -641,8 +709,8 @@ codico/
 - **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; the extracted webview module is loaded only through a VS Code `asWebviewUri` resource
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
-- **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers, pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
-- **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, and subresource against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
+- **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers (including IPv6 forms that embed such an IPv4 address, such as `[::ffff:127.0.0.1]`), pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
+- **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, subresource and WebSocket against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text
 - **No telemetry** — no usage data is collected; model/API calls go directly from your machine to the configured provider
 
@@ -686,7 +754,7 @@ npx @vscode/vsce package --out codico.vsix
 
 ### Releases
 
-- **0.3.0** is the current minor release line, adding task token/cost tracking with an optional budget, untrusted handling of web/browser/MCP content, read-only Plan mode with reliable approval, and a bundled extension that activates much faster. See CHANGELOG.md for details.
+- The **0.3.x** line added task token/cost tracking, read-only Plan mode, prompt caching and leaner context, safer file handling, MCP and network-security fixes, and the chat features above (message actions, grouped steps, progress header, file links, drag and drop). See [CHANGELOG.md](CHANGELOG.md) for each release.
 - Push a tag matching the package version (for example `v0.2.0`) to run the release workflow, rebuild/test the extension, run the Extension Host and VSIX-install smoke gates, create `codico.vsix`, and attach it to a GitHub Release.
 - Maintainers can also create a `release/vX.Y.Z` branch at the validated release commit. The workflow validates the package version, creates the matching tag, packages the VSIX, and creates/updates the GitHub Release.
 - Release-branch runs create the validated Git tag and GitHub Release from the exact release commit.
