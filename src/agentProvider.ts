@@ -41,7 +41,7 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { readDroppedFile } from './droppedFiles';
+import { openFileLink, readDroppedFile } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
@@ -616,6 +616,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'regenerate':
                 await this._redoTurn(msg);
                 break;
+            case 'openFile': {
+                const problem = await openFileLink(msg.path, msg.line);
+                if (problem) { this._post({ type: 'error', message: problem }); }
+                break;
+            }
             case 'attachDroppedFiles':
                 for (const uri of msg.uris.slice(0, 10)) {
                     const file = await readDroppedFile(uri);

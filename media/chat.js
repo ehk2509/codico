@@ -385,7 +385,13 @@
         }
         return;
       }
-      if (e.key === 'Escape') { slashHintEl.style.display = 'none'; _setHintMode(null); return; }
+      if (e.key === 'Escape') { e.preventDefault(); slashHintEl.style.display = 'none'; _setHintMode(null); return; }
+    }
+    // Up in an empty input edits your last message (like most chat apps)
+    if (e.key === 'ArrowUp' && !input.value && !streaming) {
+      var mine = msgs.querySelectorAll('.msg.user[data-editable="1"]');
+      if (mine.length > 0) { e.preventDefault(); _startEditUserMsg(mine[mine.length - 1]); }
+      return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -523,7 +529,7 @@
   document.getElementById('thread-search-close').addEventListener('click', _closeSearch);
 
   _searchInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { _closeSearch(); }
+    if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       var first = _searchResults.querySelector('.ts-result');
@@ -599,7 +605,7 @@
             if (p && p.classList.contains('ts-result')) { p.focus(); }
             else { _searchInput.focus(); }
           }
-          if (e.key === 'Escape') { _closeSearch(); }
+          if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
         });
       })(items[k]);
     }
@@ -1140,6 +1146,11 @@
     if (_queuedBarEl) { _queuedBarEl.parentNode && _queuedBarEl.parentNode.removeChild(_queuedBarEl); _queuedBarEl = null; }
   }
 
+  // Esc stops the reply, unless something else (a menu, an edit box) used it first
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && streaming && !e.defaultPrevented) { e.preventDefault(); stopBtn.click(); }
+  });
+
   stopBtn.addEventListener('click', function() {
     _queuedMsg = null;
     _hideQueuedBanner();
@@ -1148,6 +1159,14 @@
 
   // ── Message actions: edit & resend, delete, regenerate ─────────────────────
   // A user message carries its turn id (data-turn); "none" means it cannot be changed.
+  /** A tool step's label; for file tools it opens the file ("src/a.ts lines 1–300 of 484" → src/a.ts). */
+  function _pillLabelHtml(tool, label) {
+    var FILE_TOOLS = { read_file: 1, edit_file: 1, write_file: 1 };
+    if (!FILE_TOOLS[tool] || !label) { return '<span class="step-pill-label">' + esc(label) + '</span>'; }
+    var path = String(label).split(' lines ')[0];
+    return '<span class="step-pill-label file-link" data-path="' + esc(path) + '" title="Open ' + esc(path) + '">' + esc(label) + '</span>';
+  }
+
   function _tagUserMsg(el, turnId, editable) {
     el.dataset.turn = turnId || 'none';
     el.dataset.editable = turnId && editable ? '1' : '0';
@@ -1232,8 +1251,13 @@
 
   // One listener for every message: actions, regenerate, and code block toggles
   msgs.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link') : null;
     if (!btn) { return; }
+    if (btn.classList.contains('file-link')) {
+      var line = Number(btn.dataset.line);
+      vscode.postMessage(line > 0 ? { type: 'openFile', path: btn.dataset.path, line: line } : { type: 'openFile', path: btn.dataset.path });
+      return;
+    }
     if (btn.classList.contains('code-toggle')) {
       var wrap = btn.closest('.code-wrap');
       var collapsed = wrap.classList.toggle('collapsed');
@@ -1370,7 +1394,7 @@
       '<div class="user-bubble">' + agentBadgeHtml + esc(displayText) + '</div>' +
       imgHtml;
     msgs.appendChild(d);
-    scrollBottom();
+    scrollBottom(true);
   }
 
   function addCompactNotice(messageCount) {
@@ -2160,7 +2184,7 @@
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
         debug_get_variables: 'Inspecting', debug_get_callstack: 'Reading stack', debug_list_breakpoints: 'Listing'
       }[tool] || 'Running') + '\u2026</span>' +
-      '<span class="step-pill-label">' + esc(label) + '</span>';
+      _pillLabelHtml(tool, label);
 
     // Insert pill before copyBtn so it appears in correct DOM order
     if (copyBtn) { wrap.insertBefore(pill, copyBtn); }
@@ -2218,7 +2242,7 @@
         '<span class="step-pill-verb ' + (granted ? 'ok' : 'fail') + '">' +
           (granted ? 'Written' : (error ? 'Error' : 'Denied')) +
         '</span>' +
-        '<span class="step-pill-label">' + esc(filepath) + '</span>';
+        _pillLabelHtml('write_file', filepath);
       var copyBtn = document.getElementById('copy-' + id);
       if (copyBtn) { wrap.insertBefore(pill, copyBtn); } else { wrap.appendChild(pill); }
       targetPill = pill;
@@ -2305,7 +2329,7 @@
       pill.innerHTML =
         '<span class="step-pill-icon">' + icon + '</span>' +
         '<span class="step-pill-verb ' + (success ? 'ok' : 'fail') + '">' + verb + '</span>' +
-        '<span class="step-pill-label">' + esc(label) + '</span>';
+        _pillLabelHtml(tool, label);
       wrap.appendChild(pill);
       targetPill = pill;
     }
@@ -2472,7 +2496,46 @@
     return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
   }
 
-  function scrollBottom() { msgs.scrollTop = msgs.scrollHeight; }
+  // While a reply streams, the view follows it only if the reader is at the bottom; scrolling up
+  // to read stops that and offers a "Jump to latest" pill. Sending or opening a thread re-attaches.
+  var _followStream = true;
+  var _lastAutoTop = 0;
+  var _jumpPill = null;
+  function scrollBottom(force) {
+    if (force) { _followStream = true; }
+    // Scroll events arrive a frame late: if the view moved up since our last scroll, the reader did it
+    else if (msgs.scrollTop < _lastAutoTop - 4) { _followStream = false; }
+    if (_followStream) {
+      // Instant: a smooth (animated) scroll per chunk lags behind the stream and its in-between
+      // positions would look like the reader scrolling up
+      msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'instant' });
+      _lastAutoTop = msgs.scrollTop;
+      _showJumpPill(false);
+    } else {
+      _showJumpPill(true);
+    }
+  }
+  function _showJumpPill(on) {
+    if (on && !_jumpPill) {
+      _jumpPill = document.createElement('button');
+      _jumpPill.className = 'jump-latest';
+      _jumpPill.textContent = '\u2193 Jump to latest';
+      _jumpPill.addEventListener('click', function () { scrollBottom(true); });
+      document.body.appendChild(_jumpPill);
+    }
+    if (!_jumpPill) { return; }
+    var inputArea = document.getElementById('input-area');
+    _jumpPill.style.bottom = ((inputArea ? inputArea.offsetHeight : 0) + 10) + 'px';
+    _jumpPill.style.display = on ? 'block' : 'none';
+  }
+  msgs.addEventListener('scroll', function () {
+    var atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40;
+    if (atBottom) { _followStream = true; _lastAutoTop = msgs.scrollTop; _showJumpPill(false); }
+    else if (msgs.scrollTop < _lastAutoTop - 4) { _followStream = false; }
+  });
+  // Upward wheel or touch movement stops following at once, before the next chunk renders
+  msgs.addEventListener('wheel', function (e) { if (e.deltaY < 0) { _followStream = false; } }, { passive: true });
+  msgs.addEventListener('touchmove', function () { _followStream = false; }, { passive: true });
 
   function _relativeTime(ts) {
     var diff = Math.max(0, Date.now() - ts);
@@ -2589,7 +2652,7 @@
     inp.addEventListener('blur', commit);
     inp.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); inp.blur(); }
-      if (e.key === 'Escape') { inp.value = thread.name; inp.blur(); }
+      if (e.key === 'Escape') { e.preventDefault(); inp.value = thread.name; inp.blur(); }
     });
   }
 
@@ -3157,7 +3220,7 @@
           setStreaming(true);
         }
         _placeRegenerate();
-        scrollBottom();
+        scrollBottom(true);
         break;
     }
   }

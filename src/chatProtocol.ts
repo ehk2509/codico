@@ -89,7 +89,8 @@ export type WebviewMessage =
     | { type: 'editMessage'; turnId: string; text: string }
     | { type: 'deleteMessage'; turnId: string }
     | { type: 'regenerate' }
-    | { type: 'attachDroppedFiles'; uris: string[] };
+    | { type: 'attachDroppedFiles'; uris: string[] }
+    | { type: 'openFile'; path: string; line?: number };
 
 export type ExtensionMessage =
     | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string; /** The turn this reply answers; tags its user message. */ turnId?: string; /** Whether that message can be edited. */ editable?: boolean }

@@ -1,6 +1,7 @@
+/** Files the chat panel hands to the extension: dropped onto it, or clicked as links. */
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { isWorkspaceUriAllowed } from './workspaceSecurity';
+import { isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
 
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -39,5 +40,18 @@ export async function readDroppedFile(rawUri: string): Promise<{ label: string; 
         return { label, text };
     } catch (err) {
         return { error: `Cannot attach ${name}: ${err instanceof Error ? err.message : String(err)}` };
+    }
+}
+
+/** Opens a file path mentioned in the chat (a link in a reply or a tool step), at its line if given. */
+export async function openFileLink(rawPath: string, line?: number): Promise<string | undefined> {
+    try {
+        const { uri } = await resolveWorkspaceToolPath(rawPath);
+        await vscode.workspace.fs.stat(uri);
+        const at = line && line > 0 ? new vscode.Position(line - 1, 0) : undefined;
+        await vscode.window.showTextDocument(uri, { preview: true, selection: at ? new vscode.Range(at, at) : undefined });
+        return undefined;
+    } catch {
+        return `Cannot open ${rawPath}: not found in the workspace.`;
     }
 }

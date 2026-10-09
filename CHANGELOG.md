@@ -9,6 +9,9 @@ All notable changes to Codico will be documented in this file.
 - Regenerate (↻) on the latest reply runs its message again and replaces the reply.
 - Message times ("2m ago", full date on hover), saved with the thread so reopened conversations show when messages were sent.
 - Long code blocks (over 25 lines) in finished replies are collapsed to a preview with an Expand button; the header shows the line count.
+- File paths in replies (`src/app.ts:42`, or a path with a folder in plain text) and in tool steps (Reading / Editing / Written) open the file, at the line when one is given.
+- Keyboard: ↑ in an empty input edits your last message; Esc stops the reply.
+- While a reply streams, scrolling up to read no longer gets pulled back to the bottom; a "↓ Jump to latest" button returns to it.
 - Drag and drop files onto the chat to attach them: text files as file context, images as image attachments. From VS Code's Explorer hold Shift while dragging; workspace files excluded by `.codicoignore` are refused.
 
 ### Changed

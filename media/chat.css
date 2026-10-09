@@ -1430,3 +1430,16 @@ body.is-streaming .msg-actions,body.is-streaming .regen-btn,body.is-streaming .m
   background:color-mix(in srgb,var(--vscode-editor-background) 85%,transparent);
   color:var(--vscode-foreground);font-size:13px;text-align:center;padding:16px;
 }
+
+/* ── File paths in replies and tool steps open the file ── */
+.file-link{cursor:pointer;text-decoration:underline dotted;text-underline-offset:2px}
+.file-link:hover{color:var(--vscode-textLink-activeForeground,var(--vscode-textLink-foreground));text-decoration-style:solid}
+
+/* ── "Jump to latest" when scrolled up during a reply ── */
+.jump-latest{
+  position:fixed;left:50%;transform:translateX(-50%);z-index:900;display:none;
+  border:none;border-radius:12px;padding:4px 12px;cursor:pointer;font-size:12px;
+  background:var(--vscode-button-background);color:var(--vscode-button-foreground);
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+.jump-latest:hover{background:var(--vscode-button-hoverBackground)}

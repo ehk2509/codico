@@ -23,9 +23,27 @@
       .replace(/'/g, '&#39;');
   }
 
+  // A file path the panel can open: known source-file extensions only, so that code such as
+  // `msg.type` or `e.g` is not mistaken for a file. An optional :line (and :column) follows.
+  var FILE_EXT = '(?:tsx?|jsx?|mjs|cjs|json|md|css|scss|less|html?|vue|svelte|py|go|rs|java|kt|rb|php|cs|cpp|hpp|cc|c|h|swift|ya?ml|toml|ini|sh|ps1|sql|xml|txt|lock|gradle|dart|lua|ex|exs)';
+  var CODE_PATH_RE = new RegExp('^((?:\\.{1,2}/)?(?:[\\w@.-]+/)*[\\w@.-]+\\.' + FILE_EXT + ')(?::(\\d+)(?::\\d+)?)?$');
+  var TEXT_PATH_RE = new RegExp('(^|[\\s(\\[])((?:\\.{1,2}/)?(?:[\\w@.-]+/)+[\\w@.-]+\\.' + FILE_EXT + ')(?::(\\d+)(?::\\d+)?)?(?=[\\s).,;:!?\\]]|$)', 'g');
+  function fileLink(tag, shown, path, line) {
+    return '<' + tag + ' class="file-link" data-path="' + path + '"' + (line ? ' data-line="' + line + '"' : '') + ' title="Open ' + path + '">' + shown + '</' + tag + '>';
+  }
+
   function inline(text) {
     var s = esc(text);
-    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // Plain-text paths with a folder (outside code), then code spans (a path in a code span is a link)
+    s = s.split(/(`[^`]+`)/).map(function (part) {
+      return part.charAt(0) === '`' ? part : part.replace(TEXT_PATH_RE, function (m, pre, path, line) {
+        return pre + fileLink('span', m.slice(pre.length), path, line);
+      });
+    }).join('');
+    s = s.replace(/`([^`]+)`/g, function (m, code) {
+      var p = CODE_PATH_RE.exec(code);
+      return p ? fileLink('code', code, p[1], p[2]) : '<code>' + code + '</code>';
+    });
     s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
     s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');

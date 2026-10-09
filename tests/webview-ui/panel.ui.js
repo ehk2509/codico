@@ -419,3 +419,50 @@ test('a file dropped from the OS is attached; a drop from the Explorer is sent t
   assert.match(await page.locator('#ctx-chips, .ctx-chip, .chip').first().textContent().catch(() => ''), /a\.js/);
   assert.deepEqual((await posted('attachDroppedFiles')).pop(), { type: 'attachDroppedFiles', uris: ['file:///ws/src/b.ts'] });
 });
+
+test('Up in an empty input edits your last message; Esc stops a reply', async () => {
+  const { page, send, posted } = await openPanel();
+  await page.fill('#msg-input', 'first');
+  await page.click('#send-btn');
+  await send({ type: 'startMessage', id: 'k1', turnId: 't-1', editable: true }, { type: 'endMessage', id: 'k1' });
+  await page.focus('#msg-input');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.locator('.msg.user .msg-editor textarea').inputValue(), 'first');
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('.msg-editor').count(), 0, 'Esc closes the edit box');
+  await send({ type: 'startMessage', id: 'k2' });
+  await page.focus('#msg-input');
+  await page.keyboard.press('Escape');
+  assert.ok((await posted('abortStream')).length > 0, 'Esc stopped the reply');
+});
+
+test('scrolling up during a reply stops following it and offers Jump to latest', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 's1' });
+  for (let i = 0; i < 40; i++) { await page.evaluate(n => window.postMessage({ type: 'appendContent', id: 's1', text: `Paragraph ${n}\n\n` }, '*'), i); }
+  await page.waitForTimeout(100);
+  const msgs = page.locator('#messages');
+  await msgs.hover();
+  await page.mouse.wheel(0, -600);
+  await page.waitForTimeout(400);
+  const readingAt = await msgs.evaluate(el => el.scrollTop);
+  await send({ type: 'appendContent', id: 's1', text: 'More text\n\n' }, { type: 'appendContent', id: 's1', text: 'Even more\n\n' });
+  await page.waitForTimeout(200);
+  assert.ok(Math.abs(await msgs.evaluate(el => el.scrollTop) - readingAt) < 5, 'the reader stays where they are');
+  assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight > 100), 'not pulled to the bottom');
+  assert.equal(await page.locator('.jump-latest').isVisible(), true);
+  await page.locator('.jump-latest').click();
+  assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight < 5), 'back at the bottom');
+  assert.equal(await page.locator('.jump-latest').isVisible(), false);
+});
+
+test('file paths in replies and tool steps open the file', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'startMessage', id: 'f1' }, { type: 'toolStart', id: 'f1', tool: 'read_file', label: 'src/app.ts' },
+    { type: 'toolResult', id: 'f1', tool: 'read_file', label: 'src/app.ts lines 1–300 of 484', success: true },
+    { type: 'appendContent', id: 'f1', text: 'The bug is in `src/app.ts:42`.' }, { type: 'endMessage', id: 'f1' });
+  await page.locator('code.file-link').click();
+  assert.deepEqual((await posted('openFile')).pop(), { type: 'openFile', path: 'src/app.ts', line: 42 });
+  await page.locator('.step-pill-label.file-link').click();
+  assert.deepEqual((await posted('openFile')).pop(), { type: 'openFile', path: 'src/app.ts' });
+});
