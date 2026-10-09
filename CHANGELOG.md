@@ -11,6 +11,12 @@ All notable changes to Codico will be documented in this file.
 
 ### Fixed
 - While a change awaited verification there was no iteration limit, so a model whose tool calls could not run (repeats blocked as a loop, phase-blocked or invalid calls) kept going forever. The task now stops after three such iterations in a row.
+- Security: `fetch_url` and the browser could reach localhost and cloud metadata through IPv6 forms that embed an IPv4 address (`http://[::ffff:127.0.0.1]` — URLs rewrite it to `[::ffff:7f00:1]`, which the filter did not recognise). IPv4-mapped, IPv4-compatible, NAT64, 6to4 and Teredo addresses are now checked by their embedded address.
+- Security: browser pages could open WebSocket connections to local services (WebSockets are not covered by request routing); they now go through the same network policy.
+- Terminal: commands got an open input, so one that prompts (an `npx` install, `npm init`) waited until the 5-minute timeout. Commands now get no input and fail at once.
+- Terminal: the model saw only the first 4,000 characters of a command's output, missing the failures and summary that test runners and builds print last (it then re-ran them). It now sees the start and, mostly, the end; past the 1 MB capture limit the end is kept too.
+- Inline completions, next-edit suggestions, AI rename, inline chat and commit messages sent the selected model to OpenRouter even when it was a direct-provider model (or Ollama, where unsupported), so every request failed — on every pause in typing for completions. They now explain that the model is not supported (once, for features that run while typing) instead of sending requests.
+- Superseded inline-completion and next-edit requests were never settled (one stranded promise per keystroke).
 - MCP: a request from the server (such as `ping`) could be taken as the reply to one of Codico's requests, because both sides number requests from 1; the tool list then came back empty or a tool call returned nothing. Server requests are now answered (`ping`) or declined.
 - MCP: writing to a server that had exited could raise an unhandled pipe error and crash the extension host.
 - MCP: a server whose handshake failed was left running in the background (on every start and Refresh MCP); it is now stopped.

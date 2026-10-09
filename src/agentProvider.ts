@@ -18,7 +18,7 @@ import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
-import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
+import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
@@ -2046,12 +2046,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         if (result.stopped) {
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false });
-            return `[run_terminal: ${tool.command}] Stopped by user.\n${result.output.slice(0, 4000)}`;
+            return `[run_terminal: ${tool.command}] Stopped by user.\n${clipTerminalOutput(result.output)}`;
         }
         if (result.timedOut) {
             const message = `Timed out after ${timeoutSec}s`;
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
-            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${result.output.slice(0, 4000)}`;
+            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${clipTerminalOutput(result.output)}`;
         }
         if (result.error) {
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: result.error });
@@ -2071,7 +2071,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${result.output.slice(0, 4000)}${bgNote}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}`;
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */

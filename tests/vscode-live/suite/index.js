@@ -46,7 +46,12 @@ async function run() {
   await scenario('fetch_local', ({ text }) => { const leaked = /"scenario"/.test(text); const blocked = /private|blocked|denied|not allowed|local|refus/i.test(text.split('[fetch_url')[1] || text); return { ok: !leaked && blocked, why: `local response leaked: ${leaked}; blocked message: ${blocked}` }; });
   await scenario('loop', ({ text }) => ({ ok: /You are in a loop/.test(text), why: `loop warning sent: ${/You are in a loop/.test(text)}` }));
   await scenario('timeout', ({ ms, text }) => ({ ok: ms >= 9000 && ms < 30000 && /timed out/i.test(text), why: `${ms} ms; reported timed out: ${/timed out/i.test(text)}` }), 45000);
-  await scenario('bigoutput', ({ ms, text }) => ({ ok: ms < 20000 && /\n1\n2\n3\n/.test(text) && !/199999/.test(text), why: `${ms} ms; truncated: ${!/199999/.test(text)}` }));
+  await scenario('bigoutput', ({ ms, reqs }) => {
+    // The model gets the start and the end (where failures and summaries are), not 1.2 MB
+    const r = reqs.find(x => /\[run_terminal: seq/.test(x.lastUser)) || { lastUser: '', lastUserTail: '', lastUserChars: 0 };
+    const start = /\n1\n2\n3\n/.test(r.lastUser), end = /199999\n200000/.test(r.lastUserTail);
+    return { ok: ms < 20000 && start && end && r.lastUserChars < 6000, why: `${ms} ms; start kept: ${start}; end kept: ${end}; ${r.lastUserChars} chars sent` };
+  });
   await scenario('plain_code', ({ reqs, read }) => ({ ok: read('live/keep-me.txt') !== null && reqs.length === 1, why: `keep-me.txt still exists: ${read('live/keep-me.txt') !== null}; ${reqs.length} req` }));
   await scenario('multitool', ({ text }) => ({ ok: /port=8080/.test(text) && /NOTES-MARKER/.test(text), why: `both results returned: ${/port=8080/.test(text) && /NOTES-MARKER/.test(text)}` }));
   await scenario('unicode', ({ read }) => { const g = read('live/unicode.txt'); return { ok: g !== null && g.trimEnd() === 'Café ☕ — naïve 日本語 🚀\nline2', why: JSON.stringify(g) }; });

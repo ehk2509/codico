@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { unsupportedEditorModel, unsupportedModelMessage } from './editorModel';
 import * as cp from 'child_process';
 import * as https from 'https';
 
@@ -107,6 +108,10 @@ export async function generateCommitMessage(context: vscode.ExtensionContext): P
             try {
                 const config = vscode.workspace.getConfiguration('codico');
                 const model = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+                if (unsupportedEditorModel(model)) {
+                    vscode.window.showErrorMessage(unsupportedModelMessage('Commit message generation', model));
+                    return;
+                }
 
                 const commitMsg = await fetchCommitMessage(apiKey, model, diff);
                 if (!commitMsg) {

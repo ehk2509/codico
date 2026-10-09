@@ -57,15 +57,46 @@ export function isBlockedIpAddress(address: string): boolean {
     }
 
     if (net.isIP(raw) === 6) {
-        if (raw === '::' || raw === '::1') { return true; }
-        if (/^(fc|fd)/.test(raw)) { return true; } // ULA fc00::/7
-        if (/^fe[89ab]/.test(raw)) { return true; } // link-local fe80::/10
-        if (/^ff/.test(raw)) { return true; } // multicast
-        if (raw.startsWith('2001:db8:')) { return true; } // documentation range
+        const g = parseIpv6(raw);
+        if (!g) { return true; }
+        // Forms that carry an IPv4 address reach that address (URLs even rewrite
+        // [::ffff:127.0.0.1] to the hex form [::ffff:7f00:1]): judge the embedded IPv4
+        const embedded = (hi: number, lo: number): boolean =>
+            isBlockedIpAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`);
+        const zeros = (from: number, to: number): boolean => g.slice(from, to).every(x => x === 0);
+        if (zeros(0, 5) && g[5] === 0xffff) { return embedded(g[6], g[7]); } // IPv4-mapped ::ffff:0:0/96
+        if (zeros(0, 6)) { return embedded(g[6], g[7]); } // IPv4-compatible ::/96, includes :: and ::1
+        if (g[0] === 0x64 && g[1] === 0xff9b && zeros(2, 6)) { return embedded(g[6], g[7]); } // NAT64 64:ff9b::/96
+        if (g[0] === 0x2002) { return embedded(g[1], g[2]); } // 6to4 2002::/16
+        if (g[0] === 0x2001 && g[1] === 0) { return true; } // Teredo 2001::/32 (obfuscated IPv4)
+        if ((g[0] & 0xfe00) === 0xfc00) { return true; } // ULA fc00::/7
+        if ((g[0] & 0xffc0) === 0xfe80) { return true; } // link-local fe80::/10
+        if ((g[0] & 0xff00) === 0xff00) { return true; } // multicast ff00::/8
+        if (g[0] === 0x2001 && g[1] === 0xdb8) { return true; } // documentation 2001:db8::/32
         return false;
     }
 
     return true;
+}
+
+/** The eight 16-bit groups of an IPv6 address (with :: expanded), or null. */
+function parseIpv6(address: string): number[] | null {
+    let text = address.split('%')[0]; // drop a zone id
+    // A trailing dotted IPv4 (::ffff:1.2.3.4) becomes two groups
+    const dotted = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+    if (dotted) {
+        const v4 = parseIpv4(dotted[1]);
+        if (!v4) { return null; }
+        text = text.slice(0, -dotted[1].length) + `${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
+    }
+    const halves = text.split('::');
+    if (halves.length > 2) { return null; }
+    const head = halves[0] ? halves[0].split(':') : [];
+    const tail = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+    const missing = 8 - head.length - tail.length;
+    if (halves.length === 1 ? missing !== 0 : missing < 1) { return null; }
+    const groups = [...head, ...Array(halves.length === 2 ? missing : 0).fill('0'), ...tail].map(h => parseInt(h, 16));
+    return groups.length === 8 && groups.every(n => Number.isInteger(n) && n >= 0 && n <= 0xffff) ? groups : null;
 }
 
 function createPinnedLookup(addresses: dns.LookupAddress[]): typeof dns.lookup {

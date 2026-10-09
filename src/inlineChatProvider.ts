@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { unsupportedEditorModel, unsupportedModelMessage } from './editorModel';
 import * as https from 'https';
 import { StringDecoder } from 'string_decoder';
 
@@ -377,6 +378,10 @@ export async function handleInlineChat(
     }
 
     // ── /fix, /doc, custom → inline streaming diff ─────────────────────────
+    if (unsupportedEditorModel(model)) {
+        void vscode.window.showErrorMessage(unsupportedModelMessage('Inline chat', model));
+        return;
+    }
     _clearSession();
 
     const abort = new AbortController();

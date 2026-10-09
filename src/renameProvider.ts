@@ -12,6 +12,7 @@
  */
 
 import * as vscode from 'vscode';
+import { notifyUnsupportedModelOnce, unsupportedEditorModel } from './editorModel';
 import * as https from 'https';
 
 // ── AI call ───────────────────────────────────────────────────────────────────
@@ -128,6 +129,7 @@ export class AiRenameProvider implements vscode.RenameProvider {
         const ctxEnd      = document.positionAt(Math.min(document.getText().length, offset + 300));
         const surrounding = document.getText(new vscode.Range(ctxStart, ctxEnd));
         const model       = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+        if (unsupportedEditorModel(model)) { notifyUnsupportedModelOnce('AI rename suggestions', model); return null; }
 
         const abort = new AbortController();
         token.onCancellationRequested(() => abort.abort());
