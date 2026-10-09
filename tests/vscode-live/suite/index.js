@@ -87,6 +87,38 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // Messages and plans that arrive while the agent is busy are queued (not dropped), and a
+  // queued plan keeps its read-only mode
+  const waitFor = async (pred, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (pred(await getLog())) { return true; } await new Promise(r => setTimeout(r, 100)); } return false; };
+  {
+    const before = (await getLog()).length; const t0 = Date.now();
+    const a = vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:queue_a] first task');
+    await new Promise(r => setTimeout(r, 300));
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:queue_b] second task, sent while busy');
+    await a;
+    const ran = await waitFor(log => log.slice(before).some(e => e.scenario === 'queue_b'));
+    const log = (await getLog()).slice(before);
+    const firstB = log.findIndex(e => e.scenario === 'queue_b'), lastA = log.map(e => e.scenario).lastIndexOf('queue_a');
+    results.push({ name: 'queue_busy', ms: Date.now() - t0, requests: log.length, ok: ran && firstB > lastA,
+      why: `message sent while busy ran: ${ran}; after the first finished: ${firstB > lastA}` });
+    await waitFor(log => false, 800); // let B finish
+  }
+  {
+    const before = (await getLog()).length; const t0 = Date.now();
+    const a = vscode.commands.executeCommand('codico.__evalRunPlan', '[SCENARIO:plan_q_a] first plan');
+    await new Promise(r => setTimeout(r, 300));
+    await vscode.commands.executeCommand('codico.__evalRunPlan', '[SCENARIO:plan_q_b] second plan, queued');
+    await a;
+    await waitFor(log => log.slice(before).filter(e => e.scenario === 'plan_q_b').length >= 2);
+    await waitFor(log => false, 800);
+    const b = (await getLog()).slice(before).filter(e => e.scenario === 'plan_q_b' && e.stream);
+    const blocked = b.some(r => /Not available in Ask mode/.test(r.lastUser));
+    const written = read('live/queued-plan.js') !== null;
+    results.push({ name: 'plan_queued', ms: Date.now() - t0, requests: b.length, ok: b.length >= 2 && blocked && !written,
+      why: `queued plan ran: ${b.length > 0}; its write blocked: ${blocked}; file written: ${written}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   await scenario('plan_readonly', ({ reqs, text, read }) => {
     const blocked = /Not available in Ask mode/.test(text);
     const written = read('live/planned.js') !== null;

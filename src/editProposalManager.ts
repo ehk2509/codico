@@ -64,6 +64,9 @@ export class EditProposalManager {
         this._proposals.set(proposal.filepath, proposal);
     }
 
+    /** The queued proposal for a file, if any (later edits must build on it, not on disk). */
+    pending(filepath: string): FileEditProposal | undefined { return this._proposals.get(filepath); }
+
     get hasProposals(): boolean { return this._proposals.size > 0; }
     get count(): number { return this._proposals.size; }
     get proposals(): FileEditProposal[] { return [...this._proposals.values()]; }
