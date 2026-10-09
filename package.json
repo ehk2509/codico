@@ -284,6 +284,17 @@
           "minimum": 10,
           "description": "Kill a run_terminal command (and everything it started) after this many seconds"
         },
+        "codico.chatDensity": {
+          "type": "string",
+          "enum": ["comfortable", "compact"],
+          "default": "comfortable",
+          "description": "Spacing of the chat panel: compact fits more on screen"
+        },
+        "codico.showReasoning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the model's reasoning blocks in the chat (they stay collapsed by default)"
+        },
         "codico.streamStallTimeoutSeconds": {
           "type": "number",
           "default": 300,

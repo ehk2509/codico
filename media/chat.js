@@ -148,8 +148,8 @@
   var effortDrop = _makeDrop(document.getElementById('effort-csel'), function (v) {
     vscode.postMessage({ type: 'changeEffort', effort: v });
   });
-  effortDrop.addOpt('high',   '\uD83E\uDDE0 High', true);
-  effortDrop.addOpt('medium', '\uD83E\uDDE0 Med',  false);
+  effortDrop.addOpt('high',   '\uD83E\uDDE0 High', false);
+  effortDrop.addOpt('medium', '\uD83E\uDDE0 Med',  true);
   effortDrop.addOpt('low',    '\uD83E\uDDE0 Low',  false);
 
   var streaming = false;
@@ -883,7 +883,10 @@
       var chip = document.createElement('span');
       chip.className = 'chip';
       chip.title = a.text.slice(0, 200);
-      chip.innerHTML = esc(a.label) +
+      var lines = a.text.split('\n').length;
+      var cut = /\n\u2026 \(truncated\)$/.test(a.text);
+      if (cut) { chip.classList.add('chip-warn'); chip.title = 'Only the first 20,000 characters are attached.\n\n' + chip.title; }
+      chip.innerHTML = esc(a.label) + '<span class="chip-size">' + lines + (lines === 1 ? ' line' : ' lines') + (cut ? ', cut' : '') + '</span>' +
         '<button class="chip-x" data-idx="' + idx + '" title="Remove">\u00D7</button>';
       chip.querySelector('.chip-x').addEventListener('click', function(e) {
         e.stopPropagation();
@@ -1086,10 +1089,33 @@
 
   function hideWelcome() { welcome.style.display = 'none'; }
 
+  // Suggestions on an empty panel; the problems count comes from diagnosticsChanged
+  var _workspaceErrors = 0;
+  function _renderStarters() {
+    var box = document.getElementById('wlc-starters');
+    if (!box) { return; }
+    var starters = [
+      'Explain how this project is organised',
+      _workspaceErrors > 0 ? 'Fix the ' + _workspaceErrors + ' error' + (_workspaceErrors === 1 ? '' : 's') + ' in the Problems panel' : 'Find bugs in the open file',
+      'Write tests for the open file',
+      'Suggest improvements to the open file',
+    ];
+    box.innerHTML = '';
+    starters.forEach(function (text) {
+      var b = document.createElement('button');
+      b.className = 'wlc-starter';
+      b.textContent = text;
+      b.addEventListener('click', function () { input.value = text; send(); });
+      box.appendChild(b);
+    });
+  }
+  _renderStarters();
+
   function setStreaming(on) {
     streaming = on;
     // Message actions (edit, delete, regenerate, code toggles) are hidden while a reply streams
     document.body.classList.toggle('is-streaming', !!on);
+    if (_progress) { if (on) { _progress.start(); } else { _progress.stop(); } }
     if (on) {
       sendBtn.textContent = 'Queue \u2192';
       sendBtn.title = 'Queue a follow-up (sent after current response)';
@@ -1159,6 +1185,113 @@
 
   // ── Message actions: edit & resend, delete, regenerate ─────────────────────
   // A user message carries its turn id (data-turn); "none" means it cannot be changed.
+  // ── Grouped tool steps: when a reply ends, runs of 3+ steps collapse into one line ───
+  var STEP_WORDS = {
+    read_file: ['read', 'file', 'files'], list_directory: ['listed', 'folder', 'folders'],
+    search_files: ['searched'], find_files: ['looked for', 'file', 'files'], get_diagnostics: ['checked problems'],
+    run_terminal: ['ran', 'command', 'commands'], edit_file: ['edited', 'file', 'files'], write_file: ['wrote', 'file', 'files'],
+    fetch_url: ['fetched', 'page', 'pages'], lsp_symbol: ['looked up', 'symbol', 'symbols'], mcp_call: ['called', 'MCP tool', 'MCP tools'],
+    update_todo: ['updated the task list']
+  };
+  var _stepRunSeq = 0;
+  function _stepSummary(pills) {
+    var counts = {}, order = [];
+    pills.forEach(function (p) {
+      var t = p.dataset.pillTool || 'other';
+      if (!counts[t]) { counts[t] = 0; order.push(t); }
+      counts[t]++;
+    });
+    return order.map(function (t) {
+      var w = STEP_WORDS[t], n = counts[t];
+      if (!w) { return n + ' other step' + (n === 1 ? '' : 's'); }
+      if (w.length === 1) { return n > 1 ? w[0] + ' ' + n + '\u00D7' : w[0]; }
+      return w[0] + ' ' + n + ' ' + (n === 1 ? w[1] : w[2]);
+    }).join(', ');
+  }
+  function _collapseStepRuns(wrap) {
+    if (wrap.dataset.stepsGrouped) { return; }
+    wrap.dataset.stepsGrouped = '1';
+    var run = [];
+    var flush = function () {
+      if (run.length >= 3) {
+        var id = 'run' + (++_stepRunSeq);
+        var summary = document.createElement('button');
+        summary.className = 'step-summary';
+        summary.dataset.run = id;
+        summary.innerHTML = '<span class="step-summary-arrow">\u25B8</span> ' + run.length + ' steps \u00B7 ' + esc(_stepSummary(run));
+        run[0].parentNode.insertBefore(summary, run[0]);
+        // Failed steps stay visible: they are what the reader needs to see
+        run.forEach(function (p) { p.dataset.run = id; if (!p.querySelector('.step-pill-verb.fail')) { p.classList.add('step-hidden'); } });
+      }
+      run = [];
+    };
+    Array.prototype.forEach.call(wrap.children, function (el) {
+      if (el.classList.contains('step-pill')) { run.push(el); }
+      else if (el.classList.contains('agent-out') && !el.textContent.trim()) { /* empty text between steps */ }
+      else { flush(); }
+    });
+    flush();
+  }
+
+  // ── Long replies: an outline of their headings, and a link to the summary ─────────
+  function _addReplyOutline(wrap) {
+    if (wrap.querySelector('.reply-outline')) { return; }
+    var text = wrap.textContent || '';
+    if (text.length < 2500) { return; }
+    var heads = Array.prototype.slice.call(wrap.querySelectorAll('.agent-out h1, .agent-out h2, .agent-out h3'));
+    var summary = Array.prototype.slice.call(wrap.querySelectorAll('.agent-out h1, .agent-out h2, .agent-out h3, .agent-out p > strong:first-child'))
+      .filter(function (el) { return /^\s*(summary|conclusion)\b/i.test(el.textContent); }).pop();
+    if (heads.length < 3 && !summary) { return; }
+    var nav = document.createElement('div');
+    nav.className = 'reply-outline';
+    var targets = heads.length >= 3 ? heads.slice(0, 8) : [];
+    if (summary && targets.indexOf(summary) < 0) { targets.push(summary); }
+    targets.forEach(function (el) {
+      var link = document.createElement('button');
+      link.className = 'reply-outline-link';
+      link.textContent = el === summary ? '\u2193 Summary' : el.textContent.trim().slice(0, 40);
+      link.addEventListener('click', function () { el.scrollIntoView({ block: 'start' }); });
+      nav.appendChild(link);
+    });
+    var label = wrap.querySelector('.msg-label');
+    wrap.insertBefore(nav, label ? label.nextSibling : wrap.firstChild);
+  }
+
+  // ── Progress header while a task runs: activity, elapsed time, tokens and cost, plan ──
+  var _progress = (function () {
+    var el = null, timer = null, showTimer = null, started = 0, parts = { activity: 'Thinking\u2026', usage: '', plan: '' };
+    function ensure() {
+      if (el) { return el; }
+      el = document.createElement('div');
+      el.id = 'task-progress';
+      el.innerHTML = '<span class="tp-spinner"></span><span class="tp-activity"></span><span class="tp-meta"></span>';
+      msgs.parentNode.insertBefore(el, msgs);
+      return el;
+    }
+    function render() {
+      if (!el) { return; }
+      var secs = Math.floor((Date.now() - started) / 1000);
+      var time = Math.floor(secs / 60) + ':' + ('0' + secs % 60).slice(-2);
+      el.querySelector('.tp-activity').textContent = parts.activity;
+      el.querySelector('.tp-meta').textContent = [parts.plan, time, parts.usage].filter(Boolean).join(' \u00B7 ');
+    }
+    return {
+      start: function () {
+        if (timer || showTimer) { return; }
+        started = Date.now();
+        parts = { activity: 'Thinking\u2026', usage: '', plan: '' };
+        // Only tasks that take a while get the header (quick replies would flicker)
+        showTimer = setTimeout(function () { showTimer = null; ensure().style.display = 'flex'; render(); timer = setInterval(render, 1000); }, 1500);
+      },
+      stop: function () {
+        clearTimeout(showTimer); showTimer = null;
+        clearInterval(timer); timer = null;
+        if (el) { el.style.display = 'none'; }
+      },
+      set: function (key, value) { parts[key] = value; render(); }
+    };
+  })();
+
   /** A tool step's label; for file tools it opens the file ("src/a.ts lines 1–300 of 484" → src/a.ts). */
   function _pillLabelHtml(tool, label) {
     var FILE_TOOLS = { read_file: 1, edit_file: 1, write_file: 1 };
@@ -1251,8 +1384,16 @@
 
   // One listener for every message: actions, regenerate, and code block toggles
   msgs.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link, .step-summary') : null;
     if (!btn) { return; }
+    if (btn.classList.contains('step-summary')) {
+      var open = btn.classList.toggle('open');
+      btn.querySelector('.step-summary-arrow').textContent = open ? '\u25BE' : '\u25B8';
+      btn.parentNode.querySelectorAll('.step-pill[data-run="' + btn.dataset.run + '"]').forEach(function (p) {
+        if (!p.querySelector('.step-pill-verb.fail')) { p.classList.toggle('step-hidden', !open); }
+      });
+      return;
+    }
     if (btn.classList.contains('file-link')) {
       var line = Number(btn.dataset.line);
       vscode.postMessage(line > 0 ? { type: 'openFile', path: btn.dataset.path, line: line } : { type: 'openFile', path: btn.dataset.path });
@@ -1622,6 +1763,7 @@
     var pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     var countEl = _todoTrackerEl.querySelector('.tt-count');
     if (countEl) { countEl.textContent = doneCount + '\u202F/\u202F' + total; }
+    _progress.set('plan', total ? 'step ' + Math.min(doneCount + 1, total) + ' of ' + total : '');
     var fillEl = _todoTrackerEl.querySelector('.tt-progress-fill');
     if (fillEl) { fillEl.style.width = pct + '%'; }
     // Auto-collapse when fully done
@@ -1631,6 +1773,8 @@
   function endMsg(id) {
     setStreaming(false);
     _placeRegenerate();
+    var endedWrap = document.getElementById('msg-' + id);
+    if (endedWrap) { _collapseStepRuns(endedWrap); setTimeout(function () { _addReplyOutline(endedWrap); }, 0); }
     // Mark any still-pending tool pills as interrupted (token limit / early stop)
     var wrap = document.getElementById('msg-' + id);
     if (wrap) {
@@ -1788,7 +1932,8 @@
   }
 
   // ── Diff block builder ────────────────────────────────────────────────────
-  function buildDiffBlock(diffStr) {
+  /** @param filepath set for a change already made: adds "Open diff" (VS Code's diff editor) */
+  function buildDiffBlock(diffStr, filepath) {
     if (!diffStr) { return null; }
     var lines = diffStr.split('\n');
     var adds = 0, rems = 0;
@@ -1826,6 +1971,14 @@
     toggle.appendChild(arrow);
     toggle.appendChild(stats);
     toggle.appendChild(lbl);
+    if (filepath) {
+      var openDiff = document.createElement('button');
+      openDiff.className = 'diff-open-btn';
+      openDiff.textContent = 'Open diff';
+      openDiff.title = 'Compare in VS Code\u2019s diff editor (side by side, highlighted)';
+      openDiff.addEventListener('click', function (e) { e.stopPropagation(); vscode.postMessage({ type: 'openChangeDiff', path: filepath }); });
+      toggle.appendChild(openDiff);
+    }
     toggle.addEventListener('click', function() { block.classList.toggle('open'); scrollBottom(); });
     block.appendChild(toggle);
 
@@ -1850,12 +2003,23 @@
         span.className = 'diff-line ctx';
         span.textContent = line;
       }
+      if (di >= DIFF_PREVIEW_LINES) { span.classList.add('diff-more'); }
       pre.appendChild(span);
     }
     content.appendChild(pre);
+    // Long diffs show their start; the rest on request (or in the diff editor)
+    if (lines.length > DIFF_PREVIEW_LINES) {
+      pre.classList.add('diff-clipped');
+      var more = document.createElement('button');
+      more.className = 'diff-show-all';
+      more.textContent = 'Show all ' + lines.length + ' lines';
+      more.addEventListener('click', function () { pre.classList.remove('diff-clipped'); more.remove(); });
+      content.appendChild(more);
+    }
     block.appendChild(content);
     return block;
   }
+  var DIFF_PREVIEW_LINES = 40;
 
   function showWritePermCard(msgId, permId, filepath, preview, diff, editableContent) {
     // If the user already clicked "Allow All" this turn, auto-grant silently
@@ -1915,15 +2079,16 @@
 
     var allowAllBtn = document.createElement('button');
     allowAllBtn.className = 'write-perm-btn allow-all';
-    allowAllBtn.textContent = 'Allow All';
-    allowAllBtn.title = 'Allow all file writes for the rest of this response';
+    allowAllBtn.textContent = 'Allow all writes this task';
+    allowAllBtn.title = 'Don\u2019t ask again for file writes until this task ends';
     allowAllBtn.addEventListener('click', function() {
       _allowAllWrites = true;
       card.innerHTML = '<div class="write-perm-resolved">\u2705 Allowed all writes &mdash; <strong>' + esc(filepath) + '</strong></div>';
       vscode.postMessage({ type: 'allowAllWrites', permId: permId });
     });
 
-    actions.appendChild(denyBtn);
+    actions.appendChild(allowBtn);
+    actions.appendChild(allowAllBtn);
     if (editableContent) {
       var editBtn = document.createElement('button');
       editBtn.className = 'write-perm-btn edit';
@@ -1937,8 +2102,7 @@
       });
       actions.appendChild(editBtn);
     }
-    actions.appendChild(allowBtn);
-    actions.appendChild(allowAllBtn);
+    actions.appendChild(denyBtn);
     card.appendChild(actions);
 
     // Edit textarea area (hidden until Edit is clicked)
@@ -2030,17 +2194,17 @@
 
     var allowAllBtn = document.createElement('button');
     allowAllBtn.className = 'write-perm-btn allow-all';
-    allowAllBtn.textContent = 'Allow All';
-    allowAllBtn.title = 'Allow all terminal commands for the rest of this response';
+    allowAllBtn.textContent = 'Allow all commands this task';
+    allowAllBtn.title = 'Don\u2019t ask again for commands until this task ends (unless it reads web or MCP content)';
     allowAllBtn.addEventListener('click', function() {
       _allowAllTerminal = true;
       card.innerHTML = '<div class="write-perm-resolved">\u2705 Allowed all commands &mdash; <strong>' + esc(command.slice(0, 80)) + (command.length > 80 ? '\u2026' : '') + '</strong></div>';
       vscode.postMessage({ type: 'allowAllTerminal', permId: permId });
     });
 
-    actions.appendChild(denyBtn);
     actions.appendChild(allowBtn);
     actions.appendChild(allowAllBtn);
+    actions.appendChild(denyBtn);
     card.appendChild(actions);
     var copyBtn = document.getElementById('copy-' + msgId);
     if (copyBtn) { wrap.insertBefore(card, copyBtn); } else { wrap.appendChild(card); }
@@ -2185,6 +2349,7 @@
         debug_get_variables: 'Inspecting', debug_get_callstack: 'Reading stack', debug_list_breakpoints: 'Listing'
       }[tool] || 'Running') + '\u2026</span>' +
       _pillLabelHtml(tool, label);
+    _progress.set('activity', (pill.querySelector('.step-pill-verb') || {}).textContent + ' ' + label);
 
     // Insert pill before copyBtn so it appears in correct DOM order
     if (copyBtn) { wrap.insertBefore(pill, copyBtn); }
@@ -2237,6 +2402,7 @@
       var pill = document.createElement('div');
       pill.className = 'step-pill';
       pill.dataset.filepath = filepath;
+      pill.dataset.pillTool = 'write_file';
       pill.innerHTML =
         '<span class="step-pill-icon">\uD83D\uDCDD</span>' +
         '<span class="step-pill-verb ' + (granted ? 'ok' : 'fail') + '">' +
@@ -2250,7 +2416,7 @@
 
     // Attach diff block after the pill when write succeeded
     if (granted && diff) {
-      var db = buildDiffBlock(diff);
+      var db = buildDiffBlock(diff, filepath);
       if (db) {
         db.style.marginLeft = '14px';
         var next = targetPill.nextSibling;
@@ -2326,6 +2492,7 @@
       // No pending pill found — append a new completed pill
       var pill = document.createElement('div');
       pill.className = 'step-pill';
+      pill.dataset.pillTool = tool;
       pill.innerHTML =
         '<span class="step-pill-icon">' + icon + '</span>' +
         '<span class="step-pill-verb ' + (success ? 'ok' : 'fail') + '">' + verb + '</span>' +
@@ -2336,7 +2503,7 @@
 
     // Attach diff block after edit_file pill on success
     if (tool === 'edit_file' && success && diff) {
-      var db = buildDiffBlock(diff);
+      var db = buildDiffBlock(diff, String(label).split(' lines ')[0]);
       if (db) {
         db.style.marginLeft = '14px';
         var next = targetPill.nextSibling;
@@ -2554,20 +2721,39 @@
     var listEl = document.getElementById('sessions-list');
     var activeNameEl = document.getElementById('sessions-active-name');
     listEl.innerHTML = '';
+    var lastGroup = null;
     threads.forEach(function(t) {
+      var group = _threadGroup(t);
+      if (group !== lastGroup) {
+        var head = document.createElement('div');
+        head.className = 'session-group';
+        head.textContent = group;
+        listEl.appendChild(head);
+        lastGroup = group;
+      }
       if (t.active) {
         _currentThreadIdForSearch = t.id;
         if (activeNameEl) { activeNameEl.textContent = t.name; }
       }
 
       var card = document.createElement('div');
-      card.className = 'session-card' + (t.active ? ' session-active' : '');
-      card.title = (t.preview || '(empty)') + '\n' + t.messageCount + ' message(s)';
+      card.className = 'session-card' + (t.active ? ' session-active' : '') + (t.pinned ? ' session-pinned' : '');
+      card.title = (t.preview || '(empty)') + '\n' + t.messageCount + ' message(s)' +
+        (t.tokens ? '\n' + _fmtTokens(t.tokens) + ' tokens' + (typeof t.costUsd === 'number' ? ' \u00B7 $' + t.costUsd.toFixed(t.costUsd < 1 ? 3 : 2) : '') : '');
       card.dataset.id = t.id;
 
       var nameEl = document.createElement('div');
       nameEl.className = 'session-card-name';
       nameEl.textContent = t.name;
+      var textEl = document.createElement('div');
+      textEl.className = 'session-card-text';
+      textEl.appendChild(nameEl);
+      if (t.preview && t.preview !== t.name) {
+        var previewEl = document.createElement('div');
+        previewEl.className = 'session-card-preview';
+        previewEl.textContent = t.preview;
+        textEl.appendChild(previewEl);
+      }
 
       var rightEl = document.createElement('div');
       rightEl.className = 'session-card-right';
@@ -2588,6 +2774,15 @@
         _inlineRenameCard(card, nameEl, t);
       });
 
+      var pinBtn = document.createElement('button');
+      pinBtn.className = 'session-action-btn' + (t.pinned ? ' pinned' : '');
+      pinBtn.title = t.pinned ? 'Unpin' : 'Pin to the top';
+      pinBtn.textContent = '\uD83D\uDCCC';
+      pinBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        vscode.postMessage({ type: 'pinThread', id: t.id });
+      });
+      actionsEl.appendChild(pinBtn);
       actionsEl.appendChild(editBtn);
 
       var hasOtherNonEmpty = threads.some(function(other) { return other.id !== t.id && other.messageCount > 0; });
@@ -2605,7 +2800,7 @@
       rightEl.appendChild(timeEl);
       rightEl.appendChild(actionsEl);
 
-      card.appendChild(nameEl);
+      card.appendChild(textEl);
       card.appendChild(rightEl);
 
       card.addEventListener('click', function() {
@@ -2617,6 +2812,16 @@
 
       listEl.appendChild(card);
     });
+  }
+
+  function _threadGroup(t) {
+    if (t.pinned) { return 'Pinned'; }
+    var day = new Date(); day.setHours(0, 0, 0, 0);
+    var at = t.updatedAt || Date.now();
+    if (at >= day.getTime()) { return 'Today'; }
+    if (at >= day.getTime() - 86400000) { return 'Yesterday'; }
+    if (at >= day.getTime() - 6 * 86400000) { return 'This week'; }
+    return 'Older';
   }
 
   function _confirmDeleteThread(threadId, threadName) {
@@ -2891,6 +3096,10 @@
         // Messages start their turns in the order they were sent: the oldest untagged bubble is this turn's
         if (data.turnId) { var ub = _oldestUntaggedUserMsg(); if (ub) { _tagUserMsg(ub, data.turnId, data.editable); if (data.planGoal) { ub.dataset.editText = data.planGoal; } } }
         startMsg(data.id); setStreaming(true); break;
+      case 'uiSettings':
+        document.body.classList.toggle('density-compact', data.density === 'compact');
+        document.body.classList.toggle('hide-reasoning', data.showReasoning === false);
+        break;
       case 'turnSkipped':     var sb = _oldestUntaggedUserMsg(); if (sb) { _tagUserMsg(sb, null, false); } break;
       case 'droppedImage':    _pastedImages.push({ dataUrl: data.dataUrl }); _renderImgPreviews(); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
@@ -2936,6 +3145,7 @@
             tokText += ' (' + Math.round(100 * data.cachedTokens / data.promptTokens) + '% cached)';
           }
           if (data.taskTokens) {
+            _progress.set('usage', _fmtTokens(data.taskTokens) + ' tok' + (typeof data.taskCostUsd === 'number' ? ' \u00B7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2) : ''));
             tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok';
             if (typeof data.taskCostUsd === 'number') {
               tokText += ' \u00b7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2);
@@ -3032,6 +3242,7 @@
         break;
       case 'activity':
         if (streaming) {
+          if (data.text) { _progress.set('activity', data.text); }
           sText.textContent = data.text || 'Thinking\u2026';
           sDot.className = 's-dot ' + (data.text ? 'writing' : 'thinking');
         }
@@ -3106,6 +3317,8 @@
           : 'Redo last AI file change';
         break;
       case 'diagnosticsChanged': {
+        _workspaceErrors = data.errorCount || 0;
+        _renderStarters();
         var diagBadge = document.getElementById('diag-badge');
         var ec = data.errorCount || 0;
         var wc = data.warningCount || 0;

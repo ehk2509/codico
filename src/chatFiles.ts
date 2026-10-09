@@ -55,3 +55,22 @@ export async function openFileLink(rawPath: string, line?: number): Promise<stri
         return `Cannot open ${rawPath}: not found in the workspace.`;
     }
 }
+
+const BEFORE_SCHEME = 'codico-before';
+const beforeContents = new Map<string, string>();
+
+/** Serves the "before" side of the change diffs opened from the chat. */
+export function registerChangeDiffProvider(context: vscode.ExtensionContext): void {
+    context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(BEFORE_SCHEME, {
+        provideTextDocumentContent: uri => beforeContents.get(uri.query) ?? '',
+    }));
+}
+
+/** Opens VS Code's diff editor: the file before Codico's change against the file now. */
+export async function openChangeDiff(file: vscode.Uri, before: Uint8Array | null): Promise<void> {
+    const key = String(beforeContents.size + 1);
+    beforeContents.set(key, before ? new TextDecoder().decode(before) : '');
+    const name = path.basename(file.path);
+    const beforeUri = vscode.Uri.from({ scheme: BEFORE_SCHEME, path: `/${name}`, query: key });
+    await vscode.commands.executeCommand('vscode.diff', beforeUri, file, `${name} (before Codico \u2194 now)`, { preview: true });
+}

@@ -69,6 +69,15 @@ export class UndoRedoStack {
         }
     }
 
+    /** The newest recorded change to a file that can still be undone. */
+    latestFor(uri: vscode.Uri): FileSnapshot | undefined {
+        const key = uri.toString();
+        for (let i = this._undo.length - 1; i >= 0; i--) {
+            if (this._undo[i].uri.toString() === key) { return this._undo[i]; }
+        }
+        return undefined;
+    }
+
     get canUndo(): boolean { return this._undo.length > 0; }
     get canRedo(): boolean { return this._redo.length > 0; }
     get undoLabel(): string | undefined { return this._undo.at(-1)?.label; }

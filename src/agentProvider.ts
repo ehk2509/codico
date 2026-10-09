@@ -41,7 +41,7 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { openFileLink, readDroppedFile } from './chatFiles';
+import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
@@ -119,7 +119,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _abortController: AbortController | null = null;
     private _followUpAbortController: AbortController | null = null;
     private _busy = false;
-    private _thinkingEffort: 'high' | 'medium' | 'low' = 'high';
+    // Medium by default: high effort costs noticeably more reasoning tokens on every step
+    private _thinkingEffort: 'high' | 'medium' | 'low' = 'medium';
     private _repoInstructions: string | null | undefined = undefined; // undefined = not yet read
     /** Pending inline write-permission requests: permId → resolve fn */
     private _pendingWritePermissions = new Map<string, (result: { granted: boolean; editedContent?: string }) => void>();
@@ -175,6 +176,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._workspaceIndex = new WorkspaceIndex(_context);
         this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
+        registerChangeDiffProvider(_context);
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
@@ -191,6 +193,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._initThreadsSync();
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
+            if (e.affectsConfiguration('codico.chatDensity') || e.affectsConfiguration('codico.showReasoning')) { this._postUiSettings(); }
         }, undefined, _context.subscriptions);
     }
 
@@ -233,6 +236,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         setTimeout(() => {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
+            this._postUiSettings();
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
             if (!this._busy && this._displayMessages.length > 0) {
@@ -619,6 +623,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'openFile': {
                 const problem = await openFileLink(msg.path, msg.line);
                 if (problem) { this._post({ type: 'error', message: problem }); }
+                break;
+            }
+            case 'openChangeDiff': {
+                const target = await resolveWorkspaceToolPath(msg.path).catch(() => undefined);
+                const change = target ? this._undoRedo.latestFor(target.uri) : undefined;
+                if (target && change) { await openChangeDiff(target.uri, change.before); }
+                else { this._post({ type: 'error', message: `No change by Codico to ${msg.path} can be shown (it may have been undone).` }); }
+                break;
+            }
+            case 'pinThread': {
+                const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
+                const pinned = threads.find(t => t.id === msg.id);
+                if (pinned) { pinned.pinned = !pinned.pinned; await this._store.update(this._threadsIndexKey, threads); }
+                this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
                 break;
             }
             case 'attachDroppedFiles':
@@ -1587,7 +1605,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Persist conversation history + display transcript
         await this._historyStore.update(this._historyKey, this._history);
         await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
-        await this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText);
+        await this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText, taskUsage);
         this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
 
         // Generate follow-up suggestions (non-blocking, best-effort)
@@ -2618,13 +2636,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private _getThreadListForWebview(): Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> {
+    private _postUiSettings(): void {
+        const cfg = vscode.workspace.getConfiguration('codico');
+        this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true) });
+    }
+
+    private _getThreadListForWebview(): Array<ThreadEntry & { active: boolean }> {
+        // Pinned first, then the most recently used
         return this._store.get<ThreadEntry[]>(this._threadsIndexKey, [])
-            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt)
             .map(t => ({ ...t, active: t.id === this._activeThreadId }));
     }
 
-    private async _updateThreadMeta(userText: string): Promise<void> {
+    /** @param usage a finished task's tokens and cost, added to the thread's totals */
+    private async _updateThreadMeta(userText: string, usage?: TaskUsage): Promise<void> {
         const store = this._store;
         const threads = store.get<ThreadEntry[]>(this._threadsIndexKey, []);
         const idx = threads.findIndex(t => t.id === this._activeThreadId);
@@ -2648,6 +2673,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             updatedAt: Date.now(),
             messageCount: userDisplayCount,
             preview: userText.slice(0, 80).replace(/\n/g, ' '),
+            tokens: (threads[idx].tokens ?? 0) + (usage?.tokens ?? 0),
+            costUsd: usage?.costUsd !== undefined ? (threads[idx].costUsd ?? 0) + usage.costUsd : threads[idx].costUsd,
         };
         await store.update(this._threadsIndexKey, threads);
     }
