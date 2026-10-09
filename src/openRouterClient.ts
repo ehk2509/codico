@@ -9,7 +9,7 @@ import { UNTRUSTED_CONTENT_RULE } from './untrustedContent';
 export type StreamChunk =
     | { type: 'thinking'; text: string }
     | { type: 'content'; text: string }
-    | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number; /** Provider-reported cost in USD, when available (OpenRouter). */ costUsd?: number }
+    | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number; /** Provider-reported cost in USD, when available (OpenRouter). */ costUsd?: number; /** Prompt tokens served from the provider's prompt cache. */ cachedTokens?: number }
     | { type: 'finish'; reason: string }       // non-'stop' finish_reason from the model
     | { type: 'native_tool'; call: NativeToolCall }
     | { type: 'stream_error'; message: string }; // error object inside an SSE event
@@ -317,6 +317,9 @@ export function streamOpenRouter(
                     stream_options: { include_usage: true },
                     // OpenRouter usage accounting: adds the request's actual cost to the final usage report
                     usage: { include: true },
+                    // Claude models cache only when asked: the breakpoint follows the conversation's last
+                    // block. Other providers (OpenAI, DeepSeek, Gemini, Grok…) cache automatically.
+                    ...(/^~?anthropic\//.test(model) ? { cache_control: { type: 'ephemeral' } } : {}),
                     ...(useNativeTools ? {
                         tools: nativeTools.map(tool => ({
                             type: 'function',
@@ -469,7 +472,7 @@ export function streamOpenRouter(
                                     push({ type: 'finish', reason: finishReason });
                                 }
                             }
-                            const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: unknown } | undefined;
+                            const usage = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cost?: unknown; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
                             if (usage?.total_tokens) {
                                 push({
                                     type: 'usage',
@@ -477,6 +480,7 @@ export function streamOpenRouter(
                                     completionTokens: usage.completion_tokens ?? 0,
                                     totalTokens: usage.total_tokens,
                                     ...(typeof usage.cost === 'number' && Number.isFinite(usage.cost) && usage.cost >= 0 ? { costUsd: usage.cost } : {}),
+                                    ...(usage.prompt_tokens_details?.cached_tokens ? { cachedTokens: usage.prompt_tokens_details.cached_tokens } : {}),
                                 });
                             }
                         } catch { /* ignore malformed SSE frames */ }

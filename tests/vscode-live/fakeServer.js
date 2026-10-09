@@ -30,6 +30,12 @@ const SCRIPTS = (port) => ({
   http500: [{ status: 500 }],
   verify_ok: [tool('write_file', 'filepath: live/verified.js\ncontent:\nmodule.exports = 1;'), 'Done.'],
   stuck_verify: [tool('write_file', 'filepath: live/stuck.js\ncontent:\nmodule.exports = 2;'), 'Done.'],
+  // Re-reading a file after each edit is normal work, not a loop
+  reread: [0, 1, 2].flatMap(n => [tool('read_file', 'filepath: fixtures/reread.txt'),
+    tool('edit_file', `filepath: fixtures/reread.txt\nold_str:\nn=${n}\nnew_str:\nn=${n + 1}`)])
+    .concat([tool('read_file', 'filepath: fixtures/reread.txt'), 'Done.']),
+  // A model that only ever repeats the same write (and never verifies) must still be stopped
+  stuck_loop: Array.from({ length: 40 }, () => tool('write_file', 'filepath: live/loop.js\ncontent:\nmodule.exports = 3;')),
   // Plan mode: the model tries to write while planning; that must be blocked
   plan_readonly: [tool('write_file', 'filepath: live/planned.js\ncontent:\nmodule.exports = 3;'),
     '1. Read the config\n2. Update the port\n\n## Files Affected\n- fixtures/config.txt\n\n> Approve the plan to begin execution.'],
@@ -60,6 +66,8 @@ const SCRIPTS = (port) => ({
   // Symbolic links leading outside the workspace: reading or writing through them is refused
   symlink: [tool('read_file', 'filepath: fixtures/link/secret.txt'), tool('write_file', 'filepath: fixtures/link/new.txt\ncontent:\nescaped'),
     tool('write_file', 'filepath: fixtures/dangling\ncontent:\nescaped'), 'Done.'],
+  // An MCP tool returning far more than the model should receive
+  mcp_big: [tool('mcp_call', 'server: fake\ntool: big\nsize: 50000'), 'Done.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only
@@ -75,7 +83,9 @@ const SCRIPTS = (port) => ({
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.text || '').join('') : '';
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = /\[SCENARIO:(\w+)\]/.exec(messages[i].role === 'user' ? textOf(messages[i].content) : '');
+    // Phase notes quote the task (and so its scenario tag) but are not the request
+    const text = messages[i].role === 'user' ? textOf(messages[i].content).split('[System Phase]')[0] : '';
+    const m = /\[SCENARIO:(\w+)\]/.exec(text);
     // Verification replies are not part of the scenario script
     if (m) { return { scenario: m[1], step: messages.slice(i + 1).filter(x => x.role === 'assistant' && !/LIVE-VERIFY/.test(textOf(x.content))).length }; }
   }
@@ -102,9 +112,9 @@ function start(port0) {
       let json = {}; try { json = JSON.parse(body); } catch {}
       const messages = json.messages || [];
       const { scenario, step } = locate(messages);
-      const lastUser = textOf((messages.filter(m => m.role === 'user').pop() || {}).content);
+      const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && /\[SCENARIO:compaction\]/.test(textOf(m.content))),
         native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
@@ -116,7 +126,7 @@ function start(port0) {
       }
       let entry;
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
-      if (needsVerify && scenario !== 'stuck_verify') { entry = VERIFY; }
+      if (needsVerify && !scenario.startsWith('stuck_')) { entry = VERIFY; }
       else if (scenario === 'compaction') { entry = SCRIPTS(port).compaction[compactionReplies++] ?? 'Done.'; }
       else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }

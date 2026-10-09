@@ -2,6 +2,29 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- Prompt caching: requests to Claude models (direct and through OpenRouter) now ask the provider to cache the conversation, so each request in a task re-reads what was already sent at about a tenth of the price. The system prompt and tool list no longer change during a task (phase guidance is added to the conversation instead), so providers that cache automatically (OpenAI, DeepSeek, Gemini, Grok…) get cache hits too. The token counter shows the cached share. On a recorded 63-request task, billed input dropped from ~6.0M to the equivalent of ~0.9M tokens at Claude cache pricing.
+- Approving a plan removes the planning turn's file reads from the context (the plan stays); the agent re-reads what it needs. About 1M fewer tokens sent on the same task.
+- A tool result repeated unchanged later in a task (e.g. a file read twice) is sent only once.
+
+### Fixed
+- While a change awaited verification there was no iteration limit, so a model whose tool calls could not run (repeats blocked as a loop, phase-blocked or invalid calls) kept going forever. The task now stops after three such iterations in a row.
+- Security: `fetch_url` and the browser could reach localhost and cloud metadata through IPv6 forms that embed an IPv4 address (`http://[::ffff:127.0.0.1]` — URLs rewrite it to `[::ffff:7f00:1]`, which the filter did not recognise). IPv4-mapped, IPv4-compatible, NAT64, 6to4 and Teredo addresses are now checked by their embedded address.
+- Security: browser pages could open WebSocket connections to local services (WebSockets are not covered by request routing); they now go through the same network policy.
+- Terminal: commands got an open input, so one that prompts (an `npx` install, `npm init`) waited until the 5-minute timeout. Commands now get no input and fail at once.
+- Terminal: the model saw only the first 4,000 characters of a command's output, missing the failures and summary that test runners and builds print last (it then re-ran them). It now sees the start and, mostly, the end; past the 1 MB capture limit the end is kept too.
+- Inline completions, next-edit suggestions, AI rename, inline chat and commit messages sent the selected model to OpenRouter even when it was a direct-provider model (or Ollama, where unsupported), so every request failed — on every pause in typing for completions. They now explain that the model is not supported (once, for features that run while typing) instead of sending requests.
+- Superseded inline-completion and next-edit requests were never settled (one stranded promise per keystroke).
+- MCP: a request from the server (such as `ping`) could be taken as the reply to one of Codico's requests, because both sides number requests from 1; the tool list then came back empty or a tool call returned nothing. Server requests are now answered (`ping`) or declined.
+- MCP: writing to a server that had exited could raise an unhandled pipe error and crash the extension host.
+- MCP: a server whose handshake failed was left running in the background (on every start and Refresh MCP); it is now stopped.
+- MCP: tool results had no size limit, so one large result was resent with every later request of the task. Results are now capped at 20,000 characters, with a note.
+- MCP: Stop now cancels a running tool call (and tells the server); calls may run up to 5 minutes instead of failing after 30 seconds.
+- MCP: an invalid `.mcp.json` was silently ignored as if missing; a warning now explains why its servers did not start.
+- The loop guard flagged normal work as a loop: re-reading a file after editing it, or re-running the tests after a fix, was blocked from the 4th time in a task. Repeats now only count while nothing has changed (a write resets reads, searches and commands; a command resets reads); identical writes and edits still count.
+
 ## 0.3.4 - 2026-10-09
 
 ### Fixed

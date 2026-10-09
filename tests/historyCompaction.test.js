@@ -109,3 +109,22 @@ test('the user\'s own words are separated from injected context, with and withou
   assert.match(userRequestText(user(old), 100), /fix the login bug$/);
   assert.equal(userRequestText(user('plain request')), 'plain request');
 });
+
+test('approving a plan drops the planning steps but keeps the request and the plan', () => {
+  const { dropPlanningSteps } = require('../out/historyCompaction.js');
+  const PLAN = 'You are a task planner. The user has described a goal.';
+  const request = user('[Context]\nWorkspace: /ws\n\n[User request]\n' + PLAN + '\n\nGoal: ux features');
+  const plan = assistant('1. First step\n2. Second step\n\n> Approve the plan to begin execution.');
+  const steps = [...nativeStep('read_file', { filepath: 'a.ts' }, 'A'.repeat(9000)), ...nativeStep('read_file', { filepath: 'b.ts' }, 'B'.repeat(9000))];
+  const earlier = [user('earlier question'), assistant('earlier answer')];
+  const { history, droppedChars } = dropPlanningSteps([...earlier, request, ...steps, plan], PLAN);
+  assert.deepEqual(history, [...earlier, request, plan]);
+  assert.ok(droppedChars > 18000);
+  assertWellFormed(history);
+
+  // Not a plan turn, or the plan is no longer the last reply: unchanged
+  const normal = [user('fix the bug'), ...steps, assistant('Fixed.')];
+  assert.equal(dropPlanningSteps(normal, PLAN).history, normal);
+  const later = [request, ...steps, plan, user('something else'), assistant('ok')];
+  assert.equal(dropPlanningSteps(later, PLAN).history, later);
+});

@@ -5,7 +5,7 @@ import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
-import { parseToolBody, scanToolFences, toolFingerprint, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
+import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
@@ -18,7 +18,7 @@ import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
-import { killProcessGroup, processGroupAlive, runTerminalProcess } from './terminalProcess';
+import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
 import { countWorkspaceDiagnostics, buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime } from './externalToolRuntime';
@@ -36,9 +36,11 @@ import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
-import { planCompaction, summarizerPrompt, buildCompactedHistory, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
+import { planCompaction, summarizerPrompt, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
 import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
+import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
+import { ToolLoopGuard } from './toolLoopGuard';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -429,9 +431,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'startPlan':
                 await this._handlePlan(msg.goal);
                 break;
-            case 'approvePlan':
-                await this._handleUserMessage(msg.executionPrompt);
+            case 'approvePlan': {
+                // The approved plan is what execution needs; the planning reads would be resent with every request
+                const run = approvedPlanExecution(this._history, AgentProvider.PLAN_PROMPT.slice(0, 40), msg.executionPrompt);
+                if (!this._busy) { this._history = run.history; }
+                await this._handleUserMessage(this._busy ? msg.executionPrompt : run.prompt);
                 break;
+            }
             case 'clarifyResponse':
                 await this._handleClarifyResponse(msg.text);
                 break;
@@ -945,15 +951,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // re-sending them (each reminder is another paid model request).
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
         let verificationNudges = 0;
+        // Iterations in a row in which no tool call could run (repeats, blocked calls): ends a stuck
+        // model, since there is no iteration limit while a change awaits verification
+        const MAX_BLOCKED_ONLY_ITERATIONS = 3;
+        let blockedOnlyIterations = 0;
+        let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
         const nativeTools = !isOllama && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
 
-        // Circuit breaker: track how many times each unique tool call has been issued
-        // across all iterations. If the same call fires 3 times the model is looping —
-        // inject a hard nudge into history and stop the current iteration.
-        const _toolCallCounts = new Map<string, number>();
-        const MAX_IDENTICAL_CALLS = 3;
+        // Circuit breaker for a model repeating the same call while nothing changes
+        const loopGuard = new ToolLoopGuard();
         // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
         const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
         try {
@@ -1002,17 +1010,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
                 // Once a loop is detected, the rest of this response is not executed either
                 let loopDetected = false;
+                let ranTool = false;
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
                         inlineToolResults.push(skipped);
                         return { keepGoing: false, result: skipped };
                     }
-                    const fp = toolFingerprint(tool);
-                    const callCount = (_toolCallCounts.get(fp) ?? 0) + 1;
-                    _toolCallCounts.set(fp, callCount);
-
-                    if (callCount > MAX_IDENTICAL_CALLS) {
+                    const { count: callCount, loop } = loopGuard.check(tool);
+                    if (loop) {
                         loopDetected = true;
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
@@ -1042,7 +1048,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                                 target: evaluationToolTarget(tool),
                             });
                         }
+                        ranTool = true;
                         await this._dispatchTool(tool, msgId, signal);
+                        loopGuard.ran(tool);
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
                         if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
@@ -1072,7 +1080,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             target: evaluationToolTarget(tool),
                         });
                     }
+                    ranTool = true;
                     await this._dispatchTool(tool, msgId, signal);
+                    loopGuard.ran(tool);
                     let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                     this._lastInlineResult = undefined;
                     const followThrough = exploration.after(tool, result);
@@ -1152,17 +1162,20 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     }
                 };
 
-                const systemPromptOverride = exploration.systemPrompt(this._readOnly);
+                // The system prompt and tool list stay the same for the whole task so providers can reuse
+                // their prompt cache. A phase change is added to the conversation instead (append-only).
+                const { systemPrompt: systemPromptOverride, phaseNote } = splitPhasePrompt(exploration.systemPrompt(this._readOnly));
+                if (phaseNote !== currentPhaseNote && (phaseNote || currentPhaseNote)) { appendPhaseNote(this._history, phaseNote); currentPhaseNote = phaseNote; }
                 const projectedHistory = projectHistoryForModel(this._history);
+                const requestHistory = projectedHistory.history;
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                const iterationNativeTools = exploration.nativeTools(nativeTools);
                 for await (const chunk of isOllama
-                    ? streamOllama(ollamaBaseUrl, projectedHistory.history, ollamaModel, effectivePrefix, signal, systemPromptOverride)
+                    ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, projectedHistory.history, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools)
-                        : streamOpenRouter(apiKey, projectedHistory.history, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, iterationNativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
+                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools)
+                        : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1211,7 +1224,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
                         taskUsage.add(chunk.totalTokens, chunk.costUsd);
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd });
+                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1400,6 +1413,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 actionNudges = 0;
                 // The model is calling tools again, so reminders are no longer "stalled"
                 verificationNudges = 0;
+                blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
+                if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
+                    this._post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
+                }
 
                 // ── Mid-stream auto-compact ────────────────────────────────────────
                 // Compact between iterations while the agent loop is still running so
@@ -1409,6 +1426,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 100_000);
                 if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid) {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
+                    currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
                 }
 
                 // Fenced compatibility tools return results as a normal user message.
@@ -1861,7 +1879,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'mcp_call': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'mcp_call', label: `${tool.server}/${tool.tool}` });
-                result = await this._external._handleMcpCall(tool, msgId);
+                result = await this._external._handleMcpCall(tool, msgId, signal);
                 break;
             }
             case 'lsp_symbol': {
@@ -2028,12 +2046,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         if (result.stopped) {
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false });
-            return `[run_terminal: ${tool.command}] Stopped by user.\n${result.output.slice(0, 4000)}`;
+            return `[run_terminal: ${tool.command}] Stopped by user.\n${clipTerminalOutput(result.output)}`;
         }
         if (result.timedOut) {
             const message = `Timed out after ${timeoutSec}s`;
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
-            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${result.output.slice(0, 4000)}`;
+            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${clipTerminalOutput(result.output)}`;
         }
         if (result.error) {
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: result.error });
@@ -2053,7 +2071,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${result.output.slice(0, 4000)}${bgNote}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}`;
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */

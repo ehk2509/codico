@@ -68,3 +68,38 @@ test('terminal environment keeps execution essentials and drops secrets', () => 
   assert.equal(env.AWS_SECRET_ACCESS_KEY, undefined);
   assert.equal(env.CUSTOM_SECRET, undefined);
 });
+
+test('a command waiting for input gets end-of-input instead of hanging until the timeout', async () => {
+  const started = Date.now();
+  const result = await runTerminalProcess({
+    command: 'node -e "process.stdin.on(\'data\', () => {}); process.stdin.on(\'end\', () => console.log(\'no-input\'))"',
+    timeoutMs: 10000,
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.timedOut, false);
+  assert.match(result.output, /no-input/);
+  assert.ok(Date.now() - started < 5000);
+});
+
+test('past the capture limit the end of the output is kept', async () => {
+  const result = await runTerminalProcess({
+    command: 'node -e "for (let i = 1; i <= 50000; i++) console.log(i)"',
+    timeoutMs: 20000,
+    signal: new AbortController().signal,
+    maxCapturedBytes: 10000,
+  });
+  assert.match(result.output, /^1\n2\n3\n/);
+  assert.match(result.output, /output beyond [0-9,.\s]+ bytes omitted/);
+  assert.match(result.output, /49999\r?\n50000\r?\n?$/);
+});
+
+test('output shown to the model keeps its start and mostly its end', () => {
+  const { clipTerminalOutput } = require('../out/terminalProcess.js');
+  assert.equal(clipTerminalOutput('short'), 'short');
+  const out = 'BEGIN\n' + 'x'.repeat(20000) + '\n3 tests failed: test_login';
+  const clipped = clipTerminalOutput(out, 4000);
+  assert.ok(clipped.length < 4100);
+  assert.match(clipped, /^BEGIN\n/);
+  assert.match(clipped, /3 tests failed: test_login$/);
+  assert.match(clipped, /characters omitted/);
+});

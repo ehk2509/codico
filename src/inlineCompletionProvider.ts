@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { notifyUnsupportedModelOnce, unsupportedEditorModel } from './editorModel';
 import * as http from 'http';
 import * as https from 'https';
 import { StringDecoder } from 'string_decoder';
@@ -235,6 +236,8 @@ export class InlineCompletionProvider implements vscode.InlineCompletionItemProv
     // pending completions. A module-level timer would cancel document A's pending
     // request whenever the user types in document B.
     private _debounceTimer: ReturnType<typeof setTimeout> | undefined;
+    /** The request waiting on the debounce timer; a newer one settles it (else it never resolves). */
+    private _debounceResolve: ((value: null) => void) | undefined;
 
     constructor(private readonly _context: vscode.ExtensionContext) {}
 
@@ -272,6 +275,8 @@ export class InlineCompletionProvider implements vscode.InlineCompletionItemProv
 
         return new Promise((resolve) => {
             if (this._debounceTimer) { clearTimeout(this._debounceTimer); }
+            this._debounceResolve?.(null);
+            this._debounceResolve = resolve;
 
             // Abort in-flight streams at other positions and prune all completed entries
             for (const [k, s] of _streams) {
@@ -285,9 +290,11 @@ export class InlineCompletionProvider implements vscode.InlineCompletionItemProv
             }
 
             this._debounceTimer = setTimeout(async () => {
+                this._debounceResolve = undefined;
                 if (token.isCancellationRequested) { return resolve(null); }
 
                 const model = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+                if (unsupportedEditorModel(model, true)) { notifyUnsupportedModelOnce('Inline completions', model, true); return resolve(null); }
                 const isOllama = model.startsWith('ollama/');
                 const ollamaBaseUrl = config.get<string>('ollamaBaseUrl', 'http://localhost:11434');
 

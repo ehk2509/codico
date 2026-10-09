@@ -15,6 +15,10 @@ export interface HistoryProjectionOptions {
     maxWorkingSetChars?: number;
 }
 
+/** Shorter results cost less than the note that would replace them. */
+const MIN_DEDUPLICATED_CHARS = 400;
+const DUPLICATE_MARKER = '[Result omitted: identical to a later result in this conversation (the content was unchanged when it was read again).]';
+
 function compactMarker(label: string, omittedChars: number): string {
     return `[${label} compacted: ${omittedChars.toLocaleString()} chars omitted from older context. Re-run the tool only if exact content is still needed.]`;
 }
@@ -135,6 +139,8 @@ export function projectHistoryForModel(
     let preservedLargeResults = 0;
     let preservedTargetResults = 0;
     const seenTargets = new Set<string>();
+    // Results seen later in the conversation: an older identical copy is sent only once
+    const laterResults = new Set<string>();
     const projected = [...history];
 
     for (let index = history.length - 1; index >= 0; index--) {
@@ -147,6 +153,16 @@ export function projectHistoryForModel(
         if (!isNativeTool && !isCompatibilityTool) { continue; }
 
         const content = message.content as string;
+        // The same result again (e.g. a file re-read while unchanged): keep only the newest copy
+        if (content.length >= MIN_DEDUPLICATED_CHARS) {
+            if (laterResults.has(content)) {
+                omittedMessages++;
+                omittedChars += content.length;
+                projected[index] = { ...message, content: DUPLICATE_MARKER };
+                continue;
+            }
+            laterResults.add(content);
+        }
         if (content.length <= largeResultChars) { continue; }
 
         const target = resultTarget(message, targetsByCallId);

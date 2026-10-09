@@ -46,7 +46,12 @@ async function run() {
   await scenario('fetch_local', ({ text }) => { const leaked = /"scenario"/.test(text); const blocked = /private|blocked|denied|not allowed|local|refus/i.test(text.split('[fetch_url')[1] || text); return { ok: !leaked && blocked, why: `local response leaked: ${leaked}; blocked message: ${blocked}` }; });
   await scenario('loop', ({ text }) => ({ ok: /You are in a loop/.test(text), why: `loop warning sent: ${/You are in a loop/.test(text)}` }));
   await scenario('timeout', ({ ms, text }) => ({ ok: ms >= 9000 && ms < 30000 && /timed out/i.test(text), why: `${ms} ms; reported timed out: ${/timed out/i.test(text)}` }), 45000);
-  await scenario('bigoutput', ({ ms, text }) => ({ ok: ms < 20000 && /\n1\n2\n3\n/.test(text) && !/199999/.test(text), why: `${ms} ms; truncated: ${!/199999/.test(text)}` }));
+  await scenario('bigoutput', ({ ms, reqs }) => {
+    // The model gets the start and the end (where failures and summaries are), not 1.2 MB
+    const r = reqs.find(x => /\[run_terminal: seq/.test(x.lastUser)) || { lastUser: '', lastUserTail: '', lastUserChars: 0 };
+    const start = /\n1\n2\n3\n/.test(r.lastUser), end = /199999\n200000/.test(r.lastUserTail);
+    return { ok: ms < 20000 && start && end && r.lastUserChars < 6000, why: `${ms} ms; start kept: ${start}; end kept: ${end}; ${r.lastUserChars} chars sent` };
+  });
   await scenario('plain_code', ({ reqs, read }) => ({ ok: read('live/keep-me.txt') !== null && reqs.length === 1, why: `keep-me.txt still exists: ${read('live/keep-me.txt') !== null}; ${reqs.length} req` }));
   await scenario('multitool', ({ text }) => ({ ok: /port=8080/.test(text) && /NOTES-MARKER/.test(text), why: `both results returned: ${/port=8080/.test(text) && /NOTES-MARKER/.test(text)}` }));
   await scenario('unicode', ({ read }) => { const g = read('live/unicode.txt'); return { ok: g !== null && g.trimEnd() === 'Café ☕ — naïve 日本語 🚀\nline2', why: JSON.stringify(g) }; });
@@ -54,6 +59,11 @@ async function run() {
   await scenario('http500', ({ ms }) => ({ ok: ms < 15000, allowError: true, why: `${ms} ms (must end, not hang)` }), 30000);
   await scenario('todo', ({ text }) => ({ ok: /Task list updated/i.test(text), why: `todo accepted (and agent usable after HTTP 500): ${/Task list updated/i.test(text)}` }));
   await scenario('verify_ok', ({ read, reqs, text }) => ({ ok: read('live/verified.js') !== null && /acceptance gate is satisfied/.test(text) && reqs.length <= 5, why: `gate satisfied: ${/acceptance gate is satisfied/.test(text)}; ${reqs.length} req` }));
+  await scenario('reread', ({ read, text }) => {
+    const flagged = /You are in a loop/.test(text);
+    return { ok: !flagged && read('fixtures/reread.txt') === 'n=3\n', why: `flagged as a loop: ${flagged}; file: ${JSON.stringify(read('fixtures/reread.txt'))}` };
+  });
+  await scenario('stuck_loop', ({ reqs, error, text }) => ({ ok: !error && reqs.length <= 10, why: `${reqs.length} requests (must stop, not loop); loop warning sent: ${/You are in a loop/.test(text)}` }), 60000);
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
 
   // Auto-compaction mid-task must keep the request and leave no orphaned tool results
@@ -215,6 +225,21 @@ async function run() {
     return { ok: !leaked && !escapedDir && !escapedDangling && refusals >= 3,
       why: `outside secret read: ${leaked}; written through link: ${escapedDir}; written through dangling link: ${escapedDangling}; refusals: ${refusals}/3` };
   });
+  {
+    // A real stdio MCP server (tests/fixtures/fakeMcpServer.js), registered through settings
+    const server = path.join(__dirname, '..', '..', 'fixtures', 'fakeMcpServer.js');
+    await set('mcpServers', [{ name: 'fake', command: 'node', args: [server, 'normal'] }]);
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'refreshMcp' });
+    await scenario('mcp_big', ({ reqs }) => {
+      // The request log keeps only the start of each message: check its full length and its end
+      const result = reqs.find(r => /\[mcp_call: fake\/big\]/.test(r.lastUser));
+      const chars = result ? result.lastUserChars : 0;
+      const capped = !!result && /more characters omitted/.test(result.lastUserTail);
+      return { ok: !!result && chars < 22000 && capped, why: `MCP result reached the model: ${!!result}; message length: ${chars} (result was 50000); cap noted: ${capped}` };
+    });
+    await set('mcpServers', []);
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'refreshMcp' });
+  }
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

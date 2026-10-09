@@ -40,6 +40,15 @@ export class BrowserManager {
                 await route.abort('blockedbyclient');
             }
         });
+        // WebSockets bypass page.route: without this a page could reach local services over ws://
+        await page.routeWebSocket(/.*/, async ws => {
+            try {
+                await this._assertRequestAllowed(ws.url().replace(/^ws/, 'http'));
+                ws.connectToServer();
+            } catch {
+                await ws.close({ code: 1008, reason: 'Blocked by Codico network policy' });
+            }
+        });
     }
 
     private _findChrome(): string | undefined {

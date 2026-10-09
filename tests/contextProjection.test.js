@@ -94,3 +94,23 @@ test('recent or small tool results are preserved verbatim', () => {
   assert.equal(result.omittedMessages, 0);
   assert.equal(result.history[0].content, 'small result');
 });
+
+test('a result repeated unchanged is sent once: the older copy becomes a short note', () => {
+  const file = '[read_file: media/chat.html lines 1–246 of 246]\n```\n' + 'h'.repeat(5000) + '\n```';
+  const call = (id) => ({ role: 'assistant', content: '', nativeToolCalls: [{ id, name: 'read_file', arguments: { filepath: 'media/chat.html' } }] });
+  const result = (id, content) => ({ role: 'tool', toolCallId: id, toolName: 'read_file', content });
+  const history = [
+    { role: 'user', content: 'plan it' },
+    call('c1'), result('c1', file),
+    call('c2'), result('c2', file),
+    call('c3'), result('c3', file.replace('hhh', 'hXh')), // the file changed: a different result
+    call('c4'), result('c4', file),
+  ];
+  const { history: sent, omittedMessages } = projectHistoryForModel(history);
+  assert.match(sent[2].content, /identical to a later result/);
+  assert.match(sent[4].content, /identical to a later result/);
+  assert.equal(sent[6].content, history[6].content, 'a changed file is not a duplicate');
+  assert.equal(sent[8].content, file, 'the newest copy is kept verbatim');
+  assert.equal(omittedMessages, 2);
+  assert.equal(history[2].content, file, 'the stored history is not modified');
+});

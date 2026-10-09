@@ -100,3 +100,33 @@ test('mutation-only phase removes discovery tool affordances from the compatibil
   assert.doesNotMatch(prompt, /Explore narrowly before editing/i);
   assert.match(prompt, /Only the four tools listed above are valid/i);
 });
+
+test('phase guidance is split off so the system prompt stays the same for the whole task', () => {
+  const { splitPhasePrompt, systemPromptForAgentPhase } = require('../out/agentPhasePrompt.js');
+  const { SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT } = require('../out/openRouterClient.js');
+  const verifying = splitPhasePrompt(systemPromptForAgentPhase(false, false, true, 'src/a.ts'));
+  assert.equal(verifying.systemPrompt, undefined, 'the default system prompt is used');
+  assert.match(verifying.phaseNote, /Edited file: `src\/a\.ts`/);
+  assert.ok(!verifying.phaseNote.includes(SYSTEM_PROMPT.slice(0, 200)));
+  const acting = splitPhasePrompt(systemPromptForAgentPhase(false, true, false));
+  assert.equal(acting.systemPrompt, undefined);
+  assert.match(acting.phaseNote, /Current phase/);
+  assert.deepEqual(splitPhasePrompt(undefined), { systemPrompt: undefined, phaseNote: '' });
+  // Ask mode keeps its own (fixed) system prompt
+  assert.deepEqual(splitPhasePrompt(CHAT_SYSTEM_PROMPT), { systemPrompt: CHAT_SYSTEM_PROMPT, phaseNote: '' });
+});
+
+test('a phase change is added to the conversation without changing earlier messages', () => {
+  const { appendPhaseNote } = require('../out/agentPhasePrompt.js');
+  const sent = { role: 'assistant', content: '', nativeToolCalls: [{ id: 'c1', name: 'edit_file', arguments: {} }] };
+  // Native tools: the newest message is a tool result, so the note is a new user message
+  const native = [{ role: 'user', content: 'fix it' }, sent, { role: 'tool', toolCallId: 'c1', toolName: 'edit_file', content: 'ok' }];
+  appendPhaseNote(native, 'Verify the edit.');
+  assert.deepEqual(native[3], { role: 'user', content: '[System Phase]\nVerify the edit.' });
+  assert.equal(native[2].content, 'ok', 'earlier messages are untouched');
+  // Tool-text mode: joins the unsent [Tool Results] message, so roles keep alternating
+  const fenced = [{ role: 'user', content: 'fix it' }, { role: 'assistant', content: '```edit_file' }, { role: 'user', content: '[Tool Results]\n\nok' }];
+  appendPhaseNote(fenced, '');
+  assert.equal(fenced.length, 3);
+  assert.match(fenced[2].content, /^\[Tool Results\]\n\nok\n\n\[System Phase\]\nThe previous phase is complete/);
+});

@@ -27,12 +27,14 @@ export class McpManager {
             // Skip duplicates
             if (this._clients.has(cfg.name)) { continue; }
 
+            const client = new McpClient(cfg.name, cfg.command, cfg.args ?? [], cfg.env);
             try {
-                const client = new McpClient(cfg.name, cfg.command, cfg.args ?? [], cfg.env);
                 await client.connect();
                 this._clients.set(cfg.name, client);
                 statuses.push({ name: cfg.name, connected: true, toolCount: client.tools.length });
             } catch (err) {
+                // The process may have started before the handshake failed: don't leave it running
+                client.disconnect();
                 const message = err instanceof Error ? err.message : String(err);
                 vscode.window.showWarningMessage(`Codico: MCP server "${cfg.name}" failed — ${message}`);
                 statuses.push({ name: cfg.name, connected: false, toolCount: 0, error: message });
@@ -70,10 +72,10 @@ export class McpManager {
     }
 
     /** Invoke a tool on a specific server. */
-    async callTool(serverName: string, toolName: string, args: Record<string, unknown>): Promise<McpToolResult> {
+    async callTool(serverName: string, toolName: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<McpToolResult> {
         const client = this._clients.get(serverName);
         if (!client) { throw new Error(`MCP server "${serverName}" is not loaded`); }
-        return client.callTool(toolName, args);
+        return client.callTool(toolName, args, signal);
     }
 
     /** True if any server is connected. */
@@ -167,23 +169,29 @@ export async function loadMcpConfigs(): Promise<McpServerConfig[]> {
             vscode.Uri.joinPath(folders[0].uri, 'mcp.json'),
         ];
         for (const uri of candidates) {
+            let bytes: Uint8Array;
             try {
-                const bytes = await vscode.workspace.fs.readFile(uri);
+                bytes = await vscode.workspace.fs.readFile(uri);
+            } catch {
+                continue; // File doesn't exist — try next
+            }
+            try {
                 const json = JSON.parse(new TextDecoder().decode(bytes)) as {
                     mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }>;
                 };
                 if (json.mcpServers && typeof json.mcpServers === 'object') {
                     for (const [name, cfg] of Object.entries(json.mcpServers)) {
-                        if (!seen.has(name) && cfg.command) {
+                        if (!seen.has(name) && cfg?.command) {
                             configs.push({ name, command: cfg.command, args: cfg.args ?? [], env: cfg.env, source: 'workspace' });
                             seen.add(name);
                         }
                     }
                 }
-                break; // stop at first found
-            } catch {
-                // File doesn't exist — try next
+            } catch (err) {
+                // A broken file must not look like a missing one: its servers would silently never start
+                void vscode.window.showWarningMessage(`Codico: ${vscode.workspace.asRelativePath(uri)} is not valid JSON, so its MCP servers were not started — ${err instanceof Error ? err.message : String(err)}`);
             }
+            break; // stop at first found
         }
     }
 

@@ -148,3 +148,33 @@ export function buildCompactedHistory(summary: string, plan: CompactionPlan): Ch
     if (plan.request) { compacted.push({ role: 'assistant', content: SUMMARY_ACK }, plan.request); }
     return [...compacted, ...plan.tail];
 }
+
+/**
+ * Once a plan is approved, the plan itself is what execution needs. The tool steps that
+ * led to it (mostly file reads) would otherwise be resent with every execution request.
+ * Keeps the plan request and the final plan; drops the steps in between. Returns the
+ * history unchanged unless it ends with the reply to a plan request.
+ */
+export function dropPlanningSteps(history: ChatMessage[], planPromptStart: string): { history: ChatMessage[]; droppedChars: number } {
+    const unchanged = { history, droppedChars: 0 };
+    const last = history.length - 1;
+    const plan = history[last];
+    if (!plan || plan.role !== 'assistant' || plan.nativeToolCalls?.length) { return unchanged; }
+    let request = -1;
+    for (let i = last - 1; i >= 0; i--) {
+        if (isUserRequest(history[i])) { request = i; break; }
+    }
+    if (request < 0 || !userRequestText(history[request], planPromptStart.length).startsWith(planPromptStart)) { return unchanged; }
+    const steps = history.slice(request + 1, last);
+    if (steps.length === 0) { return unchanged; }
+    const droppedChars = steps.reduce((sum, m) => sum + size(m), 0);
+    return { history: [...history.slice(0, request + 1), plan], droppedChars };
+}
+
+/** The history and prompt to execute an approved plan with: without the planning steps, and saying so. */
+export function approvedPlanExecution(history: ChatMessage[], planPromptStart: string, executionPrompt: string): { history: ChatMessage[]; prompt: string } {
+    const slim = dropPlanningSteps(history, planPromptStart);
+    return slim.droppedChars
+        ? { history: slim.history, prompt: `${executionPrompt}\n\n(The files read while planning are no longer in context, to save tokens. Re-read what you need before editing it.)` }
+        : { history, prompt: executionPrompt };
+}

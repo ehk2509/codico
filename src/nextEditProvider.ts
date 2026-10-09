@@ -13,6 +13,7 @@
  */
 
 import * as vscode from 'vscode';
+import { notifyUnsupportedModelOnce, unsupportedEditorModel } from './editorModel';
 import * as https from 'https';
 import { ignoreRules } from './ignoreRules';
 
@@ -176,6 +177,8 @@ async function fetchNextEdit(
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 let _nesDebounce: ReturnType<typeof setTimeout> | undefined;
+/** The request waiting on the debounce timer; a newer one settles it (else it never resolves). */
+let _nesDebounceResolve: ((value: null) => void) | undefined;
 
 export class NextEditProvider implements vscode.InlineCompletionItemProvider {
     constructor(private readonly _context: vscode.ExtensionContext) {}
@@ -212,14 +215,18 @@ export class NextEditProvider implements vscode.InlineCompletionItemProvider {
 
         return new Promise((resolve) => {
             if (_nesDebounce) { clearTimeout(_nesDebounce); }
+            _nesDebounceResolve?.(null);
+            _nesDebounceResolve = resolve;
 
             _nesDebounce = setTimeout(async () => {
+                _nesDebounceResolve = undefined;
                 if (token.isCancellationRequested) { return resolve(null); }
 
                 const apiKey = await this._context.secrets.get('openRouterApiKey');
                 if (!apiKey) { return resolve(null); }
 
                 const model = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+                if (unsupportedEditorModel(model)) { notifyUnsupportedModelOnce('Next-edit suggestions', model); return resolve(null); }
 
                 // Wider context: 3000 prefix + 800 suffix (was 1500 + 600)
                 const offset      = document.offsetAt(position);

@@ -42,6 +42,19 @@ export interface TerminalProcessResult {
     backgroundProcessGroup?: number;
 }
 
+const TAIL_CHARS = 16_000;
+
+/**
+ * Shortens command output for the model, keeping its start and (mostly) its end: test
+ * runners and builds print failures and the summary last.
+ */
+export function clipTerminalOutput(output: string, maxChars = 4000): string {
+    if (output.length <= maxChars) { return output; }
+    const head = Math.floor(maxChars / 4);
+    const tailLength = maxChars - head;
+    return `${output.slice(0, head)}\n… (${(output.length - maxChars).toLocaleString()} characters omitted) …\n${output.slice(-tailLength)}`;
+}
+
 export function processGroupAlive(pgid: number): boolean {
     if (process.platform === 'win32') { return false; }
     try {
@@ -92,12 +105,18 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
             shell,
             detached: useProcessGroup,
             windowsHide: true,
+            // No input: a command that prompts (npx install, npm init…) gets end-of-input and
+            // fails at once instead of waiting for an answer until the timeout
+            stdio: ['ignore', 'pipe', 'pipe'],
         });
 
         let timedOut = false;
         let settled = false;
         let capturedBytes = 0;
         const outputChunks: string[] = [];
+        // Past the capture limit only the end is kept: that is where failures and summaries are
+        let tail = '';
+        let overflowed = false;
         let killTimer: ReturnType<typeof setTimeout> | undefined;
         let forceSettleTimer: ReturnType<typeof setTimeout> | undefined;
         let exitGraceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -129,7 +148,7 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
                 : undefined;
 
             resolve({
-                output: outputChunks.join(''),
+                output: outputChunks.join('') + (overflowed ? `\n… (output beyond ${maxCapturedBytes.toLocaleString()} bytes omitted; its end follows) …\n${tail}` : ''),
                 exitCode,
                 signal: exitSignal,
                 timedOut,
@@ -160,13 +179,18 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
 
         const onData = (text: string): void => {
             onChunk?.(text);
-            if (capturedBytes >= maxCapturedBytes) { return; }
+            if (capturedBytes >= maxCapturedBytes) {
+                overflowed = true;
+                tail = (tail + text).slice(-TAIL_CHARS);
+                return;
+            }
             const remaining = maxCapturedBytes - capturedBytes;
             const kept = Buffer.byteLength(text) <= remaining
                 ? text
                 : Buffer.from(text).subarray(0, remaining).toString('utf8');
             capturedBytes += Buffer.byteLength(kept);
             outputChunks.push(kept);
+            if (kept !== text) { overflowed = true; tail = text.slice(kept.length).slice(-TAIL_CHARS); }
         };
 
         // Decoded per stream so a character split across chunks is not corrupted
