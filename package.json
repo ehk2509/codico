@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.3.9",
+  "version": "0.3.10",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -52,27 +52,41 @@
             "id": "codico.gettingStarted.provider",
             "title": "Choose a model provider",
             "description": "Set a key, or use a login you already have.\n[Set an OpenRouter key](command:codico.setApiKey)\n[Set your own provider key](command:codico.setDirectApiKey)\nFor Claude Code, ChatGPT or Ollama: [open the chat](command:codico.chatView.focus) and pick it in the Provider menu.",
-            "media": { "markdown": "media/walkthrough/provider.md" },
-            "completionEvents": [ "onCommand:codico.setApiKey", "onCommand:codico.setDirectApiKey", "onSettingChanged:codico.model" ]
+            "media": {
+              "markdown": "media/walkthrough/provider.md"
+            },
+            "completionEvents": [
+              "onCommand:codico.setApiKey",
+              "onCommand:codico.setDirectApiKey",
+              "onSettingChanged:codico.model"
+            ]
           },
           {
             "id": "codico.gettingStarted.chat",
             "title": "Ask for something",
             "description": "Describe a task in plain words and choose how much freedom Codico gets.\n[Open the chat](command:codico.chatView.focus)",
-            "media": { "markdown": "media/walkthrough/chat.md" },
-            "completionEvents": [ "onView:codico.chatView" ]
+            "media": {
+              "markdown": "media/walkthrough/chat.md"
+            },
+            "completionEvents": [
+              "onView:codico.chatView"
+            ]
           },
           {
             "id": "codico.gettingStarted.control",
             "title": "Stay in control",
             "description": "Approvals, undo and review: nothing changes without you.",
-            "media": { "markdown": "media/walkthrough/control.md" }
+            "media": {
+              "markdown": "media/walkthrough/control.md"
+            }
           },
           {
             "id": "codico.gettingStarted.find",
             "title": "Find things, and get told when work is done",
             "description": "Search conversations and get notified.\n[Notification settings](command:workbench.action.openSettings?%22codico.notifications%22)",
-            "media": { "markdown": "media/walkthrough/find.md" }
+            "media": {
+              "markdown": "media/walkthrough/find.md"
+            }
           }
         ]
       }

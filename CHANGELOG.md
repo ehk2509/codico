@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.10 - 2026-10-10
 
 ### Added
 - Find in a conversation: `Ctrl+F` / `Cmd+F` in the chat (or the ⌕ button) opens a find bar. Matches are highlighted in messages, replies, code and reasoning, with a count and `Enter` / `Shift+Enter` to step through them; a match inside a collapsed code block, a folded run of steps or a closed reasoning trace opens it. It keeps up with a reply that is still streaming.
