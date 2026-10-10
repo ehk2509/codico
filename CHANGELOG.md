@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.12 - 2026-10-11
 
 ### Added
 - Drafts and reading position: each thread keeps its own unsent message and where you were reading, through thread switches, hiding the panel and reloading the window.
