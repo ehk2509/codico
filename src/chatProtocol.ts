@@ -100,6 +100,10 @@ export type WebviewMessage =
     | { type: 'openFile'; path: string; line?: number }
     | { type: 'openChangeDiff'; path: string }
     | { type: 'pinThread'; id: string }
+    /** A thread as Markdown: saved to a file or copied (the extension asks which). */
+    | { type: 'exportThread'; id: string }
+    /** A code block's Insert (at the editor's cursor) or New file. */
+    | { type: 'codeBlock'; action: 'insert' | 'newFile'; code: string; language?: string }
     /** The MCP catalog: show it, or add / remove one of its servers (by catalog id; the command comes from the catalog). */
     | { type: 'mcpCatalog'; action: 'open' | 'add' | 'remove'; id?: string };
 
@@ -108,7 +112,7 @@ export type ExtensionMessage =
     /** A sent message did not start a turn (e.g. no API key): its bubble gets no actions. */
     | { type: 'turnSkipped' }
     /** Display preferences (codico.chatDensity, codico.showReasoning). */
-    | { type: 'uiSettings'; density: 'comfortable' | 'compact'; showReasoning: boolean }
+    | { type: 'uiSettings'; density: 'comfortable' | 'compact'; showReasoning: boolean; /** Prompt tokens at which auto-compact starts (when it is switched on in the panel). */ compactAt?: number }
     /** An image file dropped onto the chat, to attach like a pasted image. */
     | { type: 'droppedImage'; dataUrl: string; name: string }
     | { type: 'appendThinking'; id: string; text: string }

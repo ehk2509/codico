@@ -46,7 +46,8 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
+import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile } from './chatFiles';
+import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { promptForMissingKey, providerStatusMessage, usableModel } from './modelFallback';
@@ -209,7 +210,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._initThreadsSync();
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
-            if (e.affectsConfiguration('codico.chatDensity') || e.affectsConfiguration('codico.showReasoning')) { this._postUiSettings(); }
+            if (['chatDensity', 'showReasoning', 'autoCompactThreshold'].some(key => e.affectsConfiguration(`codico.${key}`))) { this._postUiSettings(); }
             // The header selector follows the setting (changed in Settings, or by the no-OpenRouter-key fallback)
             if (e.affectsConfiguration('codico.model')) { this._post({ type: 'setModel', model: vscode.workspace.getConfiguration('codico').get<string>('model', 'deepseek/deepseek-v4-flash') }); }
         }, undefined, _context.subscriptions);
@@ -655,6 +656,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 const change = target ? this._undoRedo.latestFor(target.uri) : undefined;
                 if (target && change) { await openChangeDiff(target.uri, change.before); }
                 else { this._post({ type: 'error', message: `No change by Codico to ${msg.path} can be shown (it may have been undone).` }); }
+                break;
+            }
+            case 'codeBlock': {
+                const problem = msg.action === 'insert' ? await insertCodeAtCursor(msg.code) : void await openCodeInNewFile(msg.code, msg.language ?? '');
+                if (problem) { this._post({ type: 'error', message: problem }); }
+                break;
+            }
+            case 'exportThread': {
+                const thread = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === msg.id);
+                // The open thread's newest messages may not be saved yet
+                const messages = msg.id === this._activeThreadId ? this._displayMessages : this._store.get<DisplayMessage[]>(this._threadDisplayKey(msg.id), []);
+                if (thread) { await exportMarkdown(threadMarkdown(thread.name, messages), exportFileName(thread.name)); }
                 break;
             }
             case 'pinThread': {
@@ -2661,7 +2674,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private _postUiSettings(): void {
         const cfg = vscode.workspace.getConfiguration('codico');
-        this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true) });
+        this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true),
+            compactAt: cfg.get<number>('autoCompactThreshold', 60_000) });
     }
 
     private _getThreadListForWebview(): Array<ThreadEntry & { active: boolean }> {

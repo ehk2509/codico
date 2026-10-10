@@ -239,6 +239,13 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 - Click any result to open that thread with its matches highlighted (the find bar opens with your search)
 - Keyboard navigation: `↑`/`↓` to move between results, `Enter` to open, `Esc` to close
 
+### Everyday Conveniences
+- **Drafts and reading position** — each thread keeps its own unsent message and remembers where you were reading. Both survive switching threads, hiding the panel and reloading the window. (Attached files and images are not kept with a draft.)
+- **Context meter** — next to the token count: how close the conversation is to being compacted, as a bar and a percentage of the auto-compact threshold (green, then yellow from 70%, red from 90%). With auto-compact off it shows the size of the last request instead.
+- **Code block actions** — **Insert** puts the code at the cursor of the editor in use (replacing the selection); **New file** opens it in an untitled editor in its language; **Copy** as before. They work while the reply is still being written.
+- **Export a thread** — the ⤓ button on a thread in the list saves the conversation as a Markdown file or copies it: your messages, the replies, the steps taken (folded) and each change report. Reasoning and raw terminal output are left out.
+- **Queued message** — a message sent while the agent is busy waits in a banner. **Edit** puts it back in the box to change it, × cancels it, and anything you type while it waits stays in the box after it is sent.
+
 ### Find in a Conversation
 Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **⌕** in the thread bar:
 

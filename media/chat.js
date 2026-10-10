@@ -453,8 +453,49 @@
     return true;
   }
 
+  // ── What the panel remembers per thread: the unsent draft and where you were reading ──
+  // Kept in the webview's own state, so it survives hiding the panel and reloading the window.
+  var _saved = (function () { try { return vscode.getState() || {}; } catch (e) { return {}; } }());
+  _saved.drafts = _saved.drafts || {};
+  _saved.scroll = _saved.scroll || {};
+  var _threadId = null;       // the thread on screen
+  var _lastLoadedThread = null;
+  var _draftTimer = null;
+  function _persist() { try { vscode.setState(_saved); } catch (e) { /* state is a convenience */ } }
+  function _saveDraftNow() {
+    clearTimeout(_draftTimer);
+    if (!_threadId) { return; }
+    var text = input.value;
+    if (text.trim() && text.length <= 20000) { _saved.drafts[_threadId] = text; } else { delete _saved.drafts[_threadId]; }
+    _persist();
+  }
+  function _saveDraftSoon() { clearTimeout(_draftTimer); _draftTimer = setTimeout(_saveDraftNow, 300); }
+  function _setInput(text) {
+    input.value = text;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  }
+  /** A thread came on screen: its own draft replaces the one that was being typed in the other thread. */
+  function _enterThread(id) {
+    if (id === _threadId) { return false; }
+    _saveDraftNow();
+    var first = _threadId === null;
+    _threadId = id;
+    // After a reload the box may already hold text typed before the thread was known: keep it
+    if (!(first && input.value)) { _setInput(_saved.drafts[id] || ''); }
+    return true;
+  }
+  /** Threads that no longer exist take their drafts and positions with them. */
+  function _pruneSaved(threads) {
+    var alive = {};
+    threads.forEach(function (t) { alive[t.id] = true; });
+    ['drafts', 'scroll'].forEach(function (kind) { Object.keys(_saved[kind]).forEach(function (id) { if (!alive[id]) { delete _saved[kind][id]; } }); });
+    _persist();
+  }
+
   // Auto-resize textarea
   input.addEventListener('input', function () {
+    _saveDraftSoon();
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 140) + 'px';
     var val = input.value;
@@ -719,6 +760,27 @@
         });
       })(items[k]);
     }
+  }
+
+  // ── Context meter: how close the conversation is to being compacted ───────────────
+  // The size of the last request against the auto-compact threshold: that, not the model's
+  // limit, is what decides when earlier turns are summarised.
+  var _ctxTokens = 0;       // prompt tokens of the last request; 0 = not known
+  var _compactAt = 60000;
+  function _setContextMeter(promptTokens) {
+    if (typeof promptTokens === 'number') { _ctxTokens = promptTokens; }
+    var el = document.getElementById('s-ctx');
+    if (!el) { return; }
+    if (!_ctxTokens) { el.style.display = 'none'; return; }
+    var auto = !!autoCompactCb.checked && _compactAt > 0;
+    var share = auto ? Math.min(1, _ctxTokens / _compactAt) : 0;
+    el.style.display = 'inline-flex';
+    el.className = 'ctx-meter' + (auto ? (share >= 0.9 ? ' high' : share >= 0.7 ? ' mid' : '') : ' off');
+    el.querySelector('.ctx-fill').style.width = Math.round(share * 100) + '%';
+    el.querySelector('.ctx-label').textContent = auto ? Math.round(share * 100) + '%' : _fmtTokens(_ctxTokens) + ' ctx';
+    el.title = 'Context: the last request held ' + _ctxTokens.toLocaleString('en-US') + ' tokens.\n' + (auto
+      ? 'Auto-compact summarises earlier turns at ' + _compactAt.toLocaleString('en-US') + ' tokens (' + Math.round(share * 100) + '% of the way there).'
+      : 'Auto-compact is off: the conversation keeps growing until you compact it.');
   }
 
   // ── Change report: what a reply changed and what was checked afterwards ──────────
@@ -1019,6 +1081,7 @@
   autoCompactWrap.classList.add('active');
   vscode.postMessage({ type: 'toggleAutoCompact', enabled: true });
   autoCompactCb.addEventListener('change', function () {
+    _setContextMeter();
     _autoCompact = autoCompactCb.checked;
     autoCompactWrap.classList.toggle('active', _autoCompact);
     vscode.postMessage({ type: 'toggleAutoCompact', enabled: _autoCompact });
@@ -1253,6 +1316,11 @@
   }
 
   function send() {
+    _sendNow();
+    // Sent: the box is empty and so is the draft. Refused or queued: what is in the box is the draft
+    _saveDraftNow();
+  }
+  function _sendNow() {
     var text = input.value.trim();
     var rawInput = text;
     if (!text) { return; }
@@ -1493,10 +1561,12 @@
       var queued = _queuedMsg;
       _queuedMsg = null;
       _hideQueuedBanner();
+      // What was typed while waiting stays in the box after the queued message is sent
+      var typedMeanwhile = input.value;
       ctxAttachments = queued.attachments || [];
       renderChips();
       input.value = queued.rawInput;
-      setTimeout(function() { send(); }, 80);
+      setTimeout(function() { send(); if (typedMeanwhile && !input.value) { _setInput(typedMeanwhile); _saveDraftNow(); } }, 80);
     }
   }
 
@@ -1505,19 +1575,40 @@
     var bar = document.createElement('div');
     bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 10px 5px 12px;' +
       'background:rgba(109,40,217,.12);border:1px solid rgba(109,40,217,.35);' +
-      'border-radius:6px;font-size:11.5px;color:var(--vscode-descriptionForeground);margin-bottom:4px;';
+      'border-radius:6px;font-size:11.5px;color:var(--vscode-descriptionForeground);margin-bottom:4px;min-width:0;max-width:100%;box-sizing:border-box;';
     var lbl = document.createElement('span');
     lbl.textContent = '\u26a1 Queued:';
     lbl.style.cssText = 'font-weight:600;color:var(--vscode-foreground);white-space:nowrap;flex-shrink:0';
     var txt = document.createElement('span');
     txt.textContent = text.length > 80 ? text.slice(0, 80) + '\u2026' : text;
-    txt.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8';
+    txt.title = text.slice(0, 2000);
+    txt.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8';
     var btn = document.createElement('button');
     btn.textContent = '\u00d7';
     btn.title = 'Cancel queued message';
     btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex-shrink:0;opacity:.6';
     btn.addEventListener('click', function() { _queuedMsg = null; _hideQueuedBanner(); });
-    bar.appendChild(lbl); bar.appendChild(txt); bar.appendChild(btn);
+    // Edit: the message goes back into the box (with its attachments) and is no longer queued
+    var edit = document.createElement('button');
+    edit.textContent = 'Edit';
+    edit.className = 'queued-edit';
+    edit.title = 'Put the message back in the box to change it';
+    edit.style.cssText = 'background:none;border:1px solid var(--vscode-panel-border);border-radius:4px;cursor:pointer;font-size:10.5px;font-family:inherit;padding:0 6px;flex-shrink:0;color:var(--vscode-foreground)';
+    edit.addEventListener('click', function () {
+      var queued = _queuedMsg;
+      _queuedMsg = null;
+      _hideQueuedBanner();
+      if (!queued) { return; }
+      // Text typed since goes after it rather than being lost
+      _setInput(queued.rawInput + (input.value.trim() ? '\n' + input.value : ''));
+      ctxAttachments = (queued.attachments || []).concat(ctxAttachments);
+      renderChips();
+      _saveDraftNow();
+      input.focus();
+    });
+    btn.className = 'queued-cancel';
+    bar.className = 'queued-banner';
+    bar.appendChild(lbl); bar.appendChild(txt); bar.appendChild(edit); bar.appendChild(btn);
     var row = document.getElementById('input-area-row');
     if (row) { row.parentNode.insertBefore(bar, row); }
     _queuedBarEl = bar;
@@ -1739,8 +1830,27 @@
 
   // One listener for every message: actions, regenerate, and code block toggles
   msgs.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link, .step-summary') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link, .step-summary, .code-lang-bar button') : null;
     if (!btn) { return; }
+    // Copy / Insert / New file on a code block. Handled here, not per button: a reply that is
+    // still streaming re-renders its blocks many times a second, which would drop per-button handlers.
+    if (btn.closest('.code-lang-bar') && !btn.classList.contains('code-toggle')) {
+      var block = btn.closest('.code-wrap');
+      var codeEl = block && block.querySelector('pre code');
+      var code = codeEl ? codeEl.textContent : (btn.dataset.code || '');
+      if (btn.classList.contains('code-insert')) {
+        vscode.postMessage({ type: 'codeBlock', action: 'insert', code: code });
+      } else if (btn.classList.contains('code-newfile')) {
+        var lang = codeEl ? (/language-([\w+#.-]+)/.exec(codeEl.className) || [])[1] : '';
+        vscode.postMessage({ type: 'codeBlock', action: 'newFile', code: code, language: lang || '' });
+      } else if (navigator.clipboard) {
+        navigator.clipboard.writeText(code).then(function () {
+          btn.textContent = '\u2713 Copied';
+          setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
+        }, function () {});
+      }
+      return;
+    }
     if (btn.classList.contains('step-summary')) {
       var open = btn.classList.toggle('open');
       btn.querySelector('.step-summary-arrow').textContent = open ? '\u25BE' : '\u25B8';
@@ -2182,18 +2292,6 @@
       ao.classList.remove('stream-cursor');
       var displayContent = curSegRaw.replace(CLARIFY_RE, '').trim();
       ao.innerHTML = renderMd(displayContent);
-      // Wire up per-code-block copy buttons (new lang bar style)
-      ao.querySelectorAll('.code-lang-bar button[data-code]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var code = btn.dataset.code || '';
-          if (navigator.clipboard) {
-            navigator.clipboard.writeText(code).then(function () {
-              btn.textContent = '\u2713 Copied';
-              setTimeout(function () { btn.textContent = 'Copy'; }, 1500);
-            });
-          }
-        });
-      });
 
       // Wrap the trailing Summary block (after last <hr>) in a styled div.
       // Guard: only wrap when the first non-empty node after the <hr> contains
@@ -3072,8 +3170,16 @@
     _jumpPill.style.bottom = Math.max(10, window.innerHeight - msgs.getBoundingClientRect().bottom + 10) + 'px';
     _jumpPill.style.display = on ? 'block' : 'none';
   }
+  var _scrollTimer = null;
   msgs.addEventListener('scroll', function () {
     var atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40;
+    // Where you were reading in this thread, for when you come back to it (the end needs no remembering)
+    clearTimeout(_scrollTimer);
+    _scrollTimer = setTimeout(function () {
+      if (!_threadId) { return; }
+      if (msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 40) { delete _saved.scroll[_threadId]; } else { _saved.scroll[_threadId] = Math.round(msgs.scrollTop); }
+      _persist();
+    }, 250);
     if (atBottom) { _followStream = true; _lastAutoTop = msgs.scrollTop; _showJumpPill(false); }
     else if (msgs.scrollTop < _lastAutoTop - 4) { _followStream = false; }
   });
@@ -3161,6 +3267,17 @@
       });
       actionsEl.appendChild(pinBtn);
       actionsEl.appendChild(editBtn);
+      if (t.messageCount > 0) {
+        var exportBtn = document.createElement('button');
+        exportBtn.className = 'session-action-btn export';
+        exportBtn.title = 'Export as Markdown (save to a file or copy)';
+        exportBtn.textContent = '\u2913';
+        exportBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          vscode.postMessage({ type: 'exportThread', id: t.id });
+        });
+        actionsEl.appendChild(exportBtn);
+      }
 
       var hasOtherNonEmpty = threads.some(function(other) { return other.id !== t.id && other.messageCount > 0; });
       if (t.messageCount > 0 || hasOtherNonEmpty) {
@@ -3474,6 +3591,7 @@
         if (data.turnId) { var ub = _oldestUntaggedUserMsg(); if (ub) { _tagUserMsg(ub, data.turnId, data.editable); if (data.planGoal) { ub.dataset.editText = data.planGoal; } } }
         startMsg(data.id); setStreaming(true); break;
       case 'uiSettings':
+        if (typeof data.compactAt === 'number') { _compactAt = data.compactAt; _setContextMeter(); }
         document.body.classList.toggle('density-compact', data.density === 'compact');
         document.body.classList.toggle('hide-reasoning', data.showReasoning === false);
         break;
@@ -3513,6 +3631,7 @@
         }
         break;
       case 'tokenUsage':
+        if (data.promptTokens) { _setContextMeter(data.promptTokens); }
         if (sTokens) {
           var tokText = data.totalTokens
             ? (_fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
@@ -3558,6 +3677,8 @@
         break;
       }
       case 'compactDone': {
+        // The conversation was just summarised: its size is not known until the next request
+        _setContextMeter(0);
         // If compact ran mid-stream, update the inline pill and keep the status as streaming
         var inlinePill = curId ? document.getElementById('compact-inline-' + curId) : null;
         if (inlinePill) {
@@ -3779,6 +3900,9 @@
         break;
       case 'threadList':
         _renderThreadTabs(data.threads);
+        _pruneSaved(data.threads || []);
+        // An empty thread sends no conversation: this is how the panel learns which one is open
+        (data.threads || []).forEach(function (t) { if (t.active) { _enterThread(t.id); } });
         break;
       case 'threadSearchResults':
         _renderSearchResults(data.query, data.results);
@@ -3792,6 +3916,11 @@
         break;
       }
       case 'threadLoaded':
+        _enterThread(data.id);
+        // Loaded again for the same thread (an edit, a delete): the view stays where it is put below
+        var enteredThread = _lastLoadedThread !== data.id;
+        _lastLoadedThread = data.id;
+        _setContextMeter(0);
         msgs.innerHTML = '';
         msgs.appendChild(welcome);
         curId = null;
@@ -3831,6 +3960,13 @@
         }
         _placeRegenerate();
         scrollBottom(true);
+        // Back in a thread you were reading: the place you left, not the end
+        var savedTop = _saved.scroll[data.id];
+        if (enteredThread && typeof savedTop === 'number' && !data.pendingUserText && _pendingFind === null) {
+          _followStream = false;
+          msgs.scrollTo({ top: savedTop, behavior: 'instant' });
+          _showJumpPill(true);
+        }
         // Opened from a search across threads: show its matches here. An open find bar searches the new thread.
         if (_pendingFind !== null) { var findQuery = _pendingFind; _pendingFind = null; setTimeout(function () { _openFind(findQuery); }, 0); }
         else if (_findBar.classList.contains('open')) { setTimeout(function () { _findIndex = -1; _findRun(true); }, 0); }

@@ -5,9 +5,19 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Drafts and reading position: each thread keeps its own unsent message and where you were reading, through thread switches, hiding the panel and reloading the window.
+- Context meter in the status bar: how close the conversation is to auto-compaction, as a bar and a percentage of the threshold; the size of the last request when auto-compact is off.
+- Code blocks have **Insert** (at the editor's cursor, replacing the selection) and **New file** (an untitled editor in the block's language) next to Copy.
+- Export a thread as Markdown from the thread list (⤓): save to a file or copy. It holds your messages, the replies, the steps taken and each change report.
+- A queued message can be edited: **Edit** on its banner puts it back in the box.
 - Change report: a reply that changed files ends with a card giving a verdict (Verified, Checks failing, Not verified), the files changed with lines added and removed, the test, build, type-check and lint commands that ran with their results, and what was not covered. A check that failed earlier in the turn and passes now is marked "was failing". Results are not taken on trust: a check that ran before the last file change does not count, and neither does a success hidden behind a pipe unless the test runner's summary shows it. Built from what Codico observed, with no model request; "Copy as Markdown" for pull requests; `codico.changeReport: false` turns it off.
 - MCP catalog: **🔌 MCP** in the chat header lists known servers (Playwright, Chrome DevTools, Context7, Memory, Sequential Thinking), each pinned to a version and checked to connect with Codico. A card shows the exact command; **Add…** opens a VS Code dialog with that command, its requirements and tool count, and adds the server to this project (`.mcp.json`) or to all projects (user settings) only when you choose. **Remove** takes it out. The panel can only name a catalog entry: the command always comes from the bundled catalog.
 - Project skills and agents: a project can define its own, as Markdown files in a `.codico` folder committed with the code. A skill (`.codico/skills/<name>/SKILL.md`, the same layout as Claude Code's) holds the steps for one kind of task: Codico is told its name, description and path and reads it when a task matches, or you run it with `/name`. An agent (`.codico/agents/<name>.md`) is called with `@name` and puts its instructions in charge of the turn. Both appear in the `/` and `@` menus marked "project", "Codico: New Skill" and "Codico: New Agent" create a starting file, and file changes are picked up at once. Files with an unusable name, no instructions or more than 20,000 characters are skipped with a message; nothing is loaded in an untrusted folder.
+
+### Fixed
+- Copy on a code block did nothing while the reply was still streaming, or in a reply loaded from a thread saved by an older version: the button was only wired up when a reply finished. Clicks are now handled in one place.
+- A queued message replaced whatever you had typed while it waited. The typed text now stays in the box.
+- The queued-message banner could be wider than a narrow panel.
 
 ## 0.3.11 - 2026-10-10
 
