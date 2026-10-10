@@ -1,3 +1,4 @@
+import type { McpCatalogRow } from './mcpCatalog';
 // Shared protocol contracts for the extension host and webview-facing runtimes.
 // Keep this module data-only: it must not depend on VS Code runtime state.
 
@@ -97,7 +98,9 @@ export type WebviewMessage =
     | { type: 'attachDroppedFiles'; uris: string[] }
     | { type: 'openFile'; path: string; line?: number }
     | { type: 'openChangeDiff'; path: string }
-    | { type: 'pinThread'; id: string };
+    | { type: 'pinThread'; id: string }
+    /** The MCP catalog: show it, or add / remove one of its servers (by catalog id; the command comes from the catalog). */
+    | { type: 'mcpCatalog'; action: 'open' | 'add' | 'remove'; id?: string };
 
 export type ExtensionMessage =
     | { type: 'startMessage'; id: string; /** Set when this reply is a plan awaiting approval. */ planGoal?: string; /** The turn this reply answers; tags its user message. */ turnId?: string; /** Whether that message can be edited. */ editable?: boolean }
@@ -125,6 +128,7 @@ export type ExtensionMessage =
     /** Which providers have an API key, keyed as the header's provider menu names them. */
     | { type: 'providerKeys'; keys: Record<string, boolean>; /** Whether the command of each login-based provider (Claude Code, ChatGPT) was found on this machine. */ installed?: Record<string, boolean> }
     | { type: 'agentActive'; agent: string }
+    | { type: 'mcpCatalog'; servers: McpCatalogRow[] }
     /** The project's own agents (@name) and skills (/name), from its .codico folder. */
     | { type: 'userExtensions'; agents: Array<{ name: string; description: string }>; skills: Array<{ name: string; description: string }> }
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }

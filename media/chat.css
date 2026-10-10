@@ -83,7 +83,7 @@ body{
   opacity:1;color:var(--vscode-charts-purple,#a78bfa);
   background:rgba(167,139,250,.09);
 }
-#compact-btn{
+#compact-btn,#mcp-btn{
   display:inline-flex;align-items:center;gap:3px;
   padding:2px 8px;border-radius:4px;
   font-size:10.5px;font-weight:500;font-family:inherit;line-height:1;
@@ -92,7 +92,7 @@ body{
   opacity:.65;transition:opacity .15s,background .15s,border-color .15s;
   white-space:nowrap;
 }
-#compact-btn:hover{
+#compact-btn:hover,#mcp-btn:hover,#mcp-btn.active{
   opacity:1;background:var(--vscode-toolbar-hoverBackground);
   border-color:var(--vscode-focusBorder,#a78bfa);
   color:var(--vscode-focusBorder,#a78bfa);
@@ -216,6 +216,36 @@ body{
 #chat-body {
   position:relative; display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden;
 }
+/* ── MCP catalog ── */
+#mcp-catalog-overlay{
+  display:none;flex-direction:column;position:absolute;top:0;left:0;right:0;bottom:0;z-index:90;
+  background:var(--vscode-sideBar-background,#1e1e2e);
+}
+#mcp-catalog-overlay.open{display:flex}
+#mcp-catalog-header{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--vscode-panel-border)}
+.mcp-catalog-title{flex:1;font-size:12px;font-weight:600;color:var(--vscode-foreground)}
+#mcp-catalog-close{border:none;background:transparent;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:12px;padding:2px 6px;border-radius:3px}
+#mcp-catalog-close:hover{color:var(--vscode-foreground);background:var(--vscode-list-hoverBackground)}
+.mcp-catalog-intro,.mcp-catalog-foot{font-size:10.5px;line-height:1.5;color:var(--vscode-descriptionForeground);padding:8px 10px}
+.mcp-catalog-foot{border-top:1px solid var(--vscode-panel-border)}
+#mcp-catalog-list{flex:1 1 0;min-height:0;overflow-y:auto;padding:0 8px 8px;display:flex;flex-direction:column;gap:6px}
+.mcp-entry{border:1px solid var(--vscode-panel-border);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:4px;background:var(--vscode-editorWidget-background,transparent)}
+.mcp-entry-head{display:flex;align-items:center;gap:6px;min-width:0}
+.mcp-entry-name{font-size:12px;font-weight:600;color:var(--vscode-foreground)}
+.mcp-entry-by{font-size:10px;color:var(--vscode-descriptionForeground);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mcp-entry-desc{font-size:11px;line-height:1.45;color:var(--vscode-foreground);opacity:.9}
+.mcp-entry-cmd{font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;padding:3px 6px;border-radius:3px;background:var(--vscode-textCodeBlock-background,rgba(128,128,128,.15));overflow-wrap:anywhere}
+.mcp-entry-meta{font-size:10px;color:var(--vscode-descriptionForeground)}
+.mcp-entry-btn{
+  flex-shrink:0;font-family:inherit;font-size:10.5px;padding:2px 10px;border-radius:4px;cursor:pointer;
+  color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:1px solid transparent;
+}
+.mcp-entry-btn:hover{background:var(--vscode-button-hoverBackground)}
+.mcp-entry-btn.remove{color:var(--vscode-foreground);background:transparent;border-color:var(--vscode-panel-border)}
+.mcp-entry-btn.remove:hover{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
+.mcp-entry-btn:disabled{opacity:.5;cursor:default}
+.mcp-entry-added{font-size:9.5px;padding:1px 6px;border-radius:8px;border:1px solid var(--vscode-testing-iconPassed,#22c55e);color:var(--vscode-testing-iconPassed,#22c55e);flex-shrink:0}
+
 /* ── Find in this conversation ── */
 #find-bar{
   display:none;align-items:center;gap:4px;flex-shrink:0;

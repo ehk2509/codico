@@ -721,6 +721,45 @@
     }
   }
 
+  // ── MCP catalog: known servers, added after an approval shown by VS Code itself ──
+  var _mcpOverlay = document.getElementById('mcp-catalog-overlay');
+  var _mcpList = document.getElementById('mcp-catalog-list');
+  var _mcpBtn = document.getElementById('mcp-btn');
+  function _openMcpCatalog() {
+    _mcpOverlay.classList.add('open');
+    _mcpBtn.classList.add('active');
+    vscode.postMessage({ type: 'mcpCatalog', action: 'open' });
+  }
+  function _closeMcpCatalog() {
+    _mcpOverlay.classList.remove('open');
+    _mcpBtn.classList.remove('active');
+  }
+  function _renderMcpCatalog(servers) {
+    _mcpList.innerHTML = '';
+    if (!servers.length) { _mcpList.innerHTML = '<div class="ts-empty">The catalog could not be read.</div>'; return; }
+    servers.forEach(function (s) {
+      var row = document.createElement('div');
+      row.className = 'mcp-entry';
+      row.dataset.id = s.id;
+      row.innerHTML =
+        '<div class="mcp-entry-head"><span class="mcp-entry-name">' + esc(s.name) + '</span><span class="mcp-entry-by">' + esc(s.publisher) + '</span>' +
+        (s.added ? '<span class="mcp-entry-added">' + (s.added === 'project' ? 'in this project' : 'in your settings') + '</span>' : '') +
+        '<button class="mcp-entry-btn' + (s.added ? ' remove' : '') + '">' + (s.added ? 'Remove' : 'Add…') + '</button></div>' +
+        '<div class="mcp-entry-desc">' + esc(s.description) + '</div>' +
+        '<div class="mcp-entry-cmd" title="The command that runs on your machine">' + esc(s.commandLine) + '</div>' +
+        '<div class="mcp-entry-meta">Requires ' + esc(s.requires) + ' · ' + s.tools + ' tool' + (s.tools === 1 ? '' : 's') + '</div>';
+      row.querySelector('.mcp-entry-btn').addEventListener('click', function (e) {
+        // Until the extension answers: the approval dialog is open, or the servers are reconnecting
+        e.currentTarget.disabled = true;
+        vscode.postMessage({ type: 'mcpCatalog', action: s.added ? 'remove' : 'add', id: s.id });
+      });
+      _mcpList.appendChild(row);
+    });
+  }
+  _mcpBtn.addEventListener('click', function () { if (_mcpOverlay.classList.contains('open')) { _closeMcpCatalog(); } else { _openMcpCatalog(); } });
+  document.getElementById('mcp-catalog-close').addEventListener('click', _closeMcpCatalog);
+  _mcpOverlay.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeMcpCatalog(); } });
+
   // ── Find in this conversation (Ctrl+F) ───────────────────────────────────
   // Matches are painted with the CSS Custom Highlight API: the message DOM is not touched,
   // so a reply that is still streaming keeps rendering normally while the bar is open.
@@ -3591,6 +3630,9 @@
         break;
       case 'agentActive':
         if (data.agent) { _setActiveAgent(data.agent); }
+        break;
+      case 'mcpCatalog':
+        _renderMcpCatalog(data.servers || []);
         break;
       case 'userExtensions':
         _userAgents = (data.agents || []).map(function (a) { return { name: '@' + a.name, desc: a.description, project: true }; });

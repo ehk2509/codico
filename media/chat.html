@@ -45,6 +45,7 @@
     </label>
     <div class="h-sep"></div>
     <button id="compact-btn" data-tooltip="Compact context now — summarize conversation history to reduce token usage immediately">&#8595;&#8593; Compact context</button>
+    <button id="mcp-btn" data-tooltip="MCP servers — add tools from a list of known servers">&#128268; MCP</button>
   </div>
 </div>
 
@@ -67,6 +68,16 @@
   <div id="thread-search-results">
     <div class="ts-empty">Type to search across all conversations</div>
   </div>
+</div>
+
+<div id="mcp-catalog-overlay">
+  <div id="mcp-catalog-header">
+    <span class="mcp-catalog-title">MCP servers</span>
+    <button id="mcp-catalog-close" title="Close">&#10005;</button>
+  </div>
+  <div class="mcp-catalog-intro">MCP servers give the agent extra tools. Each one is a program that runs on your machine: you are shown its exact command and asked before anything is added.</div>
+  <div id="mcp-catalog-list"><div class="ts-empty">Loading…</div></div>
+  <div class="mcp-catalog-foot">Any other server: add it to <code>.mcp.json</code> in the project, or to the <code>codico.mcpServers</code> setting.</div>
 </div>
 
 <div id="find-bar">
