@@ -455,6 +455,9 @@ test('scrolling up during a reply stops following it and offers Jump to latest',
   assert.ok(Math.abs(await msgs.evaluate(el => el.scrollTop) - readingAt) < 5, 'the reader stays where they are');
   assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight > 100), 'not pulled to the bottom');
   assert.equal(await page.locator('.jump-latest').isVisible(), true);
+  const pillBottom = await page.locator('.jump-latest').evaluate(e => e.getBoundingClientRect().bottom);
+  const msgsBottom = await msgs.evaluate(e => e.getBoundingClientRect().bottom);
+  assert.ok(pillBottom <= msgsBottom, 'the pill sits inside the messages area, not over the toolbars below');
   await page.locator('.jump-latest').click();
   assert.ok(await msgs.evaluate(el => el.scrollHeight - el.scrollTop - el.clientHeight < 5), 'back at the bottom');
   assert.equal(await page.locator('.jump-latest').isVisible(), false);
@@ -585,4 +588,28 @@ test('the task total says how much of it came from the provider cache', async ()
   await send({ type: 'startMessage', id: 'u1' },
     { type: 'tokenUsage', promptTokens: 50000, completionTokens: 200, totalTokens: 50200, cachedTokens: 45000, taskTokens: 7600000, taskCachedTokens: 6232000, taskCostUsd: 0.24 });
   assert.match(await page.locator('#s-tokens').textContent(), /task 7\.6M tok \(82% cached\)/);
+});
+
+test('the task list of an approved plan: numbered steps with title and details, status from the step markers', async () => {
+  const { page, send } = await openPanel();
+  await requestPlan(page, 'Add bookmarks');
+  const plan = '1. **Extend the protocol** — add `bookmarkToggle` to `src/chatProtocol.ts`\n2. **Persist bookmarks** — save the flag in `src/agentProvider.ts`\n3. **Style the button** — in `media/chat.css`\n\n> Approve the plan to begin execution.';
+  await send({ type: 'startMessage', id: 'p1', planGoal: 'Add bookmarks' }, { type: 'appendContent', id: 'p1', text: plan }, { type: 'endMessage', id: 'p1' });
+  await page.locator('#msg-p1 .plan-approve-btn').click();
+  await send({ type: 'startMessage', id: 'e1', turnId: 't1', editable: false });
+  const rows = page.locator('#msg-e1 .todo-item');
+  assert.equal(await rows.count(), 3);
+  assert.equal(await rows.nth(0).locator('.todo-num').textContent(), '1');
+  assert.equal(await rows.nth(0).locator('.todo-title').textContent(), 'Extend the protocol');
+  assert.equal(await rows.nth(0).locator('.todo-detail code').first().textContent(), 'bookmarkToggle', 'code in details is rendered');
+
+  await send({ type: 'appendContent', id: 'e1', text: '[TASK_START:1]Working.[TASK_DONE:1][TASK_START:2]' });
+  assert.equal(await rows.nth(0).getAttribute('class'), 'todo-item done');
+  assert.equal(await rows.nth(1).getAttribute('class'), 'todo-item active');
+  const tracker = page.locator('#msg-e1 .todo-tracker');
+  assert.equal(await tracker.locator('.tt-count').textContent(), '1 of 3 done');
+  await page.waitForTimeout(400); // the bar animates to its new width
+  const fill = await tracker.locator('.tt-progress-fill').evaluate(e => [e.getBoundingClientRect().width, e.style.width, e.parentElement.getBoundingClientRect().width, getComputedStyle(e.parentElement).display]);
+  assert.ok(fill[0] > 10, 'the progress bar fills: ' + JSON.stringify(fill));
+  assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });

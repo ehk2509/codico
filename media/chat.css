@@ -907,7 +907,7 @@ body{
 .todo-tracker{
   border:1px solid var(--vscode-panel-border);border-radius:6px;
   margin-bottom:8px;
-  background:var(--vscode-editor-background);font-size:11px;
+  background:var(--vscode-editor-background);font-size:12px;
   overflow:hidden;
 }
 .todo-tracker-header{
@@ -925,19 +925,20 @@ body{
 .todo-tracker.open .todo-tracker-chevron{ transform:rotate(90deg); }
 .todo-tracker-label{
   font-size:10px;font-weight:700;opacity:.6;letter-spacing:.06em;
-  text-transform:uppercase;flex:1;
+  text-transform:uppercase;flex:none;
 }
 .tt-count{
-  font-weight:400; opacity:.55;
+  margin-left:auto;white-space:nowrap;
+  font-weight:400; opacity:.7;
   background:var(--vscode-badge-background,rgba(167,139,250,.15));
   border-radius:8px; padding:1px 6px; font-size:10px;
 }
 .tt-progress{
-  height:3px; background:var(--vscode-progressBar-background,rgba(167,139,250,.25));
-  border-radius:0 0 0 0; overflow:hidden; flex-shrink:0; width:44px;
+  display:block;height:4px; background:rgba(128,128,128,.25);
+  border-radius:2px; overflow:hidden; flex-shrink:0; width:64px;
 }
 .tt-progress-fill{
-  height:100%;
+  display:block;height:100%;
   background:var(--vscode-testing-iconPassed,#22c55e);
   border-radius:2px;
   transition:width .3s ease;
@@ -947,16 +948,34 @@ body{
   border-top:1px solid var(--vscode-panel-border);
 }
 .todo-tracker:not(.open) .todo-tracker-body{ display:none; }
-.todo-item{display:flex;align-items:flex-start;gap:7px;padding:2px 0;line-height:1.45;transition:opacity .2s}
-.todo-icon{flex-shrink:0;font-style:normal;width:14px;text-align:center;margin-top:1px}
-.todo-item.pending .todo-icon::before{content:'\25CB';opacity:.35}
-.todo-item.active  .todo-icon::before{content:'\25C9';color:var(--vscode-charts-yellow,#facc15)}
-.todo-item.done    .todo-icon::before{content:'\2713';color:var(--vscode-testing-iconPassed,#22c55e)}
-.todo-item.failed  .todo-icon::before{content:'\2717';color:var(--vscode-testing-iconFailed,#ef4444)}
-.todo-item.active  .todo-icon{animation:pulse 1s ease-in-out infinite}
-.todo-text{flex:1}
-.todo-item.done .todo-text{opacity:.5;text-decoration:line-through}
-.todo-item.active .todo-text{font-weight:600}
+.todo-item{display:flex;align-items:flex-start;gap:9px;padding:6px 8px;margin:2px 0;border-radius:6px;line-height:1.45;transition:background .2s,opacity .2s}
+.todo-badge{
+  flex:0 0 20px;height:20px;border-radius:50%;margin-top:1px;position:relative;
+  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;
+  background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);opacity:.75;
+}
+.todo-body{flex:1;min-width:0}
+.todo-title{font-weight:600;word-break:break-word}
+.todo-detail{margin-top:2px;font-size:12px;color:var(--vscode-descriptionForeground);word-break:break-word}
+.todo-title code,.todo-detail code{font-size:.92em;padding:0 3px;border-radius:3px;background:var(--vscode-textCodeBlock-background)}
+/* In progress: highlighted row, accent badge with a pulsing ring */
+.todo-item.active{background:var(--vscode-list-hoverBackground)}
+.todo-item.active .todo-badge{opacity:1;background:var(--vscode-progressBar-background,#0e70c0);color:#fff}
+.todo-item.active .todo-badge::after{
+  content:'';position:absolute;inset:-3px;border-radius:50%;
+  border:2px solid var(--vscode-progressBar-background,#0e70c0);animation:todo-ring 1.4s ease-out infinite;
+}
+@keyframes todo-ring{from{opacity:.8;transform:scale(.9)}to{opacity:0;transform:scale(1.35)}}
+/* Done: green check, dimmed but still readable; failed: red cross */
+.todo-item.done .todo-num,.todo-item.failed .todo-num{display:none}
+.todo-item.done .todo-badge{opacity:1;background:var(--vscode-testing-iconPassed,#22c55e);color:#fff}
+.todo-item.done .todo-badge::before{content:'\2713';font-size:12px}
+.todo-item.done .todo-body{opacity:.6}
+.todo-item.failed .todo-badge{opacity:1;background:var(--vscode-testing-iconFailed,#ef4444);color:#fff}
+.todo-item.failed .todo-badge::before{content:'\2715';font-size:11px}
+.todo-item.failed .todo-title{color:var(--vscode-testing-iconFailed,#ef4444)}
+.tt-current{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;opacity:.8}
+.todo-tracker.open .tt-current{display:none}
 /* Plan card (Plan mode preview before approval) */
 .plan-card{
   margin:10px 0 8px;border-radius:8px;overflow:hidden;

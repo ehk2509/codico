@@ -1586,7 +1586,7 @@
     // If this is a plan execution message, prepend the todo tracker
     if (_isExecutingPlan && _planTasks.length > 0) {
       _isExecutingPlan = false;
-      var planItems = _planTasks.map(function(t) { return { status: 'pending', text: t.n + '. ' + t.text + (t.detail ? ' \u2014 ' + t.detail : '') }; });
+      var planItems = _planTasks.map(function(t) { return { status: 'pending', n: t.n, title: t.text, detail: t.detail }; });
       var tracker = _buildOrUpdateTodoTracker('todo-tracker-plan-' + id, null, wrap, planItems, true);
       // Keep id-based lookups working for [TASK_START/DONE/FAIL:N] markers
       _planTasks.forEach(function(task) {
@@ -1693,7 +1693,8 @@
     hdr.innerHTML =
       '<span class="todo-tracker-chevron">\u25B6</span>' +
       '<span class="todo-tracker-label">Tasks</span>' +
-      '<span class="tt-count">' + done + '\u202F/\u202F' + total + '</span>' +
+      '<span class="tt-current"></span>' +
+      '<span class="tt-count">' + done + ' of ' + total + ' done</span>' +
       '<span class="tt-progress" title="' + pct + '% done">' +
         '<span class="tt-progress-fill" style="width:' + pct + '%"></span>' +
       '</span>';
@@ -1706,12 +1707,20 @@
       tracker.appendChild(body);
     }
     body.innerHTML = '';
-    items.forEach(function(item) {
+    var md = window.CodicoMarkdown;
+    var fmt = function (t) { return md && md.renderInline ? md.renderInline(t) : esc(t); };
+    items.forEach(function(item, idx) {
+      // Plan steps come as { n, title, detail }; update_todo items as { text }
+      var title = item.title || item.text || '';
       var row = document.createElement('div');
       row.className = 'todo-item ' + item.status;
-      row.innerHTML = '<i class="todo-icon"></i><span class="todo-text">' + esc(item.text) + '</span>';
+      row.innerHTML =
+        '<span class="todo-badge"><span class="todo-num">' + (item.n || idx + 1) + '</span></span>' +
+        '<div class="todo-body"><div class="todo-title">' + fmt(title) + '</div>' +
+        (item.detail ? '<div class="todo-detail">' + fmt(item.detail) + '</div>' : '') + '</div>';
       body.appendChild(row);
     });
+    _showCurrentTask(tracker);
 
     // Auto-open if there's an active item; auto-collapse when all done and none active
     if (active > 0) { tracker.classList.add('open'); }
@@ -1749,6 +1758,13 @@
     }
   }
 
+  /** While the list is collapsed, its header names the task in progress. */
+  function _showCurrentTask(tracker) {
+    var cur = tracker.querySelector('.todo-item.active .todo-title');
+    var el = tracker.querySelector('.tt-current');
+    if (el) { el.textContent = cur ? cur.textContent : ''; el.title = el.textContent; }
+  }
+
   function _setTodoStatus(n, status) {
     if (!_todoTrackerEl) { return; }
     var item = _todoTrackerEl.querySelector('#todo-task-' + n);
@@ -1762,7 +1778,8 @@
     var total = allItems.length;
     var pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
     var countEl = _todoTrackerEl.querySelector('.tt-count');
-    if (countEl) { countEl.textContent = doneCount + '\u202F/\u202F' + total; }
+    if (countEl) { countEl.textContent = doneCount + ' of ' + total + ' done'; }
+    _showCurrentTask(_todoTrackerEl);
     _progress.set('plan', total ? 'step ' + Math.min(doneCount + 1, total) + ' of ' + total : '');
     var fillEl = _todoTrackerEl.querySelector('.tt-progress-fill');
     if (fillEl) { fillEl.style.width = pct + '%'; }
@@ -2691,8 +2708,8 @@
       document.body.appendChild(_jumpPill);
     }
     if (!_jumpPill) { return; }
-    var inputArea = document.getElementById('input-area');
-    _jumpPill.style.bottom = ((inputArea ? inputArea.offsetHeight : 0) + 10) + 'px';
+    // Just above the bottom edge of the messages, clear of the status bar and toolbars below
+    _jumpPill.style.bottom = Math.max(10, window.innerHeight - msgs.getBoundingClientRect().bottom + 10) + 'px';
     _jumpPill.style.display = on ? 'block' : 'none';
   }
   msgs.addEventListener('scroll', function () {
