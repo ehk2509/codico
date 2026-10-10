@@ -402,6 +402,26 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── The project's own skills and agents, from the workspace's .codico folder ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  for (const [name, prompt, check] of [
+    // An ordinary request: the skill is offered by name and path, its text and the agent are not sent
+    ['sk_list', '[SCENARIO:sk_list] please do the task', r => r.skillsListed && !r.skillBodyInSystem && !r.badSkillInSystem && !r.agentInSystem && !/SKILL-BODY-MARKER/.test(r.lastUser)],
+    // "/shout …" sends the skill's instructions with the request
+    ['sk_run', '/shout [SCENARIO:sk_run] say hello', r => /^\[Skill: shout\][\s\S]*SKILL-BODY-MARKER[\s\S]*\[Request\]\n\[SCENARIO:sk_run\] say hello/.test(r.lastUser) || /\[Skill: shout\][\s\S]*SKILL-BODY-MARKER[\s\S]*\[Request\]\n\[SCENARIO:sk_run\] say hello/.test(r.lastUser)],
+    // "@pirate …" puts the agent's instructions in the system prompt and takes the mention out of the request
+    ['sk_agent', '@pirate [SCENARIO:sk_agent] say hello', r => r.agentInSystem && r.skillsListed && !/@pirate/.test(r.lastUser) && /\[SCENARIO:sk_agent\] say hello/.test(r.lastUser)],
+  ]) {
+    const before = (await getLog()).length; const t0 = Date.now(); let error = null;
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', prompt); } catch (e) { error = String(e && e.message || e); }
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === name && e.stream);
+    const ok = !error && reqs.length >= 1 && check(reqs[0]);
+    const r = reqs[0] || {};
+    results.push({ name, ms: Date.now() - t0, requests: reqs.length, ok,
+      why: `skill listed in the system prompt: ${r.skillsListed}; skill text in the system prompt: ${r.skillBodyInSystem}; unusable skill loaded: ${r.badSkillInSystem}; agent in the system prompt: ${r.agentInSystem}; request sent: ${JSON.stringify((r.lastUser || '').slice(0, 90))}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Claude Code as a provider: the agent loop through the `claude` command (a stand-in here) ──
   {
     const t0 = Date.now(); let error = null;

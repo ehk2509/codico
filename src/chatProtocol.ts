@@ -125,6 +125,8 @@ export type ExtensionMessage =
     /** Which providers have an API key, keyed as the header's provider menu names them. */
     | { type: 'providerKeys'; keys: Record<string, boolean>; /** Whether the command of each login-based provider (Claude Code, ChatGPT) was found on this machine. */ installed?: Record<string, boolean> }
     | { type: 'agentActive'; agent: string }
+    /** The project's own agents (@name) and skills (/name), from its .codico folder. */
+    | { type: 'userExtensions'; agents: Array<{ name: string; description: string }>; skills: Array<{ name: string; description: string }> }
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }
     | { type: 'undoRedoState'; canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }
     | { type: 'proposalQueued'; filepath: string }

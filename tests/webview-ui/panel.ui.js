@@ -842,3 +842,54 @@ test('no setup card for someone who has a key, even when the selected provider h
   assert.equal(await page.locator('#wlc-setup').evaluate(e => getComputedStyle(e).display), 'none');
 });
 
+test("a project's own agents and skills appear in the @ and / menus", async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'userExtensions', agents: [{ name: 'reviewer', description: 'Strict code review' }], skills: [{ name: 'add-migration', description: 'Use when adding a migration' }] });
+  const hints = () => page.locator('#slash-hint .slash-hint-item').evaluateAll(els => els.map(e => e.dataset.cmd));
+  // "@" lists the built-in agents and the project's, the latter marked
+  await page.fill('#msg-input', '@');
+  assert.deepEqual(await hints(), ['@workspace', '@terminal', '@vscode', '@github', '@reviewer']);
+  assert.equal(await page.locator('#slash-hint .slash-hint-item[data-cmd="@reviewer"] .hint-project').textContent(), 'project');
+  assert.equal(await page.locator('#slash-hint .slash-hint-item[data-cmd="@workspace"] .hint-project').count(), 0);
+  await page.fill('#msg-input', '@rev');
+  assert.deepEqual(await hints(), ['@reviewer']);
+  // Choosing it sets the agent badge; the message is sent with the mention
+  await page.locator('#slash-hint .slash-hint-item[data-cmd="@reviewer"]').dispatchEvent('mousedown');
+  assert.match(await page.locator('#active-agent-bar').textContent(), /@reviewer/);
+  await page.fill('#msg-input', 'check src/app.ts');
+  await page.click('#send-btn');
+  assert.equal((await posted('sendMessage')).pop().text, '@reviewer check src/app.ts');
+  await send({ type: 'endMessage', id: '' });
+  // Typed in the message, it shows as a badge in the conversation, like a built-in agent
+  await page.fill('#msg-input', '@reviewer and this one');
+  await page.click('#send-btn');
+  assert.equal(await page.locator('.msg.user .mention-badge').last().textContent(), '@reviewer');
+  assert.equal((await page.locator('.msg.user .user-bubble').last().textContent()).trim(), '@reviewer and this one');
+  await send({ type: 'endMessage', id: '' });
+
+  // "/" lists the built-in commands and the project's skills
+  await page.fill('#msg-input', '/add');
+  assert.deepEqual(await hints(), ['/add-migration']);
+  assert.equal(await page.locator('#slash-hint .hint-project').textContent(), 'project');
+  await page.locator('#slash-hint .slash-hint-item').dispatchEvent('mousedown');
+  assert.equal(await page.locator('#msg-input').inputValue(), '/add-migration ');
+  // The skill command goes to the extension as typed: it holds the skill's text
+  await page.locator('#active-agent-bar .mention-badge').click();
+  await page.fill('#msg-input', '/add-migration add users.email');
+  await page.click('#send-btn');
+  assert.equal((await posted('sendMessage')).pop().text, '/add-migration add users.email');
+});
+
+test('an agent removed from the project is no longer offered or selected', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'userExtensions', agents: [{ name: 'reviewer', description: 'Strict code review' }], skills: [] }, { type: 'agentActive', agent: 'reviewer' });
+  assert.match(await page.locator('#active-agent-bar').textContent(), /@reviewer/);
+  await send({ type: 'userExtensions', agents: [], skills: [] });
+  assert.equal(await page.locator('#active-agent-bar').evaluate(e => getComputedStyle(e).display), 'none');
+  await page.fill('#msg-input', '@rev');
+  assert.equal(await page.locator('#slash-hint').evaluate(e => getComputedStyle(e).display), 'none');
+  // A built-in agent stays selected through a reload of the project's list
+  await send({ type: 'agentActive', agent: 'terminal' }, { type: 'userExtensions', agents: [], skills: [] });
+  assert.match(await page.locator('#active-agent-bar').textContent(), /@terminal/);
+});
+

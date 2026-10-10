@@ -8,6 +8,8 @@ import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretK
 import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
+import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
+import { UserExtensionsLoader } from './userExtensionsLoader';
 import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
 import { WorkspaceIndex } from './workspaceIndex';
 import { buildPrContext } from './prContextProvider';
@@ -102,6 +104,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private readonly _fileManager = new FileManager();
     private readonly _mcp = new McpManager();
+    private readonly _userExtensions = new UserExtensionsLoader(extensions => this._post(userExtensionsMessage(extensions)));
     private readonly _external = new ExternalToolRuntime(this._mcp, msg => this._post(msg));
     private readonly _webviewAssets: WebviewAssets;
     private readonly _undoRedo = new UndoRedoStack(message => this._confirmOverwrite(message));
@@ -188,6 +191,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
+        _context.subscriptions.push(this._userExtensions);
         // Abort in-flight requests when the extension deactivates.
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
@@ -247,6 +251,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
             void providerStatusMessage(this._context).then(status => this._post(status));
+            void this._userExtensions.get().then(extensions => this._post(userExtensionsMessage(extensions)));
             this._postUiSettings();
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
@@ -880,6 +885,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             text = `You have been provided with the GitHub PR context below. Please review this PR: summarise the changes, identify potential issues, suggest improvements, and note anything that looks risky or incomplete.${extra ? `\n\nAdditional focus: ${extra}` : ''}\n\n${prCtx}`;
         }
 
+        // The project's own skills and agents (.codico folder): "/name request" runs a skill
+        const userExtensions = await this._userExtensions.get();
+        text = expandSkillCommand(text, userExtensions.skills)?.text ?? text;
+
         const config = vscode.workspace.getConfiguration('codico');
         // Without an OpenRouter key but with a direct provider key, that provider's model is used
         const model = await usableModel(this._context, config.get<string>('model', 'deepseek/deepseek-v4-flash'));
@@ -943,6 +952,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (mcpSection) {
             effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${mcpSection}` : mcpSection;
         }
+        const skillsSection = skillsPromptSection(userExtensions.skills);
+        if (skillsSection) { effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${skillsSection}` : skillsSection; }
         // In Edits Mode: instruct the AI to emit ALL file mutations in one pass
         if (this._editsMode) {
             const editsNote = '[EDITS MODE] You are in multi-file edits mode. Use write_file and edit_file tools to propose changes across as many files as needed. All changes will be shown as diffs for user review before being applied. Emit every required file change in this single response — do not wait for confirmation between files.';
@@ -968,6 +979,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             agentContextBlock = agentCtx.contextBlock;
             text = strippedText;
             this._post({ type: 'agentActive', agent });
+        }
+        // "@name" for one of the project's own agents: its instructions lead the system prompt
+        const userAgent = agent ? null : parseUserAgentMention(text, userExtensions.agents);
+        if (userAgent) {
+            effectivePrefix = [userAgentPrefix(userAgent.agent), effectivePrefix].filter(Boolean).join('\n\n');
+            text = userAgent.strippedText;
+            this._post({ type: 'agentActive', agent: userAgent.agent.name });
         }
 
         // Optionally prepend active editor context (invisible in chat, visible to AI)

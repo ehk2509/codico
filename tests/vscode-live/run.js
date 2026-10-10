@@ -27,6 +27,13 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/secret.txt'), 'SECRET-TOKEN-12345\n');
   fs.writeFileSync(path.join(ws, '.codicoignore'), 'fixtures/secret.txt\n');
   fs.writeFileSync(path.join(ws, 'live/keep-me.txt'), 'keep\n');
+  // The project's own skills and agents (one file is unusable and must be skipped)
+  fs.mkdirSync(path.join(ws, '.codico/skills/shout'), { recursive: true });
+  fs.mkdirSync(path.join(ws, '.codico/skills/Bad Name'), { recursive: true });
+  fs.mkdirSync(path.join(ws, '.codico/agents'), { recursive: true });
+  fs.writeFileSync(path.join(ws, '.codico/skills/shout/SKILL.md'), '---\nname: shout\ndescription: Use when asked to shout\n---\n\nSKILL-BODY-MARKER: answer in capital letters.\n');
+  fs.writeFileSync(path.join(ws, '.codico/skills/Bad Name/SKILL.md'), 'BAD-SKILL-MARKER\n');
+  fs.writeFileSync(path.join(ws, '.codico/agents/pirate.md'), '---\ndescription: Talks like a pirate\n---\n\nAGENT-BODY-MARKER: talk like a pirate.\n');
   fs.writeFileSync(path.join(ws, 'fixtures/approve-edit.txt'), 'alpha=1\nbeta=2\n');
   fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
   fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
