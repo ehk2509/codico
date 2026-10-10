@@ -402,6 +402,31 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── The change report: built from the files written and the commands run ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  await scenario('pp_fixed', ({ error }) => 0, 60000).catch(() => {});
+  results.pop();
+  {
+    const p = await vscode.commands.executeCommand('codico.__evalPassport');
+    const files = p ? p.files.map(f => `${f.path} ${f.status} +${f.added} -${f.removed}`) : [];
+    const check = p && p.checks.find(c => /pp\.test\.js/.test(c.command));
+    const ok = !!p && files.includes('fixtures/pp.txt modified +1 -1') && files.includes('live/pp-notes.txt created +2 -0') &&
+      !!check && check.kind === 'test' && check.outcome === 'passed' && check.fixed && !check.stale && check.runs === 2 && /1 passed, 0 failed/.test(check.detail) &&
+      read('fixtures/pp.txt') === 'value=2\n';
+    results.push({ name: 'pp_fixed', ms: 0, requests: 0, ok,
+      why: `verdict ${p && p.verdict}; files: ${files.join(' | ')}; test check: ${check ? `${check.outcome} (${check.detail}), was failing: ${check.fixed}, runs: ${check.runs}` : 'none'}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+  await scenario('pp_unchecked', ({ error }) => 0, 60000).catch(() => {});
+  results.pop();
+  {
+    const p = await vscode.commands.executeCommand('codico.__evalPassport');
+    const ok = !!p && p.files.length === 1 && p.files[0].path === 'live/pp-unchecked.txt' && p.files[0].status === 'created';
+    results.push({ name: 'pp_unchecked', ms: 0, requests: 0, ok: ok && (p.verdict === 'unverified' || p.checks.length > 0),
+      why: `verdict ${p && p.verdict}; files: ${p ? p.files.map(f => f.path).join(', ') : 'none'}; checks: ${p ? p.checks.map(c => c.command + ' ' + c.outcome).join(', ') || 'none' : 'none'}; notes: ${p ? p.notes.join(' / ') : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── The project's own skills and agents, from the workspace's .codico folder ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
   for (const [name, prompt, check] of [

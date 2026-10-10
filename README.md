@@ -254,6 +254,17 @@ When a reply finishes, or Codico waits for your approval (a file change, a comma
 - VS Code in front but the chat hidden → a notification inside VS Code with a **Show Codico** button
 - Nothing while the chat is in view. Turn it off with `"codico.notifications": "off"`. In a remote window (SSH, WSL, containers) only the in-editor notification is used
 
+### Change Report
+A reply that changed files ends with a **Change report**: what changed, and what evidence there is that it works.
+
+- **Verdict** — *Verified* (a check passed after the last file change, and none is failing), *Checks failing*, or *Not verified* (nothing was run after the last change). An unverified or failing report says why without being opened.
+- **Files changed** — each file with its lines added and removed over the whole turn; click one to see its diff. A file changed after the last passing check is marked "not checked".
+- **Checks** — the test, build, type-check and lint commands that ran, with their result. For tests the pass and fail counts are read from the runner's summary (node --test, Jest, Vitest, pytest, Mocha, Cargo, Playwright). A check that failed earlier in the turn and passes now is marked "was failing": the before and after of a fix.
+- **Not covered** — stated plainly: no tests run, a check that ran before the last change, a result hidden by a pipe (`npm run build | tail` always exits 0, so it is not counted as a pass).
+- **Copy as Markdown** puts the report on the clipboard, for a pull request description.
+
+The report is built from the files Codico wrote and the commands it ran, not from what the model says, and it costs no model request. Turn it off with `"codico.changeReport": false`.
+
 ### Project Skills and Agents
 A project can teach Codico how it works, with Markdown files in a `.codico` folder that you commit with the code:
 
@@ -704,6 +715,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
 | `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
+| `codico.changeReport` | `boolean` | `true` | Show a change report after a reply that changed files |
 | `codico.notifications` | `string` | `"whenAway"` | Notify when Codico finishes or needs you while you are not looking at the chat (`off` to disable) |
 | `codico.codexPath` | `string` | `""` | Path to the `codex` command for the ChatGPT provider (empty: PATH, then OpenAI's VS Code extension) |
 | `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |

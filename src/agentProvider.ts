@@ -10,6 +10,7 @@ import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
 import { UserExtensionsLoader } from './userExtensionsLoader';
+import { passportMarkdown, PassportRecorder, PatchPassport } from './patchPassport';
 import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
 import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
@@ -105,6 +106,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private readonly _fileManager = new FileManager();
     private readonly _mcp = new McpManager();
+    /** What the current turn changed and checked, for its change report. */
+    private _passport = new PassportRecorder();
     private readonly _userExtensions = new UserExtensionsLoader(extensions => this._post(userExtensionsMessage(extensions)));
     private readonly _external = new ExternalToolRuntime(this._mcp, msg => this._post(msg));
     private readonly _webviewAssets: WebviewAssets;
@@ -725,6 +728,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._evaluationTokenBudget = Math.max(0, Math.floor(maxTotalTokens));
     }
 
+    /** Automated tests only: the change report of the last turn. */
+    public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
+
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         return buildEvaluationRunMetrics({
@@ -890,6 +896,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         // Pause for confirmation every N steps (0 = never)
         const checkpointSteps = config.get<number>('checkpointSteps', 50);
+        this._passport = new PassportRecorder();
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
@@ -1526,6 +1533,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        // The change report: what this turn changed, and what was checked afterwards
+        const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
+        if (passport) { this._post({ type: 'patchPassport', id: msgId, passport, markdown: passportMarkdown(passport) }); }
         this._post({ type: 'endMessage', id: msgId });
         const recording = this._recording;
         this._recording = null;
@@ -2027,6 +2037,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._undoRedo.push({ filepath: tool.filepath, uri: target.uri, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
             this._post({ type: 'undoRedoState', ...this._undoRedo.state });
             this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
+            this._passport.recordChange(tool.filepath, beforeBytes ? beforeText : null, contentToWrite);
             this._filesWrittenThisTurn++;
             const lineCount = contentToWrite.split('\n').length;
             return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
@@ -2126,6 +2137,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (result.timedOut) {
             const message = `Timed out after ${timeoutSec}s`;
             this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
+            this._passport.recordCommand(tool.command, null, result.output);
             return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${clipTerminalOutput(result.output)}`;
         }
         if (result.error) {
@@ -2138,6 +2150,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
             : '';
         const success = result.exitCode === 0;
+        this._passport.recordCommand(tool.command, result.exitCode ?? null, result.output);
         this._post({
             type: 'toolResult',
             id: msgId,
@@ -2370,6 +2383,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._undoRedo.push({ filepath: tool.filepath, uri: fileUri, before, after, label: `edit_file ${tool.filepath}` });
             this._post({ type: 'undoRedoState', ...this._undoRedo.state });
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: true, diff: finalEditDiff });
+            this._passport.recordChange(tool.filepath, rawContent, newContent);
             this._filesWrittenThisTurn++;
 
             // Return a context window around the edited region so the model can

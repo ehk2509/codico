@@ -1,4 +1,5 @@
 import type { McpCatalogRow } from './mcpCatalog';
+import type { PatchPassport } from './patchPassport';
 // Shared protocol contracts for the extension host and webview-facing runtimes.
 // Keep this module data-only: it must not depend on VS Code runtime state.
 
@@ -39,7 +40,7 @@ export interface DisplayMessage {
 /** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
 export const REPLAY_TYPES = new Set([
     'appendThinking', 'appendContent', 'toolStart', 'toolResult', 'fileWriteResult',
-    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError',
+    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError', 'patchPassport',
 ]);
 /** Approximate characters of streamed text stored per reply. */
 export const REPLAY_BUDGET = 400_000;
@@ -129,6 +130,8 @@ export type ExtensionMessage =
     | { type: 'providerKeys'; keys: Record<string, boolean>; /** Whether the command of each login-based provider (Claude Code, ChatGPT) was found on this machine. */ installed?: Record<string, boolean> }
     | { type: 'agentActive'; agent: string }
     | { type: 'mcpCatalog'; servers: McpCatalogRow[] }
+    /** The change report of a reply that changed files: what changed, and what was checked afterwards. */
+    | { type: 'patchPassport'; id: string; passport: PatchPassport; /** The same report as Markdown, for the Copy button. */ markdown: string }
     /** The project's own agents (@name) and skills (/name), from its .codico folder. */
     | { type: 'userExtensions'; agents: Array<{ name: string; description: string }>; skills: Array<{ name: string; description: string }> }
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }

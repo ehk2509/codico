@@ -216,6 +216,46 @@ body{
 #chat-body {
   position:relative; display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden;
 }
+/* ── Change report ── */
+.passport{margin:8px 0 2px;border:1px solid var(--vscode-panel-border);border-left-width:3px;border-radius:6px;font-size:11px;overflow:hidden;background:var(--vscode-editorWidget-background,transparent)}
+.passport-verified{border-left-color:var(--vscode-testing-iconPassed,#22c55e)}
+.passport-failing{border-left-color:var(--vscode-testing-iconFailed,#ef4444)}
+.passport-unverified{border-left-color:var(--vscode-charts-yellow,#eab308)}
+.passport-head{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:none;background:transparent;color:var(--vscode-foreground);font-family:inherit;font-size:11px;cursor:pointer;text-align:left;flex-wrap:wrap}
+.passport-head:hover{background:var(--vscode-list-hoverBackground)}
+.passport-title{font-weight:600}
+.passport-badge{font-size:10px;font-weight:600;padding:1px 7px;border-radius:9px;white-space:nowrap}
+.passport-verified .passport-badge{color:var(--vscode-testing-iconPassed,#22c55e);border:1px solid var(--vscode-testing-iconPassed,#22c55e)}
+.passport-failing .passport-badge{color:var(--vscode-testing-iconFailed,#ef4444);border:1px solid var(--vscode-testing-iconFailed,#ef4444)}
+.passport-unverified .passport-badge{color:var(--vscode-charts-yellow,#eab308);border:1px solid var(--vscode-charts-yellow,#eab308)}
+.passport-sum{flex:1;min-width:0;color:var(--vscode-descriptionForeground)}
+.passport-arrow{font-size:9px;transition:transform .15s;color:var(--vscode-descriptionForeground)}
+.passport.open .passport-arrow{transform:rotate(90deg)}
+.passport-alert{padding:0 10px 7px;color:var(--vscode-foreground);line-height:1.45}
+.passport-body{display:none;padding:2px 10px 8px;border-top:1px solid var(--vscode-panel-border)}
+.passport.open .passport-body{display:block}
+.passport-section{margin:8px 0 3px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--vscode-descriptionForeground)}
+.passport-row{display:flex;align-items:baseline;gap:6px;padding:1px 0;min-width:0;flex-wrap:wrap}
+.passport-file{border:none;background:transparent;padding:0;cursor:pointer;font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;color:var(--vscode-textLink-foreground);text-align:left;overflow-wrap:anywhere}
+.passport-file:hover{text-decoration:underline}
+.passport-plus{color:var(--vscode-testing-iconPassed,#22c55e);font-variant-numeric:tabular-nums}
+.passport-minus{color:var(--vscode-testing-iconFailed,#ef4444);font-variant-numeric:tabular-nums}
+.passport-tag{font-size:9px;padding:0 5px;border-radius:8px;border:1px solid var(--vscode-panel-border);color:var(--vscode-descriptionForeground);white-space:nowrap}
+.passport-tag.warn{border-color:var(--vscode-charts-yellow,#eab308);color:var(--vscode-charts-yellow,#eab308)}
+.passport-tag.ok{border-color:var(--vscode-testing-iconPassed,#22c55e);color:var(--vscode-testing-iconPassed,#22c55e)}
+.passport-mark{width:10px;font-weight:700;flex-shrink:0}
+.passport-check.passed .passport-mark{color:var(--vscode-testing-iconPassed,#22c55e)}
+.passport-check.failed .passport-mark{color:var(--vscode-testing-iconFailed,#ef4444)}
+.passport-check.unknown .passport-mark{color:var(--vscode-charts-yellow,#eab308)}
+.passport-check.stale{opacity:.7}
+.passport-cmd{font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;overflow-wrap:anywhere;background:none;padding:0}
+.passport-detail{color:var(--vscode-descriptionForeground)}
+.passport-note{padding:1px 0;line-height:1.45}
+.passport-actions{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.passport-copy{font-family:inherit;font-size:10.5px;padding:2px 8px;border-radius:4px;cursor:pointer;background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border)}
+.passport-copy:hover{border-color:var(--vscode-focusBorder)}
+.passport-origin{font-size:10px;color:var(--vscode-descriptionForeground)}
+
 /* ── MCP catalog ── */
 #mcp-catalog-overlay{
   display:none;flex-direction:column;position:absolute;top:0;left:0;right:0;bottom:0;z-index:90;
