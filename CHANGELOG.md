@@ -12,6 +12,9 @@ All notable changes to Codico will be documented in this file.
 - Provider menu in the chat header: choose OpenRouter, Claude Code (your Claude login), one of the direct providers (your own key: Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, Cerebras) or local Ollama; the model menu then lists only that provider's models and remembers the last model used with each. Providers without a key are marked "no key", and picking one asks for its key. Ollama models can now be picked from the header (they were missing from the old single list).
 - DeepSeek adapter for the direct provider (your own DeepSeek key). The models are now DeepSeek V4.1 Flash (`deepseek-flash`) and DeepSeek V4 Pro (`deepseek-v4-pro`); `deepseek-chat` and `deepseek-reasoner` saved by older versions keep working. Thinking is shown in the reasoning panel and follows the effort selector (Low → low, Medium → high, High → max), and the token counter shows DeepSeek's cache hits.
 
+### Changed
+- Status bar in a narrow panel: the background-process button is no longer shortened to "⚙ 1 ✕". When the row is full, it and Stop move together to a second row, both whole and at the right edge.
+
 ### Fixed
 - Direct OpenAI: requests sent `max_tokens`, which OpenAI's reasoning models (o-series, GPT-5 and later) refuse, so those models failed on every request. The limit is now sent as `max_completion_tokens`, with room for the model's reasoning.
 - Direct Gemini: the output limit was 8,192 tokens, which a thinking model (2.5 and later) can use up on thinking alone, cutting the answer short or leaving it empty; follow-up suggestions, commit messages and compaction summaries had the same problem with their much smaller limits. Thinking models now get 65,536 tokens, and one-shot jobs ask for little thinking and leave room for it.

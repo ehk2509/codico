@@ -614,9 +614,9 @@ test('the task list of an approved plan: numbered steps with title and details, 
   assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });
 
-test('Stop stays visible when background processes and token counts crowd the status bar', async () => {
+test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
-  for (const width of [300, 420]) {
+  for (const width of [240, 300, 420, 900]) {
     await page.setViewportSize({ width, height: 700 });
     await send({ type: 'startMessage', id: 'b' + width },
       { type: 'tokenUsage', promptTokens: 31000, completionTokens: 281, totalTokens: 31281, cachedTokens: 10000, taskTokens: 148000, taskCostUsd: 0.005 },
@@ -624,10 +624,19 @@ test('Stop stays visible when background processes and token counts crowd the st
     const stop = await page.locator('#stop-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, visible: r.width > 20 }; });
     const panelRight = await page.locator('#status').evaluate(e => e.getBoundingClientRect().right);
     assert.ok(stop.visible && stop.right <= panelRight && stop.left >= 0, `Stop fully visible at ${width}px: ${JSON.stringify(stop)} panel right ${panelRight}`);
-    const words = await page.locator('#bg-btn .bg-words').isVisible();
-    assert.equal(words, width >= 400, `background chip ${words ? 'with' : 'without'} words at ${width}px`);
+    // The chip is never shortened: its full text fits inside it, within the panel
+    const chip = await page.locator('#bg-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { text: e.textContent, left: r.left, right: r.right, cut: e.scrollWidth > e.clientWidth + 1 }; });
+    assert.match(chip.text, /^⚙ 1 background process ✕$/);
+    assert.ok(!chip.cut && chip.left >= 0 && chip.right <= panelRight, `chip whole at ${width}px: ${JSON.stringify(chip)}`);
+    // Both buttons sit on the same row, side by side
+    const tops = await page.locator('#s-actions button').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)));
+    assert.ok(tops.length === 2 && Math.abs(tops[0] - tops[1]) <= 2, `buttons on one row at ${width}px: ${tops}`);
+    const rows = await page.locator('#status').evaluate(e => new Set([...e.children].filter(c => c.getBoundingClientRect().width > 0).map(c => Math.round(c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2))).size);
+    assert.ok(width >= 900 ? rows === 1 : width <= 300 ? rows >= 2 : rows >= 1, `${rows} row(s) at ${width}px`);
     assert.match(await page.locator('#bg-btn').getAttribute('title'), /1 background process — click to stop:\nsleep 30/);
-    await send({ type: 'endMessage', id: 'b' + width });
+    await send({ type: 'endMessage', id: 'b' + width }, { type: 'backgroundProcesses', processes: [] });
+    // Nothing to show: the empty group takes no room and no row
+    assert.equal(await page.locator('#s-actions').evaluate(e => getComputedStyle(e).display), 'none');
   }
 });
 
