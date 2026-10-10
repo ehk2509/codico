@@ -76,6 +76,18 @@ async function run() {
     return { ok: after.length > 0 && keptRequest && wellFormed,
       why: `${reqs.length} req, ${after.length} after compaction; request kept: ${keptRequest}; roles alternate: ${wellFormed}` };
   }, 90000);
+  {
+    // A summary that copies the transcript must not replace the history (the agent would forget its work)
+    const before = (await getLog()).length; const t0 = Date.now(); let error = null;
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:bad_summary] please do the task'); } catch (e) { error = String(e && e.message || e); }
+    const all = (await getLog()).slice(before).filter(e => e.scenario === 'bad_summary');
+    const asks = all.filter(e => e.summaryRequest), reqs = all.filter(e => e.stream);
+    const replaced = reqs.some(r => r.copiedSummary), kept = reqs.every(r => r.hasRequest);
+    results.push({ name: 'bad_summary', ms: Date.now() - t0, requests: reqs.length,
+      ok: !error && asks.length >= 2 && asks.length <= 4 && !replaced && kept && reqs.length >= 7,
+      why: `summary attempts: ${asks.length} (one retry, then waits for the history to grow); history replaced by the bad summary: ${replaced}; request kept in every step: ${kept}; task finished: ${!error} (${reqs.length} req)` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
   await set('autoCompactThreshold', 100000);
 
   {
@@ -288,6 +300,11 @@ async function run() {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
+  await scenario('big_read', ({ reqs }) => {
+    const r = reqs.find(x => /\[read_file: fixtures\/big\.md lines 1–80 of/.test(x.lastUser));
+    const outline = !!r && /Outline of this \d+-line file[\s\S]*L\d+–\d+\s+## Section 14/.test(r.lastUser);
+    return { ok: outline && r.lastUserChars < 6000, why: `outline with line ranges: ${outline}; first 80 lines only: ${!!r}; ${r ? r.lastUserChars : 0} chars sent (a 300-line page was ~9,000)${outline ? '' : ' | ' + JSON.stringify(r ? r.lastUser.slice(0, 700) : '')}` };
+  });
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

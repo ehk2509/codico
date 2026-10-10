@@ -399,7 +399,7 @@
         },
         "codico.autoCompactThreshold": {
           "type": "number",
-          "default": 100000,
+          "default": 60000,
           "minimum": 10000,
           "description": "Prompt token count above which auto-compact triggers (when Auto Compact is enabled in the chat UI)"
         },

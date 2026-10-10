@@ -31,3 +31,12 @@ test('token budget pauses once per budget step', () => {
   usage.add(5000);
   assert.equal(usage.budgetExceeded, true, 'next pause at 40,000');
 });
+
+test('cached prompt tokens are counted separately', () => {
+  const { TaskUsage } = require('../out/taskUsage.js');
+  const usage = new TaskUsage(0);
+  usage.add(10000, 0.001, 8000);
+  usage.add(12000, 0.001);
+  assert.equal(usage.tokens, 22000);
+  assert.equal(usage.cachedTokens, 8000);
+});

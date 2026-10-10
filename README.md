@@ -411,7 +411,7 @@ Click the **✏ Edits** toggle in the header to enter Edits Mode:
 Keep long sessions efficient:
 
 - **↓↑ Compact context** button — summarize the conversation history immediately to reduce token usage
-- **↙ Auto-compact** toggle (on by default) — automatically compact when prompt tokens exceed `codico.autoCompactThreshold` (default: 100,000 tokens), including between steps of a running task
+- **↙ Auto-compact** toggle (on by default) — automatically compact when prompt tokens exceed `codico.autoCompactThreshold` (default: 60,000 tokens), including between steps of a running task
 - Compaction preserves key decisions, files changed, errors resolved, and outstanding tasks; the most recent messages are kept verbatim for continuity
 - The chat display is not affected — reopening a thread still shows the full conversation
 
@@ -612,7 +612,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.nextEditSuggestionsEnabled` | `boolean` | `true` | Show AI-predicted next edit suggestions (Tab to accept) |
 | `codico.renameSuggestionsEnabled` | `boolean` | `true` | Pre-fill the rename input (F2) with an AI-suggested name |
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
-| `codico.autoCompactThreshold` | `number` | `100000` | Token count that triggers auto-compaction (when enabled) |
+| `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
 | `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |
 | `codico.showReasoning` | `boolean` | `true` | Show the model's reasoning blocks in the chat |
 

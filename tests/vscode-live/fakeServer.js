@@ -7,6 +7,11 @@ const http = require('node:http'), fs = require('node:fs'), path = require('node
 const F = '```';
 const tool = (name, body) => F + name + '\n' + body + '\n' + F + '\n';
 const VERIFY = tool('run_terminal', 'command: node -e "console.log(\'LIVE-VERIFY ok\')"');
+const COMPACTION_STEPS = ['fixtures/config.txt', 'fixtures/notes.txt', 'live/keep-me.txt', 'fixtures/config.txt\nstart_line: 2', 'fixtures/notes.txt\nstart_line: 1\nend_line: 1', 'live/keep-me.txt\nstart_line: 1']
+  .map((f, i) => `Step ${i + 1}.\n\n` + tool('read_file', 'filepath: ' + f)).concat(['The original request was handled.']);
+const GOOD_SUMMARY = 'Summary of the earlier work: the agent read fixtures/config.txt and fixtures/notes.txt for the task, found the settings it needed and changed no file yet. Outstanding: finish the task.';
+// What a real model returned: the end of the transcript, in its own format
+const COPIED_TRANSCRIPT = 'Let me check the config.\n\n[tool calls: read_file {"filepath":"fixtures/config.txt"}]\n\n---\n\n### TOOL RESULT (read_file)\n[read_file: fixtures/config.txt lines 1–2 of 2]';
 const SCRIPTS = (port) => ({
   readme: ['Writing the README.\n\n' + F + 'write_file\nfilepath: live/README.md\ncontent:\n# Demo\n\n## Run\n\n' + F + 'bash\nnpm start\n' + F + '\n\nEnd of file.\n' + F + '\n', 'Done.'],
   background: ['Starting it.\n\n' + tool('run_terminal', 'command: sleep 45.321 & echo started'), 'It is running.'],
@@ -41,8 +46,9 @@ const SCRIPTS = (port) => ({
     '1. Read the config\n2. Update the port\n\n## Files Affected\n- fixtures/config.txt\n\n> Approve the plan to begin execution.'],
   native_plan: ['1. Read the notes\n2. Summarise them\n\n> Approve the plan to begin execution.'],
   // Long task that crosses the auto-compaction threshold part-way (replies indexed by request count)
-  compaction: ['fixtures/config.txt', 'fixtures/notes.txt', 'live/keep-me.txt', 'fixtures/config.txt\nstart_line: 2', 'fixtures/notes.txt\nstart_line: 1\nend_line: 1', 'live/keep-me.txt\nstart_line: 1']
-    .map((f, i) => `Step ${i + 1}.\n\n` + tool('read_file', 'filepath: ' + f)).concat(['The original request was handled.']),
+  compaction: COMPACTION_STEPS,
+  // The same long task, but the summariser copies the transcript instead of summarising it
+  bad_summary: COMPACTION_STEPS,
   // Plan → clarifying question → answer: the answer must continue the read-only plan
   plan_clarify: ['<clarify>\nquestion: Which database should the plan target?\ntype: single\noptions:\n- Postgres\n- SQLite\nfree_input: false\n</clarify>',
     tool('write_file', 'filepath: live/eager.js\ncontent:\nmodule.exports = 4;'),
@@ -71,6 +77,8 @@ const SCRIPTS = (port) => ({
   // Regenerate: the same request must be sent again, without the first reply
   regen: [tool('read_file', 'filepath: fixtures/notes.txt'), 'First answer.'],
   diff_change: [tool('write_file', 'filepath: fixtures/diffme.txt\ncontent:\nafter'), 'Done.'],
+  // A large file read without a range: an outline and the first lines, not 300 lines
+  big_read: [tool('read_file', 'filepath: fixtures/big.md'), 'Read it.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only
@@ -100,7 +108,7 @@ function start(port0) {
   fs.writeFileSync(LOG_FILE, '');
   let port;
   const log = [];
-  let compactionReplies = 0;
+  const compactionReplies = {};
   let planClarifyReplies = 0;
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/page') {
@@ -119,18 +127,22 @@ function start(port0) {
       const last = messages[messages.length - 1] || {};
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
-        hasRequest: messages.some(m => m.role === 'user' && /\[SCENARIO:compaction\]/.test(textOf(m.content))),
+        hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
+        summaryRequest: /<transcript>/.test(lastUser),
+        // A summary in the transcript's own format: only a bad summary produces that
+        copiedSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\][\s\S]*### TOOL RESULT/.test(textOf(m.content))),
         native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
       log.push(rec);
       fs.appendFileSync(LOG_FILE, JSON.stringify({ ...rec, lastUser: rec.lastUser.slice(0, 300) }) + '\n');
       if (json.stream === false) {
         res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }] }));
+        const content = !/<transcript>/.test(lastUser) ? 'OK' : scenario === 'bad_summary' ? COPIED_TRANSCRIPT : GOOD_SUMMARY;
+        return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }));
       }
       let entry;
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
       if (needsVerify && !scenario.startsWith('stuck_')) { entry = VERIFY; }
-      else if (scenario === 'compaction') { entry = SCRIPTS(port).compaction[compactionReplies++] ?? 'Done.'; }
+      else if (scenario === 'compaction' || scenario === 'bad_summary') { entry = SCRIPTS(port)[scenario][(compactionReplies[scenario] = (compactionReplies[scenario] || 0) + 1) - 1] ?? 'Done.'; }
       else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }
       const reply = typeof entry === 'string' ? { text: entry, finish: 'stop' } : entry;
@@ -156,7 +168,7 @@ function start(port0) {
         if (i < chunks.length) { res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: chunks[i++] }, finish_reason: null }] }) + '\n\n'); return setTimeout(tick, 3); }
         if (reply.drop) { return res.socket.destroy(); }
         // Large reported prompt sizes push the compaction scenario over the auto-compact threshold
-        const usage = scenario === 'compaction' ? { usage: { prompt_tokens: 20000, completion_tokens: 50, total_tokens: 20050 } } : {};
+        const usage = scenario === 'compaction' || scenario === 'bad_summary' ? { usage: { prompt_tokens: 20000, completion_tokens: 50, total_tokens: 20050 } } : {};
         res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: reply.finish || 'stop' }], ...usage }) + '\n\n');
         res.write('data: [DONE]\n\n'); res.end();
       };

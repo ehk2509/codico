@@ -16,7 +16,9 @@ const { McpManager } = require('../out/mcpManager.js');
 test.after(() => { Module._load = originalLoad; });
 
 const SERVER = path.join(__dirname, 'fixtures', 'fakeMcpServer.js');
-const statusFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-mcp-')), 'status.json');
+const tempDirs = [];
+const statusFile = () => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-mcp-')); tempDirs.push(dir); return path.join(dir, 'status.json'); };
+test.after(() => { for (const dir of tempDirs) { fs.rmSync(dir, { recursive: true, force: true }); } });
 const readStatus = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return {}; } }; // {} until written
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const until = async (pred, ms = 3000) => { const t = Date.now(); while (Date.now() - t < ms) { if (pred()) { return true; } await new Promise(r => setTimeout(r, 25)); } return false; };
