@@ -96,7 +96,6 @@ provider JSON input/output characters, characters saved, and optimization latenc
 After each response the agent executes any tool calls, feeds the results back to the model, and keeps working until the task is complete — without requiring follow-up from you.
 
 - **No step limit by default** (`codico.maxIterations`, `0` = unlimited). The status bar shows the current step.
-- **Checkpoints** — every `codico.checkpointSteps` steps (default 50) the agent pauses and asks **▶ Continue** or **Stop here**, so a run that has gone off track can't spend tokens indefinitely.
 - **Token and cost tracking** — the status bar shows the last request's tokens (and the share served from the provider's prompt cache) plus the running total for the current task. With OpenRouter it also shows the task's actual cost as reported by OpenRouter; other providers report tokens only. Each thread keeps its total tokens and cost.
 - **Progress header** — a task that runs more than a moment shows what it is doing ("Editing… src/app.ts"), the elapsed time, the plan step and the task's tokens and cost.
 - **Token budget** — set `codico.taskTokenBudget` (default `0` = off) to pause with **▶ Continue** / **Stop here** each time a task uses that many more tokens.
@@ -238,6 +237,13 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 - Results show thread name, role indicator (▶ user / ◀ assistant), and highlighted snippets around each match
 - Click any result to open that thread with its matches highlighted (the find bar opens with your search)
 - Keyboard navigation: `↑`/`↓` to move between results, `Enter` to open, `Esc` to close
+
+### Everyday Conveniences
+- **Drafts and reading position** — each thread keeps its own unsent message and remembers where you were reading. Both survive switching threads, hiding the panel and reloading the window. (Attached files and images are not kept with a draft.)
+- **Context meter** — next to the token count: how close the conversation is to being compacted, as a bar and a percentage of the auto-compact threshold (green, then yellow from 70%, red from 90%). With auto-compact off it shows the size of the last request instead.
+- **Code block actions** — **Insert** puts the code at the cursor of the editor in use (replacing the selection); **New file** opens it in an untitled editor in its language; **Copy** as before. They work while the reply is still being written.
+- **Export a thread** — the ⤓ button on a thread in the list saves the conversation as a Markdown file or copies it: your messages, the replies, the steps taken (folded) and each change report. Reasoning and raw terminal output are left out.
+- **Queued message** — a message sent while the agent is busy waits in a banner. **Edit** puts it back in the box to change it, × cancels it, and anything you type while it waits stays in the box after it is sent.
 
 ### Find in a Conversation
 Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **⌕** in the thread bar:
@@ -688,7 +694,6 @@ Or click the Codico icon in the Activity Bar.
 | `codico.systemPrompt` | `string` | `""` | Optional prefix prepended to the system prompt |
 | `codico.autoInjectContext` | `boolean` | `true` | Auto-include active file path as context |
 | `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |
-| `codico.checkpointSteps` | `number` | `50` | Pause and ask whether to continue every N steps (`0` = never) |
 | `codico.taskTokenBudget` | `number` | `0` | Pause and ask whether to continue each time a task uses this many more tokens (`0` = no budget) |
 | `codico.terminalTimeoutSeconds` | `number` | `300` | Kill a terminal command and its child processes after this many seconds |
 | `codico.streamStallTimeoutSeconds` | `number` | `300` | Treat a response that sends nothing for this long as a dropped connection and reconnect |

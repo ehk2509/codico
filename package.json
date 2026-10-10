@@ -327,12 +327,6 @@
           "maximum": 8,
           "description": "Extra iterations allowed only when maxIterations is reached after an explicit coding task has finished focused source reading but still has no successful mutation. Discovery remains closed during this grace."
         },
-        "codico.checkpointSteps": {
-          "type": "number",
-          "default": 50,
-          "minimum": 0,
-          "description": "Pause and ask whether to continue every N agent steps (0 = never pause)"
-        },
         "codico.taskTokenBudget": {
           "type": "number",
           "default": 0,

@@ -74,3 +74,41 @@ export async function openChangeDiff(file: vscode.Uri, before: Uint8Array | null
     const beforeUri = vscode.Uri.from({ scheme: BEFORE_SCHEME, path: `/${name}`, query: key });
     await vscode.commands.executeCommand('vscode.diff', beforeUri, file, `${name} (before Codico \u2194 now)`, { preview: true });
 }
+
+/** A code block's "Insert": puts the code at the cursor of the editor in use, replacing the selection. */
+export async function insertCodeAtCursor(code: string): Promise<string | undefined> {
+    // The chat panel has the focus, so the "active" editor may be unset: fall back to a visible one
+    const editor = vscode.window.activeTextEditor ?? vscode.window.visibleTextEditors.find(candidate => candidate.document.uri.scheme !== 'output');
+    if (!editor) { return 'Open a file in the editor first: there is nowhere to insert the code.'; }
+    const done = await editor.edit(edit => { editor.selections.forEach(selection => edit.replace(selection, code)); });
+    if (!done) { return `The code could not be inserted into ${vscode.workspace.asRelativePath(editor.document.uri)} (the file may be read-only).`; }
+    await vscode.window.showTextDocument(editor.document, { viewColumn: editor.viewColumn, preserveFocus: false });
+    return undefined;
+}
+
+/** A code block's "New file": opens the code in an untitled editor, in its language when VS Code knows it. */
+export async function openCodeInNewFile(code: string, language: string): Promise<void> {
+    const known = await vscode.languages.getLanguages();
+    const aliases: Record<string, string> = { js: 'javascript', ts: 'typescript', py: 'python', sh: 'shellscript', bash: 'shellscript', zsh: 'shellscript', yml: 'yaml', md: 'markdown', 'c++': 'cpp', 'c#': 'csharp', rs: 'rust', rb: 'ruby', kt: 'kotlin' };
+    const id = aliases[language.toLowerCase()] ?? language.toLowerCase();
+    const document = await vscode.workspace.openTextDocument({ content: code, language: known.includes(id) ? id : undefined });
+    await vscode.window.showTextDocument(document);
+}
+
+/** A thread's "Export": asks whether to save the Markdown to a file or copy it. */
+export async function exportMarkdown(markdown: string, fileName: string): Promise<void> {
+    const save = 'Save as a Markdown file';
+    const copy = 'Copy to the clipboard';
+    const choice = await vscode.window.showQuickPick([save, copy], { title: 'Export conversation', placeHolder: fileName });
+    if (choice === copy) {
+        await vscode.env.clipboard.writeText(markdown);
+        void vscode.window.showInformationMessage('Codico: the conversation was copied as Markdown.');
+    } else if (choice === save) {
+        const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+        const target = await vscode.window.showSaveDialog({ defaultUri: folder ? vscode.Uri.joinPath(folder, fileName) : vscode.Uri.file(fileName), filters: { Markdown: ['md'] } });
+        if (!target) { return; }
+        await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(markdown));
+        await vscode.window.showTextDocument(target);
+    }
+}
+

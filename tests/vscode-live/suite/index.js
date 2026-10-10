@@ -9,7 +9,7 @@ async function run() {
   await vscode.extensions.getExtension('codico.codico').activate();
   const cfg = vscode.workspace.getConfiguration('codico');
   const set = (k, v) => cfg.update(k, v, vscode.ConfigurationTarget.Global);
-  for (const [k, v] of Object.entries({ model: 'ollama/fake-model', ollamaBaseUrl: `http://127.0.0.1:${PORT}`, checkpointSteps: 0,
+  for (const [k, v] of Object.entries({ model: 'ollama/fake-model', ollamaBaseUrl: `http://127.0.0.1:${PORT}`,
     maxIterations: 12, followUpSuggestionsEnabled: false, completionNotificationsEnabled: false, responseSummaryEnabled: false,
     autoIndex: false, terminalTimeoutSeconds: 10 })) { await set(k, v); }
   await vscode.commands.executeCommand('codico.openChat');
@@ -402,6 +402,29 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── Code block actions, as the panel sends them ──
+  {
+    const t0 = Date.now(); let why = ''; let ok = false;
+    try {
+      await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'codeBlock', action: 'newFile', code: 'const fresh: number = 1;\n', language: 'ts' });
+      const created = vscode.window.activeTextEditor;
+      const newFile = !!created && created.document.isUntitled && created.document.getText() === 'const fresh: number = 1;\n' && created.document.languageId === 'typescript';
+      // Insert replaces the selection of the editor in use
+      const doc = await vscode.workspace.openTextDocument(path.join(ws, 'fixtures/config.txt'));
+      const editor = await vscode.window.showTextDocument(doc);
+      const line = doc.lineAt(0);
+      editor.selection = new vscode.Selection(line.range.start, line.range.end);
+      await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'codeBlock', action: 'insert', code: 'INSERTED-LINE' });
+      const inserted = doc.getText().startsWith('INSERTED-LINE\n') && !doc.getText().includes(line.text + '\nINSERTED');
+      await vscode.commands.executeCommand('workbench.action.files.revert');
+      await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+      ok = newFile && inserted;
+      why = `New file opened untitled, in TypeScript, with the code: ${newFile}; Insert replaced the selected line: ${inserted}`;
+    } catch (e) { why = 'threw: ' + (e && e.message || e); }
+    results.push({ name: 'code_block_actions', ms: Date.now() - t0, requests: 0, ok, why });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── The change report: built from the files written and the commands run ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
   await scenario('pp_fixed', ({ error }) => 0, 60000).catch(() => {});

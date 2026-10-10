@@ -46,7 +46,8 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
+import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile } from './chatFiles';
+import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { promptForMissingKey, providerStatusMessage, usableModel } from './modelFallback';
@@ -209,7 +210,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._initThreadsSync();
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
-            if (e.affectsConfiguration('codico.chatDensity') || e.affectsConfiguration('codico.showReasoning')) { this._postUiSettings(); }
+            if (['chatDensity', 'showReasoning', 'autoCompactThreshold'].some(key => e.affectsConfiguration(`codico.${key}`))) { this._postUiSettings(); }
             // The header selector follows the setting (changed in Settings, or by the no-OpenRouter-key fallback)
             if (e.affectsConfiguration('codico.model')) { this._post({ type: 'setModel', model: vscode.workspace.getConfiguration('codico').get<string>('model', 'deepseek/deepseek-v4-flash') }); }
         }, undefined, _context.subscriptions);
@@ -657,6 +658,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 else { this._post({ type: 'error', message: `No change by Codico to ${msg.path} can be shown (it may have been undone).` }); }
                 break;
             }
+            case 'codeBlock': {
+                const problem = msg.action === 'insert' ? await insertCodeAtCursor(msg.code) : void await openCodeInNewFile(msg.code, msg.language ?? '');
+                if (problem) { this._post({ type: 'error', message: problem }); }
+                break;
+            }
+            case 'exportThread': {
+                const thread = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === msg.id);
+                // The open thread's newest messages may not be saved yet
+                const messages = msg.id === this._activeThreadId ? this._displayMessages : this._store.get<DisplayMessage[]>(this._threadDisplayKey(msg.id), []);
+                if (thread) { await exportMarkdown(threadMarkdown(thread.name, messages), exportFileName(thread.name)); }
+                break;
+            }
             case 'pinThread': {
                 const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
                 const pinned = threads.find(t => t.id === msg.id);
@@ -894,8 +907,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
-        // Pause for confirmation every N steps (0 = never)
-        const checkpointSteps = config.get<number>('checkpointSteps', 50);
         this._passport = new PassportRecorder();
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
@@ -1499,12 +1510,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (fencedToolResults.length > 0) {
                     const resultText = `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`;
                     this._history.push({ role: 'user', content: resultText });
-                }
-
-                // Periodic checkpoint so a run that has gone off track does not spend
-                // tokens indefinitely. Waits for the user; Stop also ends the wait.
-                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
-                    if (!await this._awaitCheckpoint(msgId, i + 1, signal)) { break; }
                 }
 
                 // Token budget: pause each time the task crosses another budget's worth
@@ -2661,7 +2666,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private _postUiSettings(): void {
         const cfg = vscode.workspace.getConfiguration('codico');
-        this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true) });
+        this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true),
+            compactAt: cfg.get<number>('autoCompactThreshold', 60_000) });
     }
 
     private _getThreadListForWebview(): Array<ThreadEntry & { active: boolean }> {

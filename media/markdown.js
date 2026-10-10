@@ -87,6 +87,8 @@
           out += '<div class="code-wrap' + (long ? ' collapsible collapsed' : '') + '">'
             + '<div class="code-lang-bar"><span>' + esc(langLabel) + ' \u00b7 ' + codeLines.length + (codeLines.length === 1 ? ' line' : ' lines') + '</span>'
             + (long ? '<button class="code-toggle" title="Show the whole block">Expand</button>' : '')
+            + '<button class="code-insert" title="Insert at the cursor in the editor (replaces the selection)">Insert</button>'
+            + '<button class="code-newfile" title="Open in a new file">New file</button>'
             + '<button data-code="' + escapedCode + '">Copy</button></div>'
             + '<pre><code' + la + '>' + escapedCode + '</code></pre>'
             + '</div>';

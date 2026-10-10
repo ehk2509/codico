@@ -32,7 +32,7 @@ function buildHtml() {
   if (leftover) { throw new Error('Unfilled placeholders: ' + leftover.join(', ')); }
   // VS Code injects acquireVsCodeApi before page scripts; record everything posted
   return html.replace('<head>', '<head><script nonce="testnonce">window.__posted=[];' +
-    'window.acquireVsCodeApi=()=>({postMessage(m){window.__posted.push(m)},getState(){},setState(){}});</script>');
+    'window.acquireVsCodeApi=()=>({postMessage(m){window.__posted.push(m)},getState(){try{return JSON.parse(sessionStorage.getItem("state")||"null")}catch(e){return null}},setState(s){sessionStorage.setItem("state",JSON.stringify(s))}});</script>');
 }
 
 let browser;
@@ -993,5 +993,195 @@ test('an unverified or failing change says so without being opened, and saved re
   assert.equal(await cards.nth(1).locator('.passport-check.stale .passport-tag.warn').textContent(), 'before last change');
   assert.equal(await cards.nth(1).locator('.passport-file').textContent(), 'src/<b>.ts', 'paths are shown as text');
   assert.equal(await cards.nth(1).locator('.passport-file b').count(), 0);
+});
+
+const THREADS = (active) => ({ type: 'threadList', threads: [
+  { id: 'A', name: 'Thread A', updatedAt: Date.now(), preview: '', messageCount: 4, active: active === 'A' },
+  { id: 'B', name: 'Thread B', updatedAt: Date.now() - 5000, preview: '', messageCount: 0, active: active === 'B' },
+] });
+const LONG = Array.from({ length: 40 }, (_, i) => [{ role: 'user', text: 'question ' + i, id: 'u' + i }, { role: 'assistant', text: 'answer ' + i + '\n\n' + 'More text. '.repeat(30) }]).flat();
+
+test('each thread keeps its own unsent draft, through a thread switch and a panel reload', async () => {
+  const { page, send, posted } = await openPanel();
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: [] });
+  await page.locator('#msg-input').fill('half a thought for A');
+  // Switching away at once: the draft is saved without waiting for a pause in typing
+  await send(THREADS('B'), { type: 'threadLoaded', id: 'B', name: 'Thread B', displayMessages: [] });
+  assert.equal(await page.locator('#msg-input').inputValue(), '', 'thread B starts with an empty box');
+  await page.locator('#msg-input').fill('draft for B');
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: [] });
+  assert.equal(await page.locator('#msg-input').inputValue(), 'half a thought for A');
+  // The same thread loaded again (after an edit or a delete) leaves the box alone
+  await page.locator('#msg-input').fill('half a thought for A, continued');
+  await send({ type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: [] });
+  assert.equal(await page.locator('#msg-input').inputValue(), 'half a thought for A, continued');
+  // The panel is reloaded (window reload, or the view was disposed)
+  await page.waitForTimeout(400);
+  await page.reload();
+  await page.waitForFunction(() => document.getElementById('send-btn'));
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: [] });
+  assert.equal(await page.locator('#msg-input').inputValue(), 'half a thought for A, continued');
+  // Sending clears the draft; the other thread's is still there
+  await page.click('#send-btn');
+  assert.equal((await posted('sendMessage')).pop().text, 'half a thought for A, continued');
+  assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('state')).drafts), { B: 'draft for B' });
+  // A deleted thread takes its draft with it
+  await send({ type: 'threadList', threads: [{ id: 'A', name: 'Thread A', updatedAt: Date.now(), preview: '', messageCount: 4, active: true }] });
+  assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('state')).drafts), {});
+});
+
+test('an empty new thread is known from the thread list, so its draft is kept too', async () => {
+  const { page, send } = await openPanel();
+  await send(THREADS('B'));
+  await page.locator('#msg-input').fill('first words');
+  await page.waitForTimeout(400);
+  assert.deepEqual(await page.evaluate(() => JSON.parse(sessionStorage.getItem('state')).drafts), { B: 'first words' });
+});
+
+test('coming back to a thread returns to where you were reading; the end needs no remembering', async () => {
+  const { page, send } = await openPanel();
+  await page.setViewportSize({ width: 380, height: 600 });
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: LONG });
+  const top = () => page.locator('#messages').evaluate(e => Math.round(e.scrollTop));
+  const bottom = await top();
+  assert.ok(bottom > 1000, 'a long thread opens at its end');
+  await page.locator('#messages').evaluate(e => e.scrollTo({ top: 700, behavior: 'instant' }));
+  await page.waitForTimeout(350);
+  await send(THREADS('B'), { type: 'threadLoaded', id: 'B', name: 'Thread B', displayMessages: [] });
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: LONG });
+  assert.ok(Math.abs(await top() - 700) <= 2, 'back at 700, got ' + await top());
+  // Reading at the end: opening the thread again shows the end, including anything new
+  await page.locator('#messages').evaluate(e => e.scrollTo({ top: e.scrollHeight, behavior: 'instant' }));
+  await page.waitForTimeout(350);
+  await send(THREADS('B'), { type: 'threadLoaded', id: 'B', name: 'Thread B', displayMessages: [] });
+  await send(THREADS('A'), { type: 'threadLoaded', id: 'A', name: 'Thread A', displayMessages: LONG.concat([{ role: 'user', text: 'one more', id: 'z' }]) });
+  const atEnd = await page.locator('#messages').evaluate(e => e.scrollHeight - e.scrollTop - e.clientHeight);
+  assert.ok(atEnd < 40, 'at the end, ' + atEnd + 'px from it');
+});
+
+test('the context meter shows how close the conversation is to being compacted', async () => {
+  const { page, send } = await openPanel();
+  const meter = page.locator('#s-ctx');
+  assert.equal(await meter.evaluate(e => getComputedStyle(e).display), 'none', 'nothing known yet');
+  await send({ type: 'uiSettings', density: 'comfortable', showReasoning: true, compactAt: 60000 },
+    { type: 'tokenUsage', promptTokens: 31200, completionTokens: 300, totalTokens: 31500 });
+  assert.equal(await meter.locator('.ctx-label').textContent(), '52%');
+  assert.equal(await meter.locator('.ctx-fill').evaluate(e => e.style.width), '52%');
+  assert.match(await meter.getAttribute('title'), /the last request held 31,200 tokens\.\nAuto-compact summarises earlier turns at 60,000 tokens \(52% of the way there\)/);
+  assert.equal(await meter.getAttribute('class'), 'ctx-meter');
+  await send({ type: 'tokenUsage', promptTokens: 45000, completionTokens: 1, totalTokens: 45001 });
+  assert.equal(await meter.getAttribute('class'), 'ctx-meter mid');
+  await send({ type: 'tokenUsage', promptTokens: 71000, completionTokens: 1, totalTokens: 71001 });
+  assert.deepEqual([await meter.getAttribute('class'), await meter.locator('.ctx-label').textContent()], ['ctx-meter high', '100%']);
+  // A changed threshold is applied to the size already known
+  await send({ type: 'uiSettings', density: 'comfortable', showReasoning: true, compactAt: 142000 });
+  assert.equal(await meter.locator('.ctx-label').textContent(), '50%');
+  // Auto-compact off: no bar to fill, only the size
+  await page.locator('#auto-compact-wrap').click();
+  assert.equal(await page.locator('#auto-compact-cb').isChecked(), false);
+  assert.equal(await meter.getAttribute('class'), 'ctx-meter off');
+  assert.match(await meter.locator('.ctx-label').textContent(), /^71(\.0)?k ctx$/i);
+  assert.match(await meter.getAttribute('title'), /Auto-compact is off/);
+  // Compacted, or another thread: the size is not known until the next request
+  await send({ type: 'threadLoaded', id: 'X', name: 'X', displayMessages: [] });
+  assert.equal(await meter.evaluate(e => getComputedStyle(e).display), 'none');
+});
+
+test('code blocks offer Insert and New file, and they work while the reply is still streaming', async () => {
+  const { page, send, posted } = await openPanel();
+  const F = '```';
+  await send({ type: 'startMessage', id: 'c1' }, { type: 'appendContent', id: 'c1', text: 'Here:\n\n' + F + 'ts\nconst a = 1;\nconst b = "<x>";\n' + F + '\n\nAnd more is ' });
+  await page.waitForTimeout(120);
+  const bar = page.locator('#msg-c1 .code-lang-bar').first();
+  assert.deepEqual(await bar.locator('button').allTextContents(), ['Insert', 'New file', 'Copy']);
+  await bar.locator('.code-insert').click();
+  assert.deepEqual((await posted('codeBlock')).pop(), { type: 'codeBlock', action: 'insert', code: 'const a = 1;\nconst b = "<x>";' });
+  // More text arrives and the block is rendered again: the buttons still answer
+  await send({ type: 'appendContent', id: 'c1', text: 'coming.' });
+  await page.waitForTimeout(120);
+  await page.locator('#msg-c1 .code-newfile').first().click();
+  assert.deepEqual((await posted('codeBlock')).pop(), { type: 'codeBlock', action: 'newFile', code: 'const a = 1;\nconst b = "<x>";', language: 'ts' });
+  await send({ type: 'endMessage', id: 'c1' });
+  await page.locator('#msg-c1 .code-insert').first().click();
+  assert.equal((await posted('codeBlock')).length, 3);
+  // A reply saved by an older version (no recorded events) gets the same buttons
+  await send({ type: 'threadLoaded', id: 't', name: 'T', displayMessages: [{ role: 'user', text: 'q', id: 'u' }, { role: 'assistant', text: F + '\nplain\n' + F }] });
+  await page.locator('.code-newfile').first().click();
+  assert.deepEqual((await posted('codeBlock')).pop(), { type: 'codeBlock', action: 'newFile', code: 'plain', language: '' });
+});
+
+test('a thread with messages can be exported from the thread list', async () => {
+  const { page, send, posted } = await openPanel();
+  await send(THREADS('A'));
+  await page.locator('#sessions-toggle-btn').click();
+  const exportButtons = page.locator('.session-action-btn.export');
+  assert.equal(await exportButtons.count(), 1, 'only the thread that has messages');
+  await exportButtons.first().click({ force: true });
+  assert.deepEqual((await posted('exportThread')).pop(), { type: 'exportThread', id: 'A' });
+  assert.equal((await posted('switchThread')).length, 0, 'exporting does not open the thread');
+});
+
+test('a queued message can be put back in the box to change it, and typing meanwhile is not lost', async () => {
+  const { page, send, posted } = await openPanel();
+  await send(THREADS('A'), { type: 'startMessage', id: 'q1' });
+  const Q = 'then run the tests and report every failure with its file and line number';
+  await page.locator('#msg-input').fill(Q);
+  await page.click('#send-btn');
+  assert.match(await page.locator('.queued-banner').textContent(), /Queued:then run the tests/);
+  // In a narrow panel the banner stays inside it: the text shortens, the buttons stay
+  await page.setViewportSize({ width: 280, height: 700 });
+  const banner = await page.locator('.queued-banner').evaluate(e => { const r = e.getBoundingClientRect(); const x = e.querySelector('.queued-cancel').getBoundingClientRect(); return { left: r.left, right: r.right, cancelRight: x.right }; });
+  assert.ok(banner.left >= 0 && banner.right <= 280 && banner.cancelRight <= 280, JSON.stringify(banner));
+  await page.setViewportSize({ width: 380, height: 900 });
+  assert.equal((await posted('sendMessage')).length, 0);
+  // Edit: back in the box, no longer queued
+  await page.locator('#msg-input').fill('and lint');
+  await page.locator('.queued-edit').click();
+  assert.equal(await page.locator('#msg-input').inputValue(), Q + '\nand lint');
+  assert.equal(await page.locator('.queued-banner').count(), 0);
+  await send({ type: 'endMessage', id: 'q1' });
+  await page.waitForTimeout(200);
+  assert.equal((await posted('sendMessage')).length, 0, 'nothing is sent by itself after Edit');
+  // Queued again; something else is typed while waiting; the queued message is sent and the typing stays
+  await send({ type: 'startMessage', id: 'q2' });
+  await page.click('#send-btn');
+  await page.locator('#msg-input').fill('a later thought');
+  await send({ type: 'endMessage', id: 'q2' });
+  await page.waitForTimeout(250);
+  assert.deepEqual((await posted('sendMessage')).map(m => m.text), [Q + '\nand lint']);
+  assert.equal(await page.locator('#msg-input').inputValue(), 'a later thought');
+});
+
+test('approving a plan moves the mode to Agent', async () => {
+  const { page, send, posted } = await openPanel();
+  const active = () => page.locator('.mode-btn.mode-active').getAttribute('id');
+  await page.locator('#mode-plan-btn').click();
+  assert.equal(await active(), 'mode-plan-btn');
+  await page.fill('#msg-input', 'add a settings page');
+  await page.click('#send-btn');
+  const plan = (await posted('generatePlan')).pop() || (await posted()).filter(m => /plan/i.test(m.type)).pop();
+  assert.ok(plan, 'the plan was requested');
+  const id = 'pl1';
+  await send({ type: 'startMessage', id, planGoal: 'add a settings page' }, { type: 'appendContent', id, text: '## Plan\n\n1. Create the page\n2. Wire the route\n' }, { type: 'endMessage', id });
+  assert.equal(await active(), 'mode-plan-btn', 'still planning until the plan is approved');
+  await page.locator('#msg-' + id + ' .plan-approve-btn').click();
+  assert.equal(await active(), 'mode-agent-btn');
+  // The extension is told to leave read-only mode before it is told to execute
+  const order = (await posted()).map(m => m.type).filter(t => t === 'toggleChatMode' || t === 'approvePlan');
+  assert.deepEqual(order.slice(-2), ['toggleChatMode', 'approvePlan']);
+  assert.deepEqual((await posted('toggleChatMode')).pop(), { type: 'toggleChatMode', chatMode: false });
+  // The next message is an ordinary agent message, not another plan
+  await send({ type: 'endMessage', id: 'exec' });
+  await page.fill('#msg-input', 'also add a test');
+  await page.click('#send-btn');
+  assert.equal((await posted('sendMessage')).pop().text, 'also add a test');
+});
+
+test('cancelling a plan leaves the mode on Plan', async () => {
+  const { page, send } = await openPanel();
+  await page.locator('#mode-plan-btn').click();
+  await send({ type: 'startMessage', id: 'pl2', planGoal: 'x' }, { type: 'appendContent', id: 'pl2', text: '## Plan\n\n1. One\n' }, { type: 'endMessage', id: 'pl2' });
+  await page.locator('#msg-pl2 .plan-cancel-btn').click();
+  assert.equal(await page.locator('.mode-btn.mode-active').getAttribute('id'), 'mode-plan-btn');
 });
 

@@ -55,7 +55,6 @@ export function activate(context: vscode.ExtensionContext): void {
                     await cfg.update('accoBaseUrl', options.accoBaseUrl, vscode.ConfigurationTarget.Global);
                 }
                 provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 0);
-                await cfg.update('checkpointSteps', 0, vscode.ConfigurationTarget.Global);
                 await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Global);
                 await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Global);
                 await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Global);
