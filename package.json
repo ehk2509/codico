@@ -42,6 +42,41 @@
         }
       ]
     },
+    "walkthroughs": [
+      {
+        "id": "codico.gettingStarted",
+        "title": "Get started with Codico",
+        "description": "Choose a model provider, ask for your first change, and learn how to stay in control.",
+        "steps": [
+          {
+            "id": "codico.gettingStarted.provider",
+            "title": "Choose a model provider",
+            "description": "Set a key, or use a login you already have.\n[Set an OpenRouter key](command:codico.setApiKey)\n[Set your own provider key](command:codico.setDirectApiKey)\nFor Claude Code, ChatGPT or Ollama: [open the chat](command:codico.chatView.focus) and pick it in the Provider menu.",
+            "media": { "markdown": "media/walkthrough/provider.md" },
+            "completionEvents": [ "onCommand:codico.setApiKey", "onCommand:codico.setDirectApiKey", "onSettingChanged:codico.model" ]
+          },
+          {
+            "id": "codico.gettingStarted.chat",
+            "title": "Ask for something",
+            "description": "Describe a task in plain words and choose how much freedom Codico gets.\n[Open the chat](command:codico.chatView.focus)",
+            "media": { "markdown": "media/walkthrough/chat.md" },
+            "completionEvents": [ "onView:codico.chatView" ]
+          },
+          {
+            "id": "codico.gettingStarted.control",
+            "title": "Stay in control",
+            "description": "Approvals, undo and review: nothing changes without you.",
+            "media": { "markdown": "media/walkthrough/control.md" }
+          },
+          {
+            "id": "codico.gettingStarted.find",
+            "title": "Find things, and get told when work is done",
+            "description": "Search conversations and get notified.\n[Notification settings](command:workbench.action.openSettings?%22codico.notifications%22)",
+            "media": { "markdown": "media/walkthrough/find.md" }
+          }
+        ]
+      }
+    ],
     "views": {
       "codico-container": [
         {
@@ -62,6 +97,10 @@
         "command": "codico.setApiKey",
         "title": "Set OpenRouter API Key",
         "category": "Codico"
+      },
+      {
+        "command": "codico.gettingStarted",
+        "title": "Codico: Get Started"
       },
       {
         "command": "codico.setOllamaUrl",
@@ -288,6 +327,19 @@
           "type": "string",
           "default": "",
           "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
+        },
+        "codico.notifications": {
+          "type": "string",
+          "enum": [
+            "whenAway",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Notify when a reply finishes or Codico waits for your approval while the chat is hidden or VS Code is in the background",
+            "Never notify"
+          ],
+          "default": "whenAway",
+          "description": "Tell you when Codico finishes or needs you while you are not looking at the chat. A desktop notification is used when the VS Code window is in the background"
         },
         "codico.codexPath": {
           "type": "string",

@@ -233,8 +233,26 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 
 - Debounced live search as you type — matches both thread names and message content
 - Results show thread name, role indicator (▶ user / ◀ assistant), and highlighted snippets around each match
-- Click any result to jump directly to that thread
+- Click any result to open that thread with its matches highlighted (the find bar opens with your search)
 - Keyboard navigation: `↑`/`↓` to move between results, `Enter` to open, `Esc` to close
+
+### Find in a Conversation
+Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **⌕** in the thread bar:
+
+- Every match is highlighted, in your messages, replies, code blocks and reasoning; the count shows "3 of 17"
+- `Enter` / `Shift+Enter` (or ↓ ↑) step through the matches; a match inside a collapsed code block, a folded run of steps or a closed reasoning trace opens it
+- Works while a reply is streaming: new matches are counted as the text arrives
+- With text selected, `Ctrl+F` searches for the selection
+
+### Notifications
+When a reply finishes, or Codico waits for your approval (a file change, a command, a "continue?" pause), and you are not looking at the chat:
+
+- VS Code in the background → a desktop notification (`notify-send` on Linux, Notification Center on macOS, a tray balloon on Windows), plus a notification inside VS Code for when you come back
+- VS Code in front but the chat hidden → a notification inside VS Code with a **Show Codico** button
+- Nothing while the chat is in view. Turn it off with `"codico.notifications": "off"`. In a remote window (SSH, WSL, containers) only the in-editor notification is used
+
+### Getting Started Guide
+On first install Codico opens a short guide (provider, first task, staying in control, finding things) — reopen it with **Codico: Get Started**. Until a provider is set up, the empty chat lists the ways to do it: an OpenRouter key, your Claude Code or ChatGPT login (marked when the command is found on your machine), your own provider key, or local Ollama.
 
 ---
 
@@ -302,6 +320,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.openChat` | Focus the chat panel (`Ctrl+Shift+L`) |
 | `codico.setApiKey` | Set your OpenRouter API key |
 | `codico.setDirectApiKey` | Set a direct provider API key (Anthropic, OpenAI, Google, Groq…) |
+| `codico.gettingStarted` | Open the Get Started guide |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
 | `codico.toggleInlineCompletions` | Toggle ghost-text inline completions on/off |
@@ -638,6 +657,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
 | `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
+| `codico.notifications` | `string` | `"whenAway"` | Notify when Codico finishes or needs you while you are not looking at the chat (`off` to disable) |
 | `codico.codexPath` | `string` | `""` | Path to the `codex` command for the ChatGPT provider (empty: PATH, then OpenAI's VS Code extension) |
 | `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |
 | `codico.showReasoning` | `boolean` | `true` | Show the model's reasoning blocks in the chat |
