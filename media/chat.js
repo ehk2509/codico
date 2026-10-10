@@ -330,6 +330,10 @@
     { cmd: '/compact',  desc: 'Summarize conversation history to reduce context size' },
   ];
 
+  // The project's own agents and skills (.codico folder), sent by the extension
+  var _userAgents = [];   // [{ name: '@reviewer', desc }]
+  var _userSkills = [];   // [{ cmd: '/add-migration', desc }]
+
   var _slashHintIdx = -1;
   var _hintMode = null; // 'slash' | 'mention' | null
 
@@ -341,7 +345,7 @@
   // ── @mention popup ─────────────────────────────────────────────────────────
   function _showMentionHints(filter) {
     var q = filter.toLowerCase();
-    var matches = AGENTS.filter(function(a) { return a.name.startsWith(q); });
+    var matches = AGENTS.concat(_userAgents).filter(function(a) { return a.name.startsWith(q); });
     if (matches.length === 0) { slashHintEl.style.display = 'none'; _setHintMode(null); return; }
     _setHintMode('mention');
     slashHintEl.innerHTML = '';
@@ -349,7 +353,7 @@
       var item = document.createElement('div');
       item.className = 'slash-hint-item';
       item.dataset.cmd = a.name;
-      item.innerHTML = '<span class="mention-cmd">' + esc(a.name) + '</span><span class="slash-hint-desc">' + esc(a.desc) + '</span>';
+      item.innerHTML = '<span class="mention-cmd">' + esc(a.name) + '</span><span class="slash-hint-desc">' + esc(a.desc) + '</span>' + (a.project ? '<span class="hint-project">project</span>' : '');
       item.addEventListener('mousedown', function(e) {
         e.preventDefault();
         _applyAgentMention(a.name.slice(1)); // strip '@'
@@ -415,7 +419,7 @@
   // already handled in the main message switch below
 
   function _showSlashHints(filter) {
-    var matches = SLASH_COMMANDS.filter(function(s) {
+    var matches = SLASH_COMMANDS.concat(_userSkills).filter(function(s) {
       return s.cmd.startsWith(filter.toLowerCase());
     });
     if (matches.length === 0 || filter === matches[0].cmd) {
@@ -427,7 +431,7 @@
       var item = document.createElement('div');
       item.className = 'slash-hint-item';
       item.dataset.cmd = s.cmd;
-      item.innerHTML = '<span class="slash-hint-cmd">' + esc(s.cmd) + '</span><span class="slash-hint-desc">' + esc(s.desc) + '</span>';
+      item.innerHTML = '<span class="slash-hint-cmd">' + esc(s.cmd) + '</span><span class="slash-hint-desc">' + esc(s.desc) + '</span>' + (s.project ? '<span class="hint-project">project</span>' : '');
       item.addEventListener('mousedown', function(e) {
         e.preventDefault();
         input.value = s.cmd + ' ';
@@ -1775,6 +1779,11 @@
     var displayText = text;
     var agentBadgeHtml = '';
     var agentMatch = text.match(/(?:^|\s)@(workspace|terminal|vscode)\b/i);
+    if (!agentMatch) {
+      // One of the project's own agents
+      var mentioned = text.match(/(?:^|\s)@([a-z0-9][a-z0-9-]*)(?![\w-])/i);
+      if (mentioned && _userAgents.some(function (a) { return a.name === '@' + mentioned[1].toLowerCase(); })) { agentMatch = mentioned; }
+    }
     if (agentMatch) {
       agentBadgeHtml = '<span class="mention-badge" style="font-size:10px;padding:1px 6px;cursor:default;">' + esc('@' + agentMatch[1].toLowerCase()) + '</span> ';
       displayText = text.replace(agentMatch[0], '').replace(/^\s+/, '').trim() || text;
@@ -3582,6 +3591,12 @@
         break;
       case 'agentActive':
         if (data.agent) { _setActiveAgent(data.agent); }
+        break;
+      case 'userExtensions':
+        _userAgents = (data.agents || []).map(function (a) { return { name: '@' + a.name, desc: a.description, project: true }; });
+        _userSkills = (data.skills || []).map(function (s) { return { cmd: '/' + s.name, desc: s.description, project: true }; });
+        // An agent that no longer exists cannot stay selected
+        if (_activeAgent && !AGENTS.concat(_userAgents).some(function (a) { return a.name === '@' + _activeAgent; })) { _clearActiveAgent(); }
         break;
       case 'mcpStatus':
         _updateMcpStatus(data.servers ?? []);

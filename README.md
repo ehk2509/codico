@@ -254,6 +254,34 @@ When a reply finishes, or Codico waits for your approval (a file change, a comma
 - VS Code in front but the chat hidden → a notification inside VS Code with a **Show Codico** button
 - Nothing while the chat is in view. Turn it off with `"codico.notifications": "off"`. In a remote window (SSH, WSL, containers) only the in-editor notification is used
 
+### Project Skills and Agents
+A project can teach Codico how it works, with Markdown files in a `.codico` folder that you commit with the code:
+
+```text
+.codico/
+  agents/reviewer.md             an agent: call it with @reviewer
+  skills/add-migration/SKILL.md  a skill: Codico uses it when a task matches, or run it with /add-migration
+```
+
+Each file starts with a short header, followed by the instructions:
+
+```markdown
+---
+name: add-migration
+description: Use when adding or changing a database migration
+---
+
+1. Read db/schema.sql and the newest file in db/migrations.
+2. Name the new file with the next number and a short description.
+3. Run `npm run migrate:check` and fix what it reports.
+```
+
+- **Skills** are for one kind of task. Codico is told each skill's name, description and path — not its text — and reads the file when a task matches, so a skill you do not use costs one line. `/add-migration add users.email` runs one directly, with its instructions attached to your request. The layout is the same as Claude Code's `SKILL.md`, so one folder of skills can serve both tools; a single file `.codico/skills/<name>.md` works too.
+- **Agents** are a way of working you choose yourself: `@reviewer check src/app.ts` puts that agent's instructions at the head of the system prompt for the turn. They appear in the `@` menu next to the built-in agents, marked "project".
+- **Create one** with **Codico: New Skill** or **Codico: New Agent**; changes to the files are picked up at once.
+- **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
+- **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
+
 ### Getting Started Guide
 On first install Codico opens a short guide (provider, first task, staying in control, finding things) — reopen it with **Codico: Get Started**. Until a provider is set up, the empty chat lists the ways to do it: an OpenRouter key, your Claude Code or ChatGPT login (marked when the command is found on your machine), your own provider key, or local Ollama.
 
@@ -324,6 +352,8 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.setApiKey` | Set your OpenRouter API key |
 | `codico.setDirectApiKey` | Set a direct provider API key (Anthropic, OpenAI, Google, Groq…) |
 | `codico.gettingStarted` | Open the Get Started guide |
+| `codico.newSkill` | Create a project skill in `.codico/skills` |
+| `codico.newAgent` | Create a project agent in `.codico/agents` |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
 | `codico.toggleInlineCompletions` | Toggle ghost-text inline completions on/off |

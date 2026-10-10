@@ -137,7 +137,8 @@ function start(port0) {
       const { scenario, step } = locate(messages);
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
+      const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),

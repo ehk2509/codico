@@ -482,6 +482,7 @@ body{
 .slash-hint-item:hover,.slash-hint-item.active{background:var(--vscode-list-hoverBackground);}
 .slash-hint-cmd{font-weight:600;color:var(--vscode-symbolIcon-functionForeground,#dcdcaa);font-family:monospace;}
 .slash-hint-desc{color:var(--vscode-descriptionForeground);font-size:11px;}
+.hint-project{margin-left:auto;flex-shrink:0;font-size:9px;padding:0 5px;border-radius:8px;border:1px solid var(--vscode-panel-border);color:var(--vscode-descriptionForeground)}
 /* @mention popup shares the same popup style */
 .mention-cmd { font-weight:600; color:var(--vscode-symbolIcon-classForeground,#4ec9b0); font-family:monospace; }
 .mention-badge {

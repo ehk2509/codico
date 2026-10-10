@@ -117,6 +117,14 @@
         "title": "Codico: Get Started"
       },
       {
+        "command": "codico.newSkill",
+        "title": "Codico: New Skill"
+      },
+      {
+        "command": "codico.newAgent",
+        "title": "Codico: New Agent"
+      },
+      {
         "command": "codico.setOllamaUrl",
         "title": "Set Ollama Base URL",
         "category": "Codico"
