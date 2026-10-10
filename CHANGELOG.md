@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.11 - 2026-10-10
 
 ### Fixed
 - ACCO (`codico.accoEnabled`) was applied to OpenRouter requests only: with a direct provider model (for example your own DeepSeek key) the setting did nothing. Direct provider requests now pass through ACCO too, for all three request shapes (OpenAI-compatible, Anthropic, Gemini), with the same fail-open behaviour: if ACCO is down, slow or rejects a request, the original request is sent. Ollama, Claude Code and ChatGPT requests are still not optimized.
