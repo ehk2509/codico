@@ -27,7 +27,8 @@ import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEve
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
-import { sliceFileByLines } from './fileReadWindow';
+import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines } from './fileReadWindow';
+import { fileOutlineSymbols } from './fileOutline';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
@@ -1290,8 +1291,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalPromptTokens += chunk.promptTokens;
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
-                        taskUsage.add(chunk.totalTokens, chunk.costUsd);
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens });
+                        taskUsage.add(chunk.totalTokens, chunk.costUsd, chunk.cachedTokens);
+                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens, taskCachedTokens: taskUsage.cachedTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1490,7 +1491,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // the stream never terminates due to context overflow. The compact runs
                 // silently between the current and next iteration; the UI stays in the
                 // streaming state and continues as soon as compaction finishes.
-                const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 100_000);
+                const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 60_000);
                 if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid && this._history.length >= this._compactRetryAt) {
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
                     currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
@@ -1624,7 +1625,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // ── Auto-compact: summarize history when prompt tokens exceed threshold ──
-        const autoCompactThreshold = config.get<number>('autoCompactThreshold', 100_000);
+        const autoCompactThreshold = config.get<number>('autoCompactThreshold', 60_000);
         if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold && this._history.length >= this._compactRetryAt) {
             await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
         }
@@ -2049,7 +2050,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
             // Unsaved editor changes included: that is the file the user sees
             const content = await readCurrentText(fileUri);
-            const window = sliceFileByLines(content, tool.startLine, tool.endLine);
+            // A large file read without a range: an outline and its first lines, not page after page
+            const unranged = tool.startLine === undefined && tool.endLine === undefined;
+            const outline = unranged && content.split('\n').length > OUTLINE_MIN_LINES ? await fileOutlineSymbols(fileUri) : [];
+            const window = outline.length >= 3 ? sliceFileByLines(content, 1, OUTLINE_HEAD_LINES) : sliceFileByLines(content, tool.startLine, tool.endLine);
             const label = window.truncated
                 ? `${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}`
                 : tool.filepath;
@@ -2057,7 +2061,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const continuation = window.endLine < window.totalLines
                 ? `\n… (bounded read; use start_line: ${window.endLine + 1} and end_line to continue, or search_files to target a symbol)\n`
                 : '';
-            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}]\n\`\`\`\n${window.text}\n\`\`\`${continuation}`;
+            const outlineText = outline.length >= 3 ? `Outline of this ${window.totalLines}-line file (line ranges):\n${formatOutline(outline)}\n\nRead only the range you need with start_line/end_line.\n\n` : '';
+            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}]\n${outlineText}\`\`\`\n${window.text}\n\`\`\`${continuation}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
@@ -2380,7 +2385,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const editedLines = newContentLF.split('\n');
             const insertedLines = effectiveNewStr.split('\n');
             const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
-            const CONTEXT = 3;
+            // Enough around the edit for the next nearby edit without reading the file again
+            const CONTEXT = 10;
             const from = Math.max(0, linesBefore - CONTEXT);
             const to   = Math.min(editedLines.length, linesBefore + insertedLines.length + CONTEXT);
             const snippet = editedLines.slice(from, to).join('\n');

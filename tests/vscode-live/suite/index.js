@@ -300,6 +300,11 @@ async function run() {
     await vscode.commands.executeCommand('workbench.action.closeAllEditors');
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
+  await scenario('big_read', ({ reqs }) => {
+    const r = reqs.find(x => /\[read_file: fixtures\/big\.md lines 1–80 of/.test(x.lastUser));
+    const outline = !!r && /Outline of this \d+-line file[\s\S]*L\d+–\d+\s+## Section 14/.test(r.lastUser);
+    return { ok: outline && r.lastUserChars < 6000, why: `outline with line ranges: ${outline}; first 80 lines only: ${!!r}; ${r ? r.lastUserChars : 0} chars sent (a 300-line page was ~9,000)${outline ? '' : ' | ' + JSON.stringify(r ? r.lastUser.slice(0, 700) : '')}` };
+  });
   await scenario('binary_write', ({ read, text }) => {
     const reported = /\[write_file: live\/blob\.bin\] Written successfully/.test(text);
     return { ok: reported && read('live/blob.bin') !== null, why: `reported as written: ${reported}; on disk: ${read('live/blob.bin') !== null}` };

@@ -4,6 +4,7 @@
  */
 export class TaskUsage {
     private _tokens = 0;
+    private _cachedTokens = 0;
     private _costUsd: number | undefined;
     private _nextPause: number;
 
@@ -14,11 +15,14 @@ export class TaskUsage {
     }
 
     get tokens(): number { return this._tokens; }
+    /** Prompt tokens the provider served from its cache (billed at a fraction of the price). */
+    get cachedTokens(): number { return this._cachedTokens; }
     /** Provider-reported cost in USD, or undefined when the provider reports none. */
     get costUsd(): number | undefined { return this._costUsd; }
 
-    add(totalTokens: number, costUsd?: number): void {
+    add(totalTokens: number, costUsd?: number, cachedTokens = 0): void {
         this._tokens += Math.max(0, totalTokens);
+        this._cachedTokens += Math.max(0, cachedTokens);
         if (costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0) {
             this._costUsd = (this._costUsd ?? 0) + costUsd;
         }

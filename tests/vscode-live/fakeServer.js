@@ -77,6 +77,8 @@ const SCRIPTS = (port) => ({
   // Regenerate: the same request must be sent again, without the first reply
   regen: [tool('read_file', 'filepath: fixtures/notes.txt'), 'First answer.'],
   diff_change: [tool('write_file', 'filepath: fixtures/diffme.txt\ncontent:\nafter'), 'Done.'],
+  // A large file read without a range: an outline and the first lines, not 300 lines
+  big_read: [tool('read_file', 'filepath: fixtures/big.md'), 'Read it.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only

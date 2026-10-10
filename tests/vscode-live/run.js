@@ -34,6 +34,8 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/abs.txt'), 'v1\n');
   fs.writeFileSync(path.join(ws, 'fixtures/reread.txt'), 'n=0\n');
   fs.writeFileSync(path.join(ws, 'fixtures/diffme.txt'), 'before\n');
+  // 700 lines in 14 sections: large enough for an outline
+  fs.writeFileSync(path.join(ws, 'fixtures/big.md'), Array.from({ length: 14 }, (_, i) => `## Section ${i + 1}\n\n` + Array.from({ length: 48 }, (_, j) => `Line ${j + 1} of section ${i + 1}.`).join('\n') + '\n').join('\n'));
   // Outside the workspace, reachable only through symbolic links inside it
   fs.mkdirSync(path.join(work, 'outside'));
   fs.writeFileSync(path.join(work, 'outside/secret.txt'), 'OUTSIDE-SECRET\n');
@@ -61,8 +63,15 @@ async function main() {
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.name.padEnd(13)} ${String(r.ms).padStart(6)} ms ${String(r.requests).padStart(4)} req | ${r.why}`);
   }
   const failed = rows.filter(r => !r.ok).length;
-  console.log(`${rows.length - failed}/${rows.length} live scenarios passed (work dir: ${work})`);
-  if (rows.length === 0 || failed > 0) { process.exitCode = 1; }
+  if (rows.length === 0 || failed > 0) {
+    // Kept for debugging a failure
+    console.log(`${rows.length - failed}/${rows.length} live scenarios passed (work dir: ${work})`);
+    process.exitCode = 1;
+  } else {
+    // Each run leaves ~110 MB (a VS Code profile); /tmp is often a small in-memory filesystem
+    console.log(`${rows.length}/${rows.length} live scenarios passed`);
+    fs.rmSync(work, { recursive: true, force: true });
+  }
 }
 
 main().catch(error => { console.error(error); process.exit(1); });

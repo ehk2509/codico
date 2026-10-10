@@ -23,3 +23,15 @@ test('large default reads are bounded and explicit ranges are clamped', () => {
   assert.match(range.text, /^line 450/);
   assert.match(range.text, /line 849$/);
 });
+
+test('a large file outline lists symbols with line ranges, nested one level', () => {
+  const { formatOutline } = require('../out/fileReadWindow.js');
+  const text = formatOutline([
+    { name: 'AgentProvider', kind: 'class', startLine: 40, endLine: 2800, depth: 0 },
+    { name: '_handleReadFile', kind: 'method', startLine: 2040, endLine: 2066, depth: 1 },
+    { name: 'activate', kind: 'function', startLine: 2810, endLine: 2830, depth: 0 },
+  ]);
+  assert.equal(text, 'L40–2800  class AgentProvider\n  L2040–2066  method _handleReadFile\nL2810–2830  function activate');
+  const many = formatOutline(Array.from({ length: 5 }, (_, i) => ({ name: 'f' + i, kind: 'function', startLine: i + 1, endLine: i + 1, depth: 0 })), 3);
+  assert.match(many, /… 2 more symbols/);
+});

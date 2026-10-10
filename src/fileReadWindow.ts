@@ -37,3 +37,28 @@ export function sliceFileByLines(
         truncated: start > 1 || cappedEnd < totalLines,
     };
 }
+
+/** A read without a line range of a file this long returns an outline and its first lines instead. */
+export const OUTLINE_MIN_LINES = 600;
+export const OUTLINE_HEAD_LINES = 80;
+
+export interface OutlineSymbol {
+    name: string;
+    kind: string;
+    /** 1-based, inclusive. */
+    startLine: number;
+    endLine: number;
+    depth: number;
+}
+
+/**
+ * The outline of a large file: its symbols with line ranges, so the model reads only
+ * the part it needs instead of paging through the whole file (each page stays in context).
+ */
+export function formatOutline(symbols: OutlineSymbol[], maxEntries = 150): string {
+    // Markdown headings come back as kind "string": their name says enough
+    const shown = symbols.slice(0, maxEntries).map(s =>
+        `${'  '.repeat(s.depth)}L${s.startLine}–${s.endLine}  ${s.kind === 'string' ? '' : s.kind + ' '}${s.name}`);
+    if (symbols.length > maxEntries) { shown.push(`… ${symbols.length - maxEntries} more symbols (search_files finds them)`); }
+    return shown.join('\n');
+}

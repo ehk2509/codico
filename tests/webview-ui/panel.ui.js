@@ -41,9 +41,13 @@ test.before(async () => {
   browser = await chromium.launch({ executablePath: CHROME });
 });
 test.after(async () => { await browser?.close(); });
+// Each test's page is closed when it ends: dozens of open pages exhaust Chrome and it closes mid-run
+const openPages = [];
+test.afterEach(async () => { await Promise.all(openPages.splice(0).map(p => p.close().catch(() => {}))); });
 
 async function openPanel() {
   const page = await browser.newPage({ viewport: { width: 380, height: 900 } });
+  openPages.push(page);
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.route('http://assets.test/**', r => {
@@ -574,4 +578,11 @@ test('compact density and hidden reasoning follow the settings', async () => {
 test('thinking effort starts at Medium', async () => {
   const { page } = await openPanel();
   assert.match(await page.locator('#effort-csel .csel-val').textContent(), /Med/);
+});
+
+test('the task total says how much of it came from the provider cache', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 'u1' },
+    { type: 'tokenUsage', promptTokens: 50000, completionTokens: 200, totalTokens: 50200, cachedTokens: 45000, taskTokens: 7600000, taskCachedTokens: 6232000, taskCostUsd: 0.24 });
+  assert.match(await page.locator('#s-tokens').textContent(), /task 7\.6M tok \(82% cached\)/);
 });

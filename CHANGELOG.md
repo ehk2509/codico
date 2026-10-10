@@ -7,6 +7,12 @@ All notable changes to Codico will be documented in this file.
 ### Fixed
 - Compaction could replace the conversation with a broken "summary": some models (seen with DeepSeek V4 Flash) continued the transcript in its own format instead of summarising it, Codico accepted any non-empty answer, and the agent forgot the work it had done (then re-read files to recover). The transcript is now delimited with the instruction repeated after it; an answer that copies the transcript or is far too short is rejected and retried once, and otherwise the history is kept unchanged. A failed automatic compaction is not retried on every step, and the summary has more room (4,000 tokens, low reasoning effort on OpenRouter).
 
+### Changed
+- Reading a large file (over 600 lines) without a line range returns an outline of its functions or sections with their line ranges, and its first 80 lines, so the agent reads only the part it needs instead of paging through the file 300 lines at a time (each page stays in the context and is resent with every request).
+- An edit's result shows 10 lines around the change (was 3), so the next nearby edit usually needs no re-read.
+- Auto-compaction starts at 60,000 prompt tokens by default (was 100,000), keeping long tasks' requests smaller.
+- The task token total shows how much was served from the provider's cache ("task 7.6M tok (82% cached)"); cached tokens are counted but billed at a fraction of the price.
+
 ## 0.3.7 - 2026-10-09
 
 ### Added

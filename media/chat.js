@@ -3145,8 +3145,10 @@
             tokText += ' (' + Math.round(100 * data.cachedTokens / data.promptTokens) + '% cached)';
           }
           if (data.taskTokens) {
-            _progress.set('usage', _fmtTokens(data.taskTokens) + ' tok' + (typeof data.taskCostUsd === 'number' ? ' \u00B7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2) : ''));
-            tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok';
+            // Cached tokens are counted in the total but billed at a fraction of the price: say how many
+            var taskCached = data.taskCachedTokens ? ' (' + Math.round(100 * data.taskCachedTokens / data.taskTokens) + '% cached)' : '';
+            _progress.set('usage', _fmtTokens(data.taskTokens) + ' tok' + taskCached + (typeof data.taskCostUsd === 'number' ? ' \u00B7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2) : ''));
+            tokText += ' \u00b7 task ' + _fmtTokens(data.taskTokens) + ' tok' + taskCached;
             if (typeof data.taskCostUsd === 'number') {
               tokText += ' \u00b7 $' + data.taskCostUsd.toFixed(data.taskCostUsd < 1 ? 3 : 2);
             }
