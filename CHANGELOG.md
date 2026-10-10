@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.9 - 2026-10-10
 
 ### Added
 - ChatGPT provider: run Codico through OpenAI's `codex` command and your ChatGPT login (`codex login`), with no API key. Pick "ChatGPT" in the provider menu, then GPT-6.1 Sol, GPT-6 Sol, GPT-6 Astra, GPT-6 Luna or GPT-5.5 (what your plan allows). Codex runs read-only with its shell, web search, plugins and other tools switched off and without your Codex settings — Codico keeps control of files and commands, with its approvals. The reply arrives in one piece (Codex does not stream it), an `OPENAI_API_KEY` in the environment is not passed on, and `codico.codexPath` points to the command when it is not on the PATH.
