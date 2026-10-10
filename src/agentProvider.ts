@@ -10,7 +10,8 @@ import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
 import { UserExtensionsLoader } from './userExtensionsLoader';
-import { McpManager, McpServerConfig, loadMcpConfigs } from './mcpManager';
+import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
+import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
@@ -486,12 +487,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'clarifyResponse':
                 await this._handleClarifyResponse(msg.text);
                 break;
+            case 'mcpCatalog':
             case 'refreshMcp':
+                // The catalog: nothing to reconnect unless a server was added or removed
+                if (msg.type === 'mcpCatalog' && !await handleMcpCatalogAction(msg, this._context, this._extensionUri)) { this._post(await mcpCatalogMessage(this._extensionUri)); break; }
                 // Not under a running task: it may be calling one of these servers
                 await this._whenIdle();
                 this._mcpReady = false;
                 this._mcp.disconnectAll();
                 await this._connectMcpServers();
+                if (msg.type === 'mcpCatalog') { this._post(await mcpCatalogMessage(this._extensionUri)); }
                 break;
             case 'undo':
                 await this.undoRedoStep('undo');
@@ -693,52 +698,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        const approved: McpServerConfig[] = [];
-        const persisted = this._context.workspaceState.get<Record<string, true>>(
-            'codico.approvedWorkspaceMcp.v1',
-            {}
-        );
-
-        for (const cfg of configs) {
-            if (cfg.source !== 'workspace') {
-                approved.push(cfg);
-                continue;
-            }
-
-            const fingerprint = nodeCrypto
-                .createHash('sha256')
-                .update(JSON.stringify({
-                    name: cfg.name,
-                    command: cfg.command,
-                    args: cfg.args ?? [],
-                    env: cfg.env ?? {},
-                }))
-                .digest('hex');
-
-            if (persisted[fingerprint]) {
-                approved.push(cfg);
-                continue;
-            }
-
-            const choice = await vscode.window.showWarningMessage(
-                `This workspace wants Codico to start MCP server "${cfg.name}".`,
-                {
-                    modal: true,
-                    detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes with a minimal runtime environment plus any variables explicitly configured for this server.`,
-                },
-                'Allow Once',
-                'Always Allow for Workspace'
-            );
-
-            if (choice === 'Allow Once' || choice === 'Always Allow for Workspace') {
-                approved.push(cfg);
-            }
-            if (choice === 'Always Allow for Workspace') {
-                persisted[fingerprint] = true;
-                await this._context.workspaceState.update('codico.approvedWorkspaceMcp.v1', persisted);
-            }
-        }
-
+        const approved = await approveMcpServers(this._context, configs);
         const statuses = await this._mcp.connectAll(approved);
         this._post({ type: 'mcpStatus', servers: statuses });
     }

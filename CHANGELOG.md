@@ -5,6 +5,7 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- MCP catalog: **🔌 MCP** in the chat header lists known servers (Playwright, Chrome DevTools, Context7, Memory, Sequential Thinking), each pinned to a version and checked to connect with Codico. A card shows the exact command; **Add…** opens a VS Code dialog with that command, its requirements and tool count, and adds the server to this project (`.mcp.json`) or to all projects (user settings) only when you choose. **Remove** takes it out. The panel can only name a catalog entry: the command always comes from the bundled catalog.
 - Project skills and agents: a project can define its own, as Markdown files in a `.codico` folder committed with the code. A skill (`.codico/skills/<name>/SKILL.md`, the same layout as Claude Code's) holds the steps for one kind of task: Codico is told its name, description and path and reads it when a task matches, or you run it with `/name`. An agent (`.codico/agents/<name>.md`) is called with `@name` and puts its instructions in charge of the turn. Both appear in the `/` and `@` menus marked "project", "Codico: New Skill" and "Codico: New Agent" create a starting file, and file changes are picked up at once. Files with an unusable name, no instructions or more than 20,000 characters are skipped with a message; nothing is loaded in an untrusted folder.
 
 ## 0.3.11 - 2026-10-10

@@ -893,3 +893,41 @@ test('an agent removed from the project is no longer offered or selected', async
   assert.match(await page.locator('#active-agent-bar').textContent(), /@terminal/);
 });
 
+test('the MCP catalog lists known servers with the command each would run; adding asks the extension', async () => {
+  const { page, send, posted } = await openPanel();
+  const row = (id, extra) => ({ id, name: id === 'playwright' ? 'Playwright' : 'Context7', publisher: id === 'playwright' ? 'Microsoft' : 'Upstash', description: 'Does things.',
+    command: 'npx', args: ['-y', id + '@1.0.0'], commandLine: 'npx -y ' + id + '@1.0.0', requires: 'Node.js', tools: id === 'playwright' ? 25 : 1, homepage: 'https://github.com/x/y', added: null, ...extra });
+  await page.locator('#mcp-btn').click();
+  assert.equal(await page.locator('#mcp-catalog-overlay').evaluate(e => getComputedStyle(e).display), 'flex');
+  assert.deepEqual((await posted('mcpCatalog')).pop(), { type: 'mcpCatalog', action: 'open' });
+  await send({ type: 'mcpCatalog', servers: [row('playwright'), row('context7', { added: 'project' })] });
+  // The exact command is on the card, before anything is asked
+  assert.deepEqual(await page.locator('.mcp-entry-cmd').allTextContents(), ['npx -y playwright@1.0.0', 'npx -y context7@1.0.0']);
+  assert.deepEqual(await page.locator('.mcp-entry-meta').allTextContents(), ['Requires Node.js · 25 tools', 'Requires Node.js · 1 tool']);
+  assert.deepEqual(await page.locator('.mcp-entry-btn').allTextContents(), ['Add…', 'Remove']);
+  assert.equal(await page.locator('.mcp-entry[data-id="context7"] .mcp-entry-added').textContent(), 'in this project');
+  // Add sends only the catalog id: the command comes from the extension's own catalog
+  await page.locator('.mcp-entry[data-id="playwright"] .mcp-entry-btn').click();
+  assert.deepEqual((await posted('mcpCatalog')).pop(), { type: 'mcpCatalog', action: 'add', id: 'playwright' });
+  assert.equal(await page.locator('.mcp-entry[data-id="playwright"] .mcp-entry-btn').isDisabled(), true, 'waiting for the approval');
+  // The extension answers with the new state
+  await send({ type: 'mcpCatalog', servers: [row('playwright', { added: 'user' }), row('context7', { added: 'project' })] });
+  assert.equal(await page.locator('.mcp-entry[data-id="playwright"] .mcp-entry-added').textContent(), 'in your settings');
+  await page.locator('.mcp-entry[data-id="playwright"] .mcp-entry-btn').click();
+  assert.deepEqual((await posted('mcpCatalog')).pop(), { type: 'mcpCatalog', action: 'remove', id: 'playwright' });
+  // Text from the catalog is shown as text
+  await send({ type: 'mcpCatalog', servers: [row('playwright', { description: '<img src=x onerror=alert(1)>' })] });
+  assert.equal(await page.locator('.mcp-entry-desc img').count(), 0);
+  await page.locator('#mcp-catalog-close').click();
+  assert.equal(await page.locator('#mcp-catalog-overlay').evaluate(e => getComputedStyle(e).display), 'none');
+});
+
+test('the header still fits with the MCP button in a narrow panel', async () => {
+  const { page } = await openPanel();
+  for (const width of [260, 380]) {
+    await page.setViewportSize({ width, height: 700 });
+    const box = await page.locator('#mcp-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width }; });
+    assert.ok(box.width > 20 && box.left >= 0 && box.right <= width, `MCP button inside the panel at ${width}px: ${JSON.stringify(box)}`);
+  }
+});
+

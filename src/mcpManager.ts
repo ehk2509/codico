@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
 import { McpClient, McpTool, McpToolResult } from './mcpClient';
 
@@ -139,6 +140,61 @@ export class McpManager {
 
         return lines.join('\n');
     }
+}
+
+/** Where the MCP servers a workspace file asked for, and the user allowed for good, are remembered. */
+export const APPROVED_WORKSPACE_MCP_KEY = 'codico.approvedWorkspaceMcp.v1';
+
+/** Identifies a server by exactly what would run: a changed command or argument is a different server. */
+export function mcpFingerprint(cfg: Pick<McpServerConfig, 'name' | 'command' | 'args' | 'env'>): string {
+    return crypto.createHash('sha256')
+        .update(JSON.stringify({ name: cfg.name, command: cfg.command, args: cfg.args ?? [], env: cfg.env ?? {} }))
+        .digest('hex');
+}
+
+/**
+ * The servers that may be started: those from the user's own settings, and those from a
+ * workspace file that the user allows (asked once per exact command).
+ */
+export async function approveMcpServers(context: vscode.ExtensionContext, configs: McpServerConfig[]): Promise<McpServerConfig[]> {
+    const approved: McpServerConfig[] = [];
+    const persisted = context.workspaceState.get<Record<string, true>>(
+        APPROVED_WORKSPACE_MCP_KEY,
+        {}
+    );
+
+    for (const cfg of configs) {
+        if (cfg.source !== 'workspace') {
+            approved.push(cfg);
+            continue;
+        }
+
+        const fingerprint = mcpFingerprint(cfg);
+
+        if (persisted[fingerprint]) {
+            approved.push(cfg);
+            continue;
+        }
+
+        const choice = await vscode.window.showWarningMessage(
+            `This workspace wants Codico to start MCP server "${cfg.name}".`,
+            {
+                modal: true,
+                detail: `Command: ${cfg.command} ${(cfg.args ?? []).join(' ')}\n\nOnly allow MCP servers you trust. They run as local processes with a minimal runtime environment plus any variables explicitly configured for this server.`,
+            },
+            'Allow Once',
+            'Always Allow for Workspace'
+        );
+
+        if (choice === 'Allow Once' || choice === 'Always Allow for Workspace') {
+            approved.push(cfg);
+        }
+        if (choice === 'Always Allow for Workspace') {
+            persisted[fingerprint] = true;
+            await context.workspaceState.update(APPROVED_WORKSPACE_MCP_KEY, persisted);
+        }
+    }
+    return approved;
 }
 
 /**

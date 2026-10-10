@@ -1,0 +1,57 @@
+[
+  {
+    "id": "playwright",
+    "name": "Playwright",
+    "publisher": "Microsoft",
+    "description": "Drive a real browser: open pages, click, fill forms, read the page and its console.",
+    "command": "npx",
+    "args": ["-y", "@playwright/mcp@0.0.83"],
+    "requires": "Node.js",
+    "tools": 25,
+    "homepage": "https://github.com/microsoft/playwright-mcp"
+  },
+  {
+    "id": "chrome-devtools",
+    "name": "Chrome DevTools",
+    "publisher": "Google",
+    "description": "Inspect and debug a page in Chrome: network requests, console, performance traces, screenshots.",
+    "command": "npx",
+    "args": ["-y", "chrome-devtools-mcp@1.10.1"],
+    "requires": "Node.js and Chrome",
+    "tools": 30,
+    "homepage": "https://github.com/ChromeDevTools/chrome-devtools-mcp"
+  },
+  {
+    "id": "context7",
+    "name": "Context7",
+    "publisher": "Upstash",
+    "description": "Look up current documentation and examples for a library, instead of relying on what the model remembers.",
+    "command": "npx",
+    "args": ["-y", "@upstash/context7-mcp@4.3.0"],
+    "requires": "Node.js",
+    "tools": 2,
+    "homepage": "https://github.com/upstash/context7"
+  },
+  {
+    "id": "memory",
+    "name": "Memory",
+    "publisher": "Model Context Protocol",
+    "description": "A small knowledge graph the agent can write to and read from across conversations.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-memory@2026.8.31"],
+    "requires": "Node.js",
+    "tools": 9,
+    "homepage": "https://github.com/modelcontextprotocol/servers"
+  },
+  {
+    "id": "sequential-thinking",
+    "name": "Sequential Thinking",
+    "publisher": "Model Context Protocol",
+    "description": "A scratchpad tool for working through a problem in numbered, revisable steps.",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@2026.8.31"],
+    "requires": "Node.js",
+    "tools": 1,
+    "homepage": "https://github.com/modelcontextprotocol/servers"
+  }
+]

@@ -550,6 +550,20 @@ Existing `.copilotignore` files are still read for compatibility; `.codicoignore
 ---
 
 ### MCP (Model Context Protocol) Servers
+
+**The catalog.** Click **🔌 MCP** in the chat header for a short list of known servers, each checked to connect with Codico and pinned to a version:
+
+| Server | By | What it adds |
+|---|---|---|
+| Playwright | Microsoft | Drive a real browser: open pages, click, fill forms, read the page and its console |
+| Chrome DevTools | Google | Inspect a page in Chrome: network, console, performance traces, screenshots |
+| Context7 | Upstash | Current documentation and examples for a library |
+| Memory | Model Context Protocol | A small knowledge graph the agent keeps across conversations |
+| Sequential Thinking | Model Context Protocol | A scratchpad for working through a problem in steps |
+
+Each card shows the exact command the server runs. **Add…** opens a VS Code dialog with that command, what it requires and how many tools it adds, and asks where to put it: **this project** (`.mcp.json`, shared with everyone who opens the project) or **all projects** (your user settings). Nothing is written or started until you choose. **Remove** takes it out again. These servers need Node.js; a server that needs an API key is not in the catalog yet — add those by hand as below.
+
+Each tool a server adds is described to the model on every request, so a 30-tool server costs tokens even when unused: add what you use.
 Connect any MCP-compatible tool server via settings or a `.mcp.json` file in the workspace root. Connected tools appear in the system prompt and can be called with `mcp_call` blocks.
 
 - Workspace-defined servers need your approval the first time; an invalid `.mcp.json` is reported instead of silently ignored
