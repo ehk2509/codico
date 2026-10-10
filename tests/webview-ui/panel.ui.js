@@ -805,7 +805,8 @@ test('a result of the search across threads opens that thread with its matches h
   await page.locator('.ts-result').click();
   assert.deepEqual((await posted('switchThread')).pop(), { type: 'switchThread', id: 'old' });
   await send({ type: 'threadLoaded', id: 'old', name: 'Old one', displayMessages: [{ role: 'user', text: 'why does it drop?', id: 'u' }, { role: 'assistant', text: 'Because the WebSocket closes early. Reopen the websocket.' }] });
-  await page.waitForTimeout(120);
+  // The find bar opens on a timer after the thread is drawn: wait for it rather than for a fixed time
+  await page.waitForFunction(() => document.getElementById('find-count').textContent === '1 of 2', null, { timeout: 5000 });
   assert.equal(await page.locator('#find-input').inputValue(), 'websocket');
   assert.equal(await page.locator('#find-count').textContent(), '1 of 2');
 });
