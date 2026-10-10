@@ -83,6 +83,11 @@ const SCRIPTS = (port) => ({
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_plain: ['Answered without the effort option.'],
+  // The change report: the test fails, a file is fixed and another created, the test passes
+  pp_fixed: [tool('run_terminal', 'command: node --test fixtures/pp.test.js 2>&1 | tail -8'), tool('edit_file', 'filepath: fixtures/pp.txt\nold_str:\nvalue=1\nnew_str:\nvalue=2'),
+    tool('write_file', 'filepath: live/pp-notes.txt\ncontent:\nfixed the value\nsecond line'), tool('run_terminal', 'command: node --test fixtures/pp.test.js 2>&1 | tail -8'), 'Fixed.'],
+  // A change with nothing run afterwards
+  pp_unchecked: [tool('write_file', 'filepath: live/pp-unchecked.txt\ncontent:\nno checks'), 'Written.'],
   // Only a DeepSeek key is set, but the selected model is an OpenRouter one
   ds_fallback: ['Answered through DeepSeek.'],
   // Stopped during setup: must never reach the model

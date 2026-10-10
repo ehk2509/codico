@@ -721,6 +721,63 @@
     }
   }
 
+  // ── Change report: what a reply changed and what was checked afterwards ──────────
+  // Built by the extension from the files it wrote and the commands it ran, not by the model.
+  function _renderPassport(id, passport, markdown) {
+    var wrap = document.getElementById('msg-' + id);
+    if (!wrap || !passport || !passport.files) { return; }
+    var old = document.getElementById('passport-' + id);
+    if (old) { old.remove(); }
+    var added = 0, removed = 0;
+    passport.files.forEach(function (f) { added += f.added; removed += f.removed; });
+    var current = passport.checks.filter(function (c) { return !c.stale; });
+    var passed = current.filter(function (c) { return c.outcome === 'passed'; }).length;
+    var badge = { verified: '✓ Verified', failing: '✗ Checks failing', unverified: '! Not verified' }[passport.verdict] || passport.verdict;
+    var summary = passport.files.length + ' file' + (passport.files.length === 1 ? '' : 's') + ' · +' + added + ' −' + removed +
+      (current.length ? ' · ' + passed + ' of ' + current.length + ' check' + (current.length === 1 ? '' : 's') + ' passed' : ' · no checks run');
+    var mark = { passed: '✓', failed: '✗', unknown: '?' };
+    var card = document.createElement('div');
+    card.className = 'passport passport-' + passport.verdict;
+    card.id = 'passport-' + id;
+    card.innerHTML =
+      '<button class="passport-head" aria-expanded="false"><span class="passport-title">Change report</span>' +
+        '<span class="passport-badge">' + esc(badge) + '</span><span class="passport-sum">' + esc(summary) + '</span><span class="passport-arrow">▸</span></button>' +
+      (passport.verdict !== 'verified' && passport.notes.length ? '<div class="passport-alert">' + esc(passport.notes[0]) + '</div>' : '') +
+      '<div class="passport-body">' +
+        '<div class="passport-section">Files changed</div>' +
+        passport.files.map(function (f) {
+          return '<div class="passport-row"><button class="passport-file" data-path="' + esc(f.path) + '" title="Show what changed in this file">' + esc(f.path) + '</button>' +
+            (f.status === 'created' ? '<span class="passport-tag">new</span>' : '') +
+            '<span class="passport-plus">+' + f.added + '</span><span class="passport-minus">−' + f.removed + '</span>' +
+            (passport.checks.length && !f.checked ? '<span class="passport-tag warn" title="No check passed after this file last changed">not checked</span>' : '') + '</div>';
+        }).join('') +
+        (passport.checks.length ? '<div class="passport-section">Checks</div>' + passport.checks.map(function (c) {
+          return '<div class="passport-row passport-check ' + esc(c.outcome) + (c.stale ? ' stale' : '') + '"><span class="passport-mark">' + mark[c.outcome] + '</span>' +
+            '<code class="passport-cmd">' + esc(c.command) + '</code><span class="passport-detail">' + esc(c.detail) + '</span>' +
+            (c.fixed ? '<span class="passport-tag ok" title="This check failed earlier in the turn and passes now">was failing</span>' : '') +
+            (c.stale ? '<span class="passport-tag warn" title="Its last run was before the last file change">before last change</span>' : '') + '</div>';
+        }).join('') : '') +
+        (passport.notes.length ? '<div class="passport-section">Not covered</div>' + passport.notes.map(function (n) { return '<div class="passport-note">' + esc(n) + '</div>'; }).join('') : '') +
+        '<div class="passport-actions"><button class="passport-copy">Copy as Markdown</button><span class="passport-origin">From the files Codico wrote and the commands it ran</span></div>' +
+      '</div>';
+    var head = card.querySelector('.passport-head');
+    head.addEventListener('click', function () {
+      var open = card.classList.toggle('open');
+      head.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    Array.prototype.forEach.call(card.querySelectorAll('.passport-file'), function (b) {
+      b.addEventListener('click', function () { vscode.postMessage({ type: 'openChangeDiff', path: b.dataset.path }); });
+    });
+    var copy = card.querySelector('.passport-copy');
+    copy.addEventListener('click', function () {
+      var done = function () { copy.textContent = 'Copied'; setTimeout(function () { copy.textContent = 'Copy as Markdown'; }, 1500); };
+      if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(markdown || '').then(done, function () {}); }
+    });
+    var copyBtn = document.getElementById('copy-' + id);
+    if (copyBtn && copyBtn.parentNode === wrap) { wrap.insertBefore(card, copyBtn); } else { wrap.appendChild(card); }
+    scrollBottom();
+  }
+
   // ── MCP catalog: known servers, added after an approval shown by VS Code itself ──
   var _mcpOverlay = document.getElementById('mcp-catalog-overlay');
   var _mcpList = document.getElementById('mcp-catalog-list');
@@ -3633,6 +3690,9 @@
         break;
       case 'mcpCatalog':
         _renderMcpCatalog(data.servers || []);
+        break;
+      case 'patchPassport':
+        _renderPassport(data.id, data.passport, data.markdown);
         break;
       case 'userExtensions':
         _userAgents = (data.agents || []).map(function (a) { return { name: '@' + a.name, desc: a.description, project: true }; });

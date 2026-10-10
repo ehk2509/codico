@@ -350,6 +350,11 @@
           "default": "",
           "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
         },
+        "codico.changeReport": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a reply that changed files, show a change report: the files and lines changed, the test, build and lint commands that ran afterwards with their results, and what was not checked. It is built from what Codico observed and costs no model request"
+        },
         "codico.notifications": {
           "type": "string",
           "enum": [

@@ -71,6 +71,7 @@ export function activate(context: vscode.ExtensionContext): void {
             }),
             vscode.commands.registerCommand('codico.__evalAnswerClarify', async (answer: string) => provider.runEvaluationTask(answer, 'clarify')),
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
+            vscode.commands.registerCommand('codico.__evalPassport', () => provider.evaluationPassport()),
             vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean) => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );

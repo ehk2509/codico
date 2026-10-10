@@ -931,3 +931,67 @@ test('the header still fits with the MCP button in a narrow panel', async () => 
   }
 });
 
+const PASSPORT = {
+  verdict: 'verified',
+  files: [
+    { path: 'src/parser.ts', status: 'modified', added: 12, removed: 4, edits: 2, checked: true },
+    { path: 'tests/parser.test.js', status: 'created', added: 30, removed: 0, edits: 1, checked: true },
+  ],
+  checks: [
+    { command: 'npm test', kind: 'test', outcome: 'passed', detail: '238 passed, 0 failed', stale: false, fixed: true, runs: 2 },
+    { command: 'npm run compile', kind: 'build', outcome: 'passed', detail: 'exit 0', stale: false, fixed: false, runs: 1 },
+  ],
+  notes: [],
+};
+
+test('a reply that changed files ends with a change report: verdict, files and checks', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'startMessage', id: 'p1' }, { type: 'appendContent', id: 'p1', text: 'Fixed the parser.' },
+    { type: 'patchPassport', id: 'p1', passport: PASSPORT, markdown: '## Change report\n' }, { type: 'endMessage', id: 'p1' });
+  const card = page.locator('#passport-p1');
+  assert.equal(await card.locator('.passport-badge').textContent(), '✓ Verified');
+  assert.equal(await card.locator('.passport-sum').textContent(), '2 files · +42 −4 · 2 of 2 checks passed');
+  // Collapsed until asked for
+  assert.equal(await card.locator('.passport-body').evaluate(e => getComputedStyle(e).display), 'none');
+  await card.locator('.passport-head').click();
+  assert.equal(await card.locator('.passport-body').evaluate(e => getComputedStyle(e).display), 'block');
+  assert.deepEqual(await card.locator('.passport-file').allTextContents(), ['src/parser.ts', 'tests/parser.test.js']);
+  assert.deepEqual(await card.locator('.passport-check .passport-cmd').allTextContents(), ['npm test', 'npm run compile']);
+  assert.equal(await card.locator('.passport-check').first().locator('.passport-tag.ok').textContent(), 'was failing');
+  assert.deepEqual(await card.locator('.passport-row .passport-tag').allTextContents(), ['new', 'was failing'], 'no "not checked" marks on checked files');
+  // A file opens its diff; the report is still there after the reply ended, below the answer
+  await card.locator('.passport-file').first().click();
+  assert.deepEqual((await posted('openChangeDiff')).pop(), { type: 'openChangeDiff', path: 'src/parser.ts' });
+  const order = await page.locator('#msg-p1').evaluate(w => { const ao = w.querySelector('.agent-out'); const c = w.querySelector('.passport'); return !!(ao.compareDocumentPosition(c) & Node.DOCUMENT_POSITION_FOLLOWING); });
+  assert.ok(order, 'the report comes after the answer');
+});
+
+test('an unverified or failing change says so without being opened, and saved replies show their report again', async () => {
+  const { page, send } = await openPanel();
+  const unverified = { verdict: 'unverified', files: [{ path: 'src/a.ts', status: 'modified', added: 3, removed: 1, edits: 1, checked: false }], checks: [],
+    notes: ['No test, build, type-check or lint command was run in this turn.'] };
+  const failing = { verdict: 'failing', files: [{ path: 'src/<b>.ts', status: 'modified', added: 1, removed: 1, edits: 1, checked: false }],
+    checks: [{ command: 'npm test', kind: 'test', outcome: 'failed', detail: '3 passed, 2 failed', stale: false, fixed: false, runs: 1 },
+      { command: 'npm run lint', kind: 'lint', outcome: 'passed', detail: 'exit 0', stale: true, fixed: false, runs: 1 }],
+    notes: [] };
+  // Loaded from a saved thread: the report is one of the reply's recorded events
+  await send({ type: 'threadLoaded', id: 't', name: 'T', displayMessages: [
+    { role: 'user', text: 'change a', id: 'u1' },
+    { role: 'assistant', text: 'Changed.', events: [{ type: 'appendContent', text: 'Changed.' }, { type: 'patchPassport', passport: unverified, markdown: 'm' }] },
+    { role: 'user', text: 'change b', id: 'u2' },
+    { role: 'assistant', text: 'Tried.', events: [{ type: 'appendContent', text: 'Tried.' }, { type: 'patchPassport', passport: failing, markdown: 'm' }] },
+  ] });
+  const cards = page.locator('.passport');
+  assert.equal(await cards.count(), 2);
+  assert.equal(await cards.nth(0).locator('.passport-badge').textContent(), '! Not verified');
+  assert.equal(await cards.nth(0).locator('.passport-sum').textContent(), '1 file · +3 −1 · no checks run');
+  assert.equal(await cards.nth(0).locator('.passport-alert').textContent(), 'No test, build, type-check or lint command was run in this turn.');
+  assert.equal(await cards.nth(1).locator('.passport-badge').textContent(), '✗ Checks failing');
+  // Only checks that cover the final code count in the summary
+  assert.equal(await cards.nth(1).locator('.passport-sum').textContent(), '1 file · +1 −1 · 0 of 1 check passed');
+  await cards.nth(1).locator('.passport-head').click();
+  assert.equal(await cards.nth(1).locator('.passport-check.stale .passport-tag.warn').textContent(), 'before last change');
+  assert.equal(await cards.nth(1).locator('.passport-file').textContent(), 'src/<b>.ts', 'paths are shown as text');
+  assert.equal(await cards.nth(1).locator('.passport-file b').count(), 0);
+});
+
