@@ -924,7 +924,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
-        const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isDirect);
+        const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isCli);
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
@@ -1256,7 +1256,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     : isOllama
                     ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined)
+                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
                         : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {

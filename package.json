@@ -518,7 +518,7 @@
         "codico.accoEnabled": {
           "type": "boolean",
           "default": false,
-          "description": "Optimize OpenRouter provider-facing request copies through a local ACCO SDK service. Codico's canonical history and agent/verification loop remain unchanged; failures fall back to the original request."
+          "description": "Optimize provider-facing request copies (OpenRouter and direct providers) through a local ACCO SDK service. Codico's canonical history and agent/verification loop remain unchanged; failures fall back to the original request."
         },
         "codico.accoBaseUrl": {
           "type": "string",
