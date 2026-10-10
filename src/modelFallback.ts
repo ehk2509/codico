@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { CLAUDE_CODE_PREFIX } from './claudeCodeClient';
 import { DIRECT_PROVIDERS, directSecretKey, getDirectProvider, parseDirectModelId, pickDirectFallback } from './directProviderClient';
 
 /**
@@ -8,7 +9,7 @@ import { DIRECT_PROVIDERS, directSecretKey, getDirectProvider, parseDirectModelI
  * key". The user is told, and can pick another model in the chat header.
  */
 export async function usableModel(context: vscode.ExtensionContext, model: string): Promise<string> {
-    if (model.startsWith('ollama/') || model.startsWith('direct:')) { return model; }
+    if (model.startsWith('ollama/') || model.startsWith('direct:') || model.startsWith(CLAUDE_CODE_PREFIX)) { return model; }
     if (await context.secrets.get('openRouterApiKey')) { return model; }
     const keyed: string[] = [];
     for (const provider of DIRECT_PROVIDERS) {
@@ -32,13 +33,15 @@ export function directModelLabel(model: string): string {
 /** The provider a model id belongs to, as the chat header names it. */
 export function providerOfModel(model: string): string {
     if (model.startsWith('ollama/')) { return 'ollama'; }
+    if (model.startsWith(CLAUDE_CODE_PREFIX)) { return 'claude-code'; }
     const parsed = parseDirectModelId(model);
     return parsed ? `direct:${parsed.providerId}` : 'openrouter';
 }
 
 /** Which providers have an API key (Ollama needs none), keyed like providerOfModel(). */
 export async function providerKeyStatus(context: vscode.ExtensionContext): Promise<Record<string, boolean>> {
-    const status: Record<string, boolean> = { ollama: true, openrouter: !!await context.secrets.get('openRouterApiKey') };
+    // Claude Code uses its own login: no key to set here
+    const status: Record<string, boolean> = { ollama: true, 'claude-code': true, openrouter: !!await context.secrets.get('openRouterApiKey') };
     for (const provider of DIRECT_PROVIDERS) {
         status[`direct:${provider.id}`] = !!await context.secrets.get(directSecretKey(provider.id));
     }

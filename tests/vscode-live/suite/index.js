@@ -385,6 +385,21 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── Claude Code as a provider: the agent loop through the `claude` command (a stand-in here) ──
+  {
+    const t0 = Date.now(); let error = null;
+    await set('claudeCodePath', process.env.LIVE_FAKE_CLAUDE);
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: '', model: 'claude-code/sonnet', maxIterations: 12, directApiKeys: {} });
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:cc_tools] please do the task'); } catch (e) { error = String(e && e.message || e); }
+    const calls = fs.existsSync(process.env.FAKE_CLAUDE_LOG) ? fs.readFileSync(process.env.FAKE_CLAUDE_LOG, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : [];
+    const [first, second] = calls;
+    const noTools = !!first && first.args[first.args.indexOf('--tools') + 1] === '' && first.args[first.args.indexOf('--model') + 1] === 'sonnet';
+    const fenced = !!first && /fenced-code-block formats/.test(first.args[first.args.indexOf('--system-prompt') + 1]);
+    const resultBack = !!second && /<conversation>/.test(second.prompt) && /\[Tool Results\][\s\S]*NOTES-MARKER/.test(second.prompt);
+    results.push({ name: 'cc_tools', ms: Date.now() - t0, requests: calls.length, ok: !error && calls.length === 2 && noTools && fenced && resultBack,
+      why: `${calls.length} runs of claude; its own tools off, model sonnet: ${noTools}; Codico's tool format in the system prompt: ${fenced}; file read by Codico and sent back: ${resultBack}; no key needed: ${!error}${error ? ' (' + error + ')' : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
 }
 module.exports = { run };

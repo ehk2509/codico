@@ -284,6 +284,11 @@
           "minimum": 10,
           "description": "Kill a run_terminal command (and everything it started) after this many seconds"
         },
+        "codico.claudeCodePath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
+        },
         "codico.chatDensity": {
           "type": "string",
           "enum": [

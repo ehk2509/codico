@@ -683,3 +683,15 @@ test('the header with provider and model menus fits a narrow panel', async () =>
   const right = await page.locator('#model-csel').evaluate(e => e.getBoundingClientRect().right);
   assert.ok(right <= 300, 'the model menu is inside the panel');
 });
+
+test('Claude Code is a provider with its own models and needs no key', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'claude-code': true, ollama: true } });
+  const providers = await page.locator('#provider-csel .csel-opt').allTextContents();
+  assert.ok(providers.includes('Claude Code'), providers.join(', '));
+  await page.locator('#provider-csel .csel-val').click();
+  await page.locator('#provider-csel .csel-opt', { hasText: /^Claude Code$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'claude-code/sonnet' });
+  assert.deepEqual(await page.locator('#model-csel .csel-opt').allTextContents(),
+    ['Claude Sonnet (latest)', 'Claude Opus (latest)', 'Claude Haiku (latest)', 'Claude Fable (latest)']);
+});

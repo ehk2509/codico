@@ -30,6 +30,14 @@ Call AI providers directly with your own API keys — no OpenRouter account requ
 
 Direct models appear in the model picker under a 🔑 section. Each provider stores its key independently in VS Code's encrypted `SecretStorage`.
 
+### Claude Code (your Claude login)
+Use the Claude models of your Claude plan with no API key: Codico runs your installed `claude` command for each request. Pick **Claude Code** in the chat header's provider menu, then Sonnet, Opus, Haiku or Fable.
+
+- Requires Claude Code to be installed and signed in (run `claude` once in a terminal). Installing the Claude Code VS Code extension is enough; `codico.claudeCodePath` points to the command if it is elsewhere.
+- Claude Code's own tools, skills and MCP servers are switched off for these requests: Codico's tools, approvals and file protections apply, as with every other provider.
+- Usage counts against your Claude plan's limits. Each request sends the conversation so far, so only the system prompt is served from cache.
+- Text only for now: attached images are not sent, and inline completions and the other editor features still need an OpenRouter or Ollama model.
+
 ### OpenRouter
 Access hundreds of models through a single API key — including free-tier models from Qwen, Google, NVIDIA, Poolside, Cohere, and more. Set your key via `Codico: Set OpenRouter API Key` or the ⚙ settings menu.
 
@@ -498,7 +506,7 @@ Changes to these files invalidate the cache immediately — no reload required.
 ---
 
 ### Provider, Model & Thinking Effort
-The chat header has two menus. **Provider** chooses where the model runs and whose key is used: OpenRouter, a direct provider (your own key) or local Ollama. Providers without a key are marked "no key", and picking one asks for its key. **Model** then lists only that provider's models, and each provider remembers the model you last used with it.
+The chat header has two menus. **Provider** chooses where the model runs and whose key is used: OpenRouter, Claude Code (your Claude login), a direct provider (your own key) or local Ollama. Providers without a key are marked "no key", and picking one asks for its key. **Model** then lists only that provider's models, and each provider remembers the model you last used with it.
 
 If the selected model needs an OpenRouter key that is not set but you have a direct provider key, Codico switches to that provider and tells you.
 
@@ -617,6 +625,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.renameSuggestionsEnabled` | `boolean` | `true` | Pre-fill the rename input (F2) with an AI-suggested name |
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
+| `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
 | `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |
 | `codico.showReasoning` | `boolean` | `true` | Show the model's reasoning blocks in the chat |
 
@@ -652,6 +661,9 @@ codico/
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
 │   ├── deepseekAdapter.ts           # DeepSeek's differences from the OpenAI protocol (thinking, reasoning replay, cache hits)
+│   ├── claudeCodeClient.ts          # Claude Code as a provider: runs the claude command as a model, parses its stream
+│   ├── claudeCodePath.ts            # Finds the claude command (setting, PATH, Claude Code extension)
+│   ├── modelFallback.ts             # Provider of a model, key status, fallback when a key is missing
 │   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
 │   ├── nativeTools.ts               # Provider-neutral JSON schemas + native tool-call decoding
 │   ├── providerConversation.ts      # OpenAI/Anthropic/Gemini native tool history serializers

@@ -1,5 +1,15 @@
 [
   {
+    "tier": "claude-code",
+    "provider": "Claude Code",
+    "models": [
+      { "id": "claude-code/sonnet", "label": "Claude Sonnet (latest)" },
+      { "id": "claude-code/opus", "label": "Claude Opus (latest)" },
+      { "id": "claude-code/haiku", "label": "Claude Haiku (latest)" },
+      { "id": "claude-code/fable", "label": "Claude Fable (latest)" }
+    ]
+  },
+  {
     "tier": "local",
     "provider": "Ollama",
     "models": [
