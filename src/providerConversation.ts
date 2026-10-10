@@ -51,7 +51,8 @@ export function flattenChatHistory(history: ChatMessage[]): PlainChatMessage[] {
     });
 }
 
-export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean): unknown[] {
+/** @param reasoningField set for providers that require each reply's reasoning back (DeepSeek: `reasoning_content`) */
+export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean, reasoningField?: string): unknown[] {
     if (!useNativeTools) { return flattenChatHistory(history); }
 
     return history.map(message => {
@@ -70,6 +71,8 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
             return {
                 role: 'assistant',
                 content,
+                // Replies from before the switch to this provider have none: the field must still be present
+                ...(reasoningField ? { [reasoningField]: message.reasoning ?? '' } : {}),
                 tool_calls: message.nativeToolCalls.map(call => ({
                     id: call.id,
                     type: 'function',
@@ -81,6 +84,9 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
             };
         }
 
+        if (message.role === 'assistant' && reasoningField) {
+            return { role: 'assistant', content: message.content, [reasoningField]: message.reasoning ?? '' };
+        }
         return { role: message.role, content: message.content };
     });
 }
@@ -162,7 +168,7 @@ export function toAnthropicMessages(
 type GeminiPart =
     | { text: string }
     | { inlineData: { mimeType: string; data: string } }
-    | { functionCall: { name: string; args: Record<string, unknown> } }
+    | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
     | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 function geminiContentParts(content: string | MessageContentPart[]): GeminiPart[] {
@@ -186,7 +192,9 @@ function geminiContentParts(content: string | MessageContentPart[]): GeminiPart[
 
 export function toGeminiMessages(
     history: ChatMessage[],
-    useNativeTools = true
+    useNativeTools = true,
+    /** Sent with the first tool call of a reply that has no signature of its own (Gemini 3 demands one). */
+    missingSignature?: string
 ): Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> {
     const messages: Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> = [];
     const source: ChatMessage[] = useNativeTools ? history : flattenChatHistory(history);
@@ -216,14 +224,17 @@ export function toGeminiMessages(
 
         const parts = geminiContentParts(message.content);
         if (message.role === 'assistant' && message.nativeToolCalls?.length) {
-            for (const call of message.nativeToolCalls) {
+            message.nativeToolCalls.forEach((call, index) => {
+                // Only the first call of a reply carries (and needs) a signature
+                const signature = call.signature ?? (index === 0 ? missingSignature : undefined);
                 parts.push({
                     functionCall: {
                         name: call.name,
                         args: call.arguments,
                     },
+                    ...(signature ? { thoughtSignature: signature } : {}),
                 });
-            }
+            });
         }
         append(message.role === 'assistant' ? 'model' : 'user', parts);
     }

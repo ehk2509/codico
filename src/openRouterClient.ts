@@ -10,6 +10,8 @@ export type StreamChunk =
     | { type: 'thinking'; text: string }
     | { type: 'content'; text: string }
     | { type: 'usage'; promptTokens: number; completionTokens: number; totalTokens: number; /** Provider-reported cost in USD, when available (OpenRouter). */ costUsd?: number; /** Prompt tokens served from the provider's prompt cache. */ cachedTokens?: number }
+    /** The complete reasoning of the response, for providers that require it back with later requests. */
+    | { type: 'reasoning'; text: string }
     | { type: 'finish'; reason: string }       // non-'stop' finish_reason from the model
     | { type: 'native_tool'; call: NativeToolCall }
     | { type: 'stream_error'; message: string }; // error object inside an SSE event
@@ -21,7 +23,7 @@ export type MessageContentPart =
 export type ChatMessage =
     | { role: 'system'; content: string | MessageContentPart[] }
     | { role: 'user'; content: string | MessageContentPart[]; /** Identifies the turn this request started (edit, delete, regenerate). */ turnId?: string }
-    | { role: 'assistant'; content: string | MessageContentPart[]; nativeToolCalls?: NativeToolCall[] }
+    | { role: 'assistant'; content: string | MessageContentPart[]; nativeToolCalls?: NativeToolCall[]; /** The reply's reasoning, kept only for providers that require it back (DeepSeek). */ reasoning?: string }
     | { role: 'tool'; content: string; toolCallId: string; toolName: string };
 
 export interface OpenRouterEndpoint {

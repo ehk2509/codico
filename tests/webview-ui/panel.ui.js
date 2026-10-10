@@ -614,9 +614,9 @@ test('the task list of an approved plan: numbered steps with title and details, 
   assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });
 
-test('Stop stays visible when background processes and token counts crowd the status bar', async () => {
+test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
-  for (const width of [300, 420]) {
+  for (const width of [240, 300, 420, 900]) {
     await page.setViewportSize({ width, height: 700 });
     await send({ type: 'startMessage', id: 'b' + width },
       { type: 'tokenUsage', promptTokens: 31000, completionTokens: 281, totalTokens: 31281, cachedTokens: 10000, taskTokens: 148000, taskCostUsd: 0.005 },
@@ -624,9 +624,102 @@ test('Stop stays visible when background processes and token counts crowd the st
     const stop = await page.locator('#stop-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, visible: r.width > 20 }; });
     const panelRight = await page.locator('#status').evaluate(e => e.getBoundingClientRect().right);
     assert.ok(stop.visible && stop.right <= panelRight && stop.left >= 0, `Stop fully visible at ${width}px: ${JSON.stringify(stop)} panel right ${panelRight}`);
-    const words = await page.locator('#bg-btn .bg-words').isVisible();
-    assert.equal(words, width >= 400, `background chip ${words ? 'with' : 'without'} words at ${width}px`);
+    // The chip is never shortened: its full text fits inside it, within the panel
+    const chip = await page.locator('#bg-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { text: e.textContent, left: r.left, right: r.right, cut: e.scrollWidth > e.clientWidth + 1 }; });
+    assert.match(chip.text, /^⚙ 1 background process ✕$/);
+    assert.ok(!chip.cut && chip.left >= 0 && chip.right <= panelRight, `chip whole at ${width}px: ${JSON.stringify(chip)}`);
+    // Both buttons sit on the same row, side by side
+    const tops = await page.locator('#s-actions button').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)));
+    assert.ok(tops.length === 2 && Math.abs(tops[0] - tops[1]) <= 2, `buttons on one row at ${width}px: ${tops}`);
+    const rows = await page.locator('#status').evaluate(e => new Set([...e.children].filter(c => c.getBoundingClientRect().width > 0).map(c => Math.round(c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2))).size);
+    assert.ok(width >= 900 ? rows === 1 : width <= 300 ? rows >= 2 : rows >= 1, `${rows} row(s) at ${width}px`);
     assert.match(await page.locator('#bg-btn').getAttribute('title'), /1 background process — click to stop:\nsleep 30/);
-    await send({ type: 'endMessage', id: 'b' + width });
+    await send({ type: 'endMessage', id: 'b' + width }, { type: 'backgroundProcesses', processes: [] });
+    // Nothing to show: the empty group takes no room and no row
+    assert.equal(await page.locator('#s-actions').evaluate(e => getComputedStyle(e).display), 'none');
   }
+});
+
+test('the provider menu chooses where models run; the model menu lists that provider only', async () => {
+  const { page, send, posted } = await openPanel();
+  const openMenu = async (id) => { await page.locator(id + ' .csel-val').click(); };
+  const options = (id) => page.locator(id + ' .csel-opt').allTextContents();
+
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'openrouter', 'the default model is an OpenRouter one');
+  const providers = await options('#provider-csel');
+  assert.equal(providers[0], 'OpenRouter');
+  assert.ok(providers.includes('DeepSeek') && providers.includes('Anthropic') && providers.includes('Ollama'), providers.join(', '));
+
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'direct:deepseek': true, 'direct:anthropic': false, ollama: true } });
+  const marked = await options('#provider-csel');
+  assert.ok(marked.includes('OpenRouter · no key') && marked.includes('DeepSeek') && marked.includes('Anthropic · no key'), marked.join(', '));
+
+  // Choosing DeepSeek selects one of its models and tells the extension
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^DeepSeek$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'direct:deepseek/deepseek-flash' });
+  assert.deepEqual(await options('#model-csel'), ['DeepSeek V4.1 Flash', 'DeepSeek V4 Pro'], 'only DeepSeek models are offered');
+  await openMenu('#model-csel');
+  await page.locator('#model-csel .csel-opt', { hasText: 'DeepSeek V4 Pro' }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'direct:deepseek/deepseek-v4-pro' });
+
+  // Ollama is selectable (it was missing from the old single list); coming back restores the last DeepSeek model
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^Ollama$/ }).click();
+  assert.match((await posted('changeModel')).pop().model, /^ollama\//);
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^DeepSeek$/ }).click();
+  assert.equal((await posted('changeModel')).pop().model, 'direct:deepseek/deepseek-v4-pro');
+});
+
+test('a model set by the extension shows its provider; an unlisted model is still shown', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'setModel', model: 'direct:anthropic/claude-opus-4-5' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'direct:anthropic');
+  assert.match(await page.locator('#model-csel .csel-val').textContent(), /Claude Opus 4\.5/);
+  await send({ type: 'setModel', model: 'ollama/my-custom-model:7b' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'ollama');
+  assert.match(await page.locator('#model-csel .csel-val').textContent(), /my-custom-model:7b/);
+  assert.equal((await posted('changeModel')).length, 0, 'showing a model does not change the setting');
+});
+
+test('the header with provider and model menus fits a narrow panel', async () => {
+  const { page, send } = await openPanel();
+  await page.setViewportSize({ width: 300, height: 700 });
+  await send({ type: 'providerKeys', keys: { openrouter: false } });
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(overflow <= 0, `the panel scrolls sideways by ${overflow}px`);
+  const right = await page.locator('#model-csel').evaluate(e => e.getBoundingClientRect().right);
+  assert.ok(right <= 300, 'the model menu is inside the panel');
+});
+
+test('Claude Code is a provider with its own models and needs no key', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'claude-code': true, ollama: true } });
+  const providers = await page.locator('#provider-csel .csel-opt').allTextContents();
+  assert.ok(providers.includes('Claude Code'), providers.join(', '));
+  await page.locator('#provider-csel .csel-val').click();
+  await page.locator('#provider-csel .csel-opt', { hasText: /^Claude Code$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'claude-code/sonnet' });
+  assert.deepEqual(await page.locator('#model-csel .csel-opt').allTextContents(),
+    ['Claude Sonnet (latest)', 'Claude Opus (latest)', 'Claude Haiku (latest)', 'Claude Fable (latest)']);
+});
+
+test('ChatGPT is a provider with its own models and needs no key', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'claude-code': true, chatgpt: true, ollama: true } });
+  const providers = await page.locator('#provider-csel .csel-opt').allTextContents();
+  // Listed with Claude Code under "your own login", with no "no key" mark
+  assert.ok(providers.includes('ChatGPT'), providers.join(', '));
+  assert.equal(providers.indexOf('ChatGPT'), providers.indexOf('Claude Code') + 1, providers.join(', '));
+  await page.locator('#provider-csel .csel-val').click();
+  await page.locator('#provider-csel .csel-opt', { hasText: /^ChatGPT$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'chatgpt/gpt-6.1-sol' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'chatgpt');
+  assert.deepEqual(await page.locator('#model-csel .csel-opt').allTextContents(),
+    ['GPT-6.1 Sol', 'GPT-6 Sol', 'GPT-6 Astra', 'GPT-6 Luna', 'GPT-5.5']);
+  // A model set from Settings shows under the same provider
+  await send({ type: 'setModel', model: 'chatgpt/gpt-5.5' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'chatgpt');
+  assert.equal(await page.locator('#model-csel').getAttribute('data-value'), 'chatgpt/gpt-5.5');
 });

@@ -2,6 +2,28 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- ChatGPT provider: run Codico through OpenAI's `codex` command and your ChatGPT login (`codex login`), with no API key. Pick "ChatGPT" in the provider menu, then GPT-6.1 Sol, GPT-6 Sol, GPT-6 Astra, GPT-6 Luna or GPT-5.5 (what your plan allows). Codex runs read-only with its shell, web search, plugins and other tools switched off and without your Codex settings — Codico keeps control of files and commands, with its approvals. The reply arrives in one piece (Codex does not stream it), an `OPENAI_API_KEY` in the environment is not passed on, and `codico.codexPath` points to the command when it is not on the PATH.
+- OpenAI adapter for the direct provider (your own OpenAI key). The models are now GPT-6.1 Sol, GPT-6 Sol, GPT-6 Astra, GPT-6 Luna, GPT-5.5 and GPT-5.4 Mini; ids saved by older versions keep working. Reasoning effort follows the effort selector, and when a model refuses the option the request is sent once more without it.
+- Gemini adapter for the direct provider (your own Google AI Studio key). The models are now Gemini 3.8 Flash, 3.5 Flash, 3.5 Flash Lite, 3.1 Pro, 2.5 Pro and 2.5 Flash. Thinking follows the effort selector (a thinking level on Gemini 3, a token budget on 2.5), thought summaries are shown in the reasoning panel, and cached prompt tokens are reported.
+- Claude Code provider: run Codico through your installed `claude` command and Claude login, with no API key. Pick "Claude Code" in the provider menu, then Sonnet, Opus, Haiku or Fable (Claude Code's aliases for its current models). Claude Code's own tools are switched off — Codico keeps control of files and commands, with its approvals. The command is found on the PATH or inside the Claude Code VS Code extension (`codico.claudeCodePath` overrides it). Usage counts against your Claude plan's limits.
+- Provider menu in the chat header: choose OpenRouter, Claude Code (your Claude login), one of the direct providers (your own key: Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, Cerebras) or local Ollama; the model menu then lists only that provider's models and remembers the last model used with each. Providers without a key are marked "no key", and picking one asks for its key. Ollama models can now be picked from the header (they were missing from the old single list).
+- DeepSeek adapter for the direct provider (your own DeepSeek key). The models are now DeepSeek V4.1 Flash (`deepseek-flash`) and DeepSeek V4 Pro (`deepseek-v4-pro`); `deepseek-chat` and `deepseek-reasoner` saved by older versions keep working. Thinking is shown in the reasoning panel and follows the effort selector (Low → low, Medium → high, High → max), and the token counter shows DeepSeek's cache hits.
+
+### Changed
+- Status bar in a narrow panel: the background-process button is no longer shortened to "⚙ 1 ✕". When the row is full, it and Stop move together to a second row, both whole and at the right edge.
+
+### Fixed
+- Direct OpenAI: requests sent `max_tokens`, which OpenAI's reasoning models (o-series, GPT-5 and later) refuse, so those models failed on every request. The limit is now sent as `max_completion_tokens`, with room for the model's reasoning.
+- Direct Gemini: the output limit was 8,192 tokens, which a thinking model (2.5 and later) can use up on thinking alone, cutting the answer short or leaving it empty; follow-up suggestions, commit messages and compaction summaries had the same problem with their much smaller limits. Thinking models now get 65,536 tokens, and one-shot jobs ask for little thinking and leave room for it.
+- Direct Gemini 3 with tools: Gemini 3 signs each tool call and answers 400 when the call is sent back without its signature, so the agent failed after its first tool call. The signature is now stored with the call and sent back.
+- Direct Gemini: thinking tokens were left out of the output token count.
+- Direct DeepSeek with tools: DeepSeek requires each reply's reasoning to be sent back with later requests and answers 400 otherwise, so the agent could fail after its first tool call. The reasoning is now stored with the reply and sent back.
+- With only a direct provider key set (for example DeepSeek) and no OpenRouter key, Codico still asked for an OpenRouter key: the default model is an OpenRouter one, and saving a direct key did not select one of its models. Now, when the selected model needs an OpenRouter key that is not set, Codico switches to a provider you have a key for (the same vendor when possible) and says so; saving a direct key switches straight away or offers to. The header's model selector follows the setting.
+- Direct OpenAI-compatible providers now report cached prompt tokens (`prompt_tokens_details.cached_tokens`).
+
 ## 0.3.8 - 2026-10-10
 
 ### Fixed

@@ -45,6 +45,8 @@ import { cutAtTurn, lastTurnId } from './threadEditing';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
+import { promptForMissingKey, providerKeyStatus, usableModel } from './modelFallback';
+import { cliModelCompletion, isCliModel, streamCliModel } from './cliProviders';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -180,6 +182,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
         registerChangeDiffProvider(_context);
+        _context.secrets.onDidChange(() => providerKeyStatus(_context).then(keys => this._post({ type: 'providerKeys', keys })), undefined, _context.subscriptions);
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
@@ -197,6 +200,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
             if (e.affectsConfiguration('codico.chatDensity') || e.affectsConfiguration('codico.showReasoning')) { this._postUiSettings(); }
+            // The header selector follows the setting (changed in Settings, or by the no-OpenRouter-key fallback)
+            if (e.affectsConfiguration('codico.model')) { this._post({ type: 'setModel', model: vscode.workspace.getConfiguration('codico').get<string>('model', 'deepseek/deepseek-v4-flash') }); }
         }, undefined, _context.subscriptions);
     }
 
@@ -239,6 +244,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         setTimeout(() => {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
+            void providerKeyStatus(this._context).then(keys => this._post({ type: 'providerKeys', keys }));
             this._postUiSettings();
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
@@ -448,6 +454,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace
                     .getConfiguration('codico')
                     .update('model', msg.model, vscode.ConfigurationTarget.Global);
+                void promptForMissingKey(this._context, msg.model); // picked a provider with no key yet
                 break;
             }
             case 'changeEffort':
@@ -581,8 +588,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._busy = true;
                 try {
                     const compactCfg = vscode.workspace.getConfiguration('codico');
-                    const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
-                    const isCompactOllama = compactModel.startsWith('ollama/');
+                    const compactModel = await usableModel(this._context, compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash'));
+                    const isCompactOllama = compactModel.startsWith('ollama/') || isCliModel(compactModel); // neither needs a key
                     const isCompactDirect = compactModel.startsWith('direct:');
                     const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
                     const compactOllamaModel = compactModel.slice('ollama/'.length);
@@ -602,7 +609,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     } else {
                         compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
                         if (!compactApiKey) {
-                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon to add an OpenRouter key or a direct provider key (Anthropic, OpenAI, DeepSeek…).' });
                             break;
                         }
                     }
@@ -872,8 +879,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         const config = vscode.workspace.getConfiguration('codico');
-        const model = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+        // Without an OpenRouter key but with a direct provider key, that provider's model is used
+        const model = await usableModel(this._context, config.get<string>('model', 'deepseek/deepseek-v4-flash'));
         const isOllama = model.startsWith('ollama/');
+        const isCli = isCliModel(model); // through a command the user is signed in to (claude, codex)
         const isDirect = model.startsWith('direct:');
         const ollamaModel = model.slice('ollama/'.length);
         const ollamaBaseUrl = config.get<string>('ollamaBaseUrl', 'http://localhost:11434');
@@ -881,8 +890,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         let apiKey = '';
         let directApiKey = '';
-        if (isOllama) {
-            // no key needed for local Ollama
+        if (isOllama || isCli) {
+            // no key needed for local Ollama or for Claude Code (its own login)
         } else if (isDirect) {
             if (!directParsed) {
                 this._post({ type: 'error', message: `Invalid direct model ID: "${model}"` });
@@ -897,7 +906,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         } else {
             apiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
             if (!apiKey) {
-                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon to add an OpenRouter key or a direct provider key (Anthropic, OpenAI, DeepSeek…).' });
                 return;
             }
             // Keep the index aware of the current API key for embedding calls
@@ -1024,7 +1033,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const MAX_BLOCKED_ONLY_ITERATIONS = 3;
         let blockedOnlyIterations = 0;
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
-        const nativeTools = !isOllama && nativeToolCalling
+        const nativeTools = !isOllama && !isCli && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
 
@@ -1059,6 +1068,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let recoverableFinishReason: string | null = null;
 
                 let resumeBuffer = '';
+                let iterationReasoning = ''; // the reply's reasoning, when the provider needs it back (DeepSeek)
 
                 // Large write_file/edit_file bodies are hidden until complete; show their
                 // progress in the status bar so a long write never looks idle.
@@ -1239,10 +1249,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                for await (const chunk of isOllama
+                for await (const chunk of isCli
+                    ? streamCliModel(model, requestHistory, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride)
+                    : isOllama
                     ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools)
+                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined)
                         : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
@@ -1286,6 +1298,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         const dispatched = await dispatchToolCall(tool);
                         nativeToolExecutions.push({ call, result: dispatched.result });
+                    } else if (chunk.type === 'reasoning') {
+                        iterationReasoning = chunk.text;
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._evalPromptTokens += chunk.promptTokens;
@@ -1364,12 +1378,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     // Preserve completed native tool calls/results even when the user stops
                     // the turn after a tool has already finished.
                     if (fullContent.trim() || inlineToolResults.length > 0) {
-                        appendAssistantIteration(
-                            this._history,
-                            fullContent,
-                            nativeToolExecutions,
-                            '(interrupted)'
-                        );
+                        appendAssistantIteration(this._history, fullContent, nativeToolExecutions, '(interrupted)', iterationReasoning);
                     }
                     break;
                 }
@@ -1380,7 +1389,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     nativeToolExecutions,
                     recoverableStreamInterruption
                         ? '[Stream interrupted before content]'
-                        : '[Assistant turn completed without text]'
+                        : '[Assistant turn completed without text]',
+                    iterationReasoning
                 );
 
                 // Unexpected transport EOFs are recoverable: preserve the partial
@@ -1766,7 +1776,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const SUMMARY_MAX_TOKENS = 4000;
 
         const ask = async (): Promise<string> => {
-            if (isOllama) {
+            if (isCliModel(model)) {
+                return cliModelCompletion(model, prompt, signal);
+            } else if (isOllama) {
                 return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal);
             } else if (isDirect) {
                 return directSingleCompletion(directKey, directProviderId, directModelId, prompt, SUMMARY_MAX_TOKENS, signal);

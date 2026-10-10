@@ -122,6 +122,8 @@ export type ExtensionMessage =
     | { type: 'setEffort'; effort: 'high' | 'medium' | 'low' }
     | { type: 'error'; message: string }
     | { type: 'setModel'; model: string }
+    /** Which providers have an API key, keyed as the header's provider menu names them. */
+    | { type: 'providerKeys'; keys: Record<string, boolean> }
     | { type: 'agentActive'; agent: string }
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }
     | { type: 'undoRedoState'; canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }

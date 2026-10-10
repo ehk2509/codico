@@ -13,6 +13,7 @@ import { buildPrContext } from './prContextProvider';
 import { discoverCoverageFile, parseCoverage, buildCoveragePrompt } from './coverageProvider';
 import { registerCodeLens } from './codeLensProvider';
 import { DIRECT_PROVIDERS, directSecretKey } from './directProviderClient';
+import { usableModel } from './modelFallback';
 
 let _provider: AgentProvider | undefined;
 
@@ -32,11 +33,16 @@ export function activate(context: vscode.ExtensionContext): void {
                 maxTotalTokens?: number;
                 accoEnabled?: boolean;
                 accoBaseUrl?: string;
+                /** Keys for direct providers, by provider id (e.g. { deepseek: '…' }). */
+                directApiKeys?: Record<string, string>;
             }) => {
-                if (!options?.openRouterApiKey?.trim()) {
+                if (!options?.openRouterApiKey?.trim() && !options?.directApiKeys) {
                     throw new Error('Evaluation requires an OpenRouter API key.');
                 }
-                await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
+                // No OpenRouter key (with direct keys only) tests the fallback to a direct provider
+                if (options.openRouterApiKey?.trim()) { await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim()); }
+                else { await context.secrets.delete('openRouterApiKey'); }
+                for (const [providerId, key] of Object.entries(options.directApiKeys ?? {})) { await context.secrets.store(directSecretKey(providerId), key); }
                 const cfg = vscode.workspace.getConfiguration('codico');
                 await cfg.update('model', options.model, vscode.ConfigurationTarget.Global);
                 await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
@@ -173,9 +179,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── Direct provider API keys ──────────────────────────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand('codico.setDirectApiKey', async () => {
-            const picked = await vscode.window.showQuickPick(
-                DIRECT_PROVIDERS.map(p => ({ label: p.name, description: p.apiBase, providerId: p.id })),
+        // providerId is passed when the chat header's provider menu asks for a specific provider's key
+        vscode.commands.registerCommand('codico.setDirectApiKey', async (providerId?: string) => {
+            const options = DIRECT_PROVIDERS.map(p => ({ label: p.name, description: p.apiBase, providerId: p.id }));
+            const picked = options.find(o => o.providerId === providerId) ?? await vscode.window.showQuickPick(
+                options,
                 { title: 'Codico: Select Provider', placeHolder: 'Choose a provider to set or update its API key' }
             );
             if (!picked) { return; }
@@ -189,7 +197,18 @@ export function activate(context: vscode.ExtensionContext): void {
             });
             if (key?.trim()) {
                 await context.secrets.store(directSecretKey(picked.providerId), key.trim());
-                vscode.window.showInformationMessage(`Codico: ${picked.label} API key saved.`);
+                // A key alone does nothing until one of its models is selected: switch if the
+                // current model cannot run (no OpenRouter key), otherwise offer to
+                const cfg = vscode.workspace.getConfiguration('codico');
+                const current = cfg.get<string>('model', 'deepseek/deepseek-v4-flash');
+                if (await usableModel(context, current) !== current || current.startsWith(`direct:${picked.providerId}/`)) {
+                    vscode.window.showInformationMessage(`Codico: ${picked.label} API key saved.`);
+                    return;
+                }
+                const first = DIRECT_PROVIDERS.find(p => p.id === picked.providerId)?.models[0];
+                const use = first ? `Use ${first.displayName}` : undefined;
+                const choice = await vscode.window.showInformationMessage(`Codico: ${picked.label} API key saved. The selected model still uses another provider.`, ...(use ? [use] : []));
+                if (use && choice === use && first) { await cfg.update('model', `direct:${picked.providerId}/${first.id}`, vscode.ConfigurationTarget.Global); }
             }
         })
     );

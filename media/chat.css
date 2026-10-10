@@ -401,15 +401,17 @@ body{
   padding:3px 10px;font-size:10px;
   color:var(--vscode-descriptionForeground);
   border-top:1px solid var(--vscode-panel-border);
-  display:flex;align-items:center;gap:5px;flex-shrink:0;min-height:22px;
-  min-width:0;container-type:inline-size;
+  display:flex;flex-wrap:wrap;align-items:center;gap:3px 5px;flex-shrink:0;min-height:22px;
+  min-width:0;
 }
-/* Everything but Stop gives way when the panel is narrow: text shortens with "…" */
-#s-text,#s-step,#s-tokens{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
-#s-tokens{margin-left:auto}
-#status #stop-btn{margin-left:auto}
-#s-tokens + #stop-btn{margin-left:4px}
-@container (max-width: 380px){ #bg-btn .bg-words{display:none} }
+/* A narrow panel gets a second row rather than cut-off buttons; only text longer than a whole row shortens with "…" */
+#s-text,#s-step,#s-tokens{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+/* The buttons stay whole and together: when the row is full, both move to the second row */
+#s-actions{display:flex;align-items:center;gap:5px;flex-shrink:0;margin-left:auto}
+#s-actions:not(:has(> button:not([style*="none"]))){display:none}
+/* The token count takes the free space, so the buttons sit at the right edge on either row */
+#status #s-tokens{flex:1 1 auto;text-align:right}
+#status #stop-btn{margin-left:0}
 .s-dot{width:5px;height:5px;border-radius:50%;background:var(--vscode-testing-iconPassed,#22c55e);flex-shrink:0}
 .s-dot.thinking{background:var(--vscode-charts-purple,#a78bfa);animation:pulse 1s ease-in-out infinite}
 .s-dot.writing{background:var(--vscode-charts-yellow,#facc15);animation:pulse 1s ease-in-out infinite}
@@ -712,7 +714,7 @@ body{
   border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));
   border-radius:4px;padding:0 6px;
   cursor:pointer;font-size:10px;font-family:inherit;white-space:nowrap;
-  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  flex-shrink:0;
 }
 #bg-btn:hover{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
 .checkpoint-stop-btn{
@@ -1544,3 +1546,7 @@ body.density-compact .user-bubble{padding:4px 9px;font-size:12px}
 body.density-compact .agent-out{font-size:12px;line-height:1.45}
 body.density-compact .step-pill{margin:1px 0}
 body.hide-reasoning .think-wrap{display:none!important}
+
+/* ── Provider selector (next to the model selector) ── */
+.provider-csel .csel-val{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width: 380px){ .provider-csel .csel-val{max-width:64px} }

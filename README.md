@@ -20,15 +20,35 @@ Call AI providers directly with your own API keys — no OpenRouter account requ
 | Provider | Models | Key command |
 |---|---|---|
 | **Anthropic** | Claude Opus 4.5, Sonnet 4.5, Haiku 4.5, Claude 3.5 Sonnet | `Codico: Set Direct Provider API Key` |
-| **OpenAI** | GPT-4o, GPT-4o Mini, o3, o4-mini | `Codico: Set Direct Provider API Key` |
-| **Google** | Gemini 2.0 Flash, Gemini 2.5 Pro, Gemini 1.5 Flash | `Codico: Set Direct Provider API Key` |
+| **OpenAI** | GPT-6.1 Sol, GPT-6 Sol, GPT-6 Astra, GPT-6 Luna, GPT-5.5, GPT-5.4 Mini | `Codico: Set Direct Provider API Key` |
+| **Google** | Gemini 3.8 Flash, Gemini 3.5 Flash, Gemini 3.5 Flash Lite, Gemini 3.1 Pro, Gemini 2.5 Pro, Gemini 2.5 Flash | `Codico: Set Direct Provider API Key` |
 | **Groq** | Llama 3.3 70B, Llama 3.1 8B Instant, DeepSeek R1 70B | `Codico: Set Direct Provider API Key` |
-| **DeepSeek** | DeepSeek V3, DeepSeek R1 | `Codico: Set Direct Provider API Key` |
+| **DeepSeek** | DeepSeek V4.1 Flash, DeepSeek V4 Pro | `Codico: Set Direct Provider API Key` |
 | **Mistral** | Mistral Large, Codestral, Mistral Small | `Codico: Set Direct Provider API Key` |
 | **Grok (xAI)** | Grok 3, Grok 3 Mini | `Codico: Set Direct Provider API Key` |
 | **Cerebras** | Llama 4 Scout 17B, Llama 3.1 70B | `Codico: Set Direct Provider API Key` |
 
 Direct models appear in the model picker under a 🔑 section. Each provider stores its key independently in VS Code's encrypted `SecretStorage`.
+
+### Claude Code (your Claude login)
+Use the Claude models of your Claude plan with no API key: Codico runs your installed `claude` command for each request. Pick **Claude Code** in the chat header's provider menu, then Sonnet, Opus, Haiku or Fable.
+
+- Requires Claude Code to be installed and signed in (run `claude` once in a terminal). Installing the Claude Code VS Code extension is enough; `codico.claudeCodePath` points to the command if it is elsewhere.
+- Claude Code's own tools, skills and MCP servers are switched off for these requests: Codico's tools, approvals and file protections apply, as with every other provider.
+- Usage counts against your Claude plan's limits. Each request sends the conversation so far, so only the system prompt is served from cache.
+- Text only for now: attached images are not sent, 
+
+### ChatGPT (your ChatGPT login)
+Use the GPT models of your ChatGPT plan with no API key: Codico runs OpenAI's `codex` command for each request. Pick **ChatGPT** in the chat header's provider menu, then a model.
+
+- Requires the Codex CLI, signed in with ChatGPT: `npm install -g @openai/codex`, then `codex login`. `codico.codexPath` points to the command if it is not on the PATH.
+- Codex runs read-only with its shell, web search, plugins and other tools switched off, and without your Codex settings: Codico's tools, approvals and file protections apply, as with every other provider.
+- Codex prints a reply when it is complete, so the text appears in one piece rather than word by word. Which models you can use depends on your ChatGPT plan.
+- Text only for now: attached images are not sent, and inline completions and the other editor features still need an OpenRouter or Ollama model.
+- An `OPENAI_API_KEY` in the environment is not passed on, so requests are not billed to an API key by accident. To use an API key, pick the **OpenAI** provider instead.
+
+> Gemini has no login-based provider: Google's Gemini CLI no longer accepts a personal Google login ("migrate to Antigravity"), so Gemini runs with an API key through the **Google** provider or through OpenRouter.
+and inline completions and the other editor features still need an OpenRouter or Ollama model.
 
 ### OpenRouter
 Access hundreds of models through a single API key — including free-tier models from Qwen, Google, NVIDIA, Poolside, Cohere, and more. Set your key via `Codico: Set OpenRouter API Key` or the ⚙ settings menu.
@@ -497,15 +517,19 @@ Changes to these files invalidate the cache immediately — no reload required.
 
 ---
 
-### Model & Thinking Effort
-Switch models from the chat header dropdown. Models are grouped by tier:
+### Provider, Model & Thinking Effort
+The chat header has two menus. **Provider** chooses where the model runs and whose key is used: OpenRouter, Claude Code or ChatGPT (your own login, no key), a direct provider (your own key) or local Ollama. Providers without a key are marked "no key", and picking one asks for its key. **Model** then lists only that provider's models, and each provider remembers the model you last used with it.
+
+If the selected model needs an OpenRouter key that is not set but you have a direct provider key, Codico switches to that provider and tells you.
+
+The models, by provider:
 
 **🔑 Direct (your own keys)**
 - Anthropic: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5, Claude 3.5 Sonnet
-- OpenAI: GPT-4o, GPT-4o Mini, o3, o4-mini
-- Google: Gemini 2.0 Flash, Gemini 2.5 Pro, Gemini 1.5 Flash
+- OpenAI: GPT-6.1 Sol, GPT-6 Sol, GPT-6 Astra, GPT-6 Luna, GPT-5.5, GPT-5.4 Mini (reasoning effort follows the header selector)
+- Google: Gemini 3.8 Flash, Gemini 3.5 Flash, Gemini 3.5 Flash Lite, Gemini 3.1 Pro, Gemini 2.5 Pro, Gemini 2.5 Flash (thinking shown; thinking level follows the header selector)
 - Groq: Llama 3.3 70B, Llama 3.1 8B Instant, DeepSeek R1 70B
-- DeepSeek: DeepSeek V3, DeepSeek R1
+- DeepSeek: DeepSeek V4.1 Flash, DeepSeek V4 Pro (thinking shown; reasoning effort follows the header selector)
 - Mistral: Mistral Large, Codestral, Mistral Small
 - Grok (xAI): Grok 3, Grok 3 Mini
 - Cerebras: Llama 4 Scout 17B, Llama 3.1 70B
@@ -613,6 +637,8 @@ Or click the Codico icon in the Activity Bar.
 | `codico.renameSuggestionsEnabled` | `boolean` | `true` | Pre-fill the rename input (F2) with an AI-suggested name |
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
+| `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
+| `codico.codexPath` | `string` | `""` | Path to the `codex` command for the ChatGPT provider (empty: PATH, then OpenAI's VS Code extension) |
 | `codico.chatDensity` | `string` | `comfortable` | Chat panel spacing: `comfortable` or `compact` |
 | `codico.showReasoning` | `boolean` | `true` | Show the model's reasoning blocks in the chat |
 
@@ -647,6 +673,10 @@ codico/
 │   ├── openRouterClient.ts          # OpenRouter SSE streaming client + system prompt
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
+│   ├── deepseekAdapter.ts           # DeepSeek's differences from the OpenAI protocol (thinking, reasoning replay, cache hits)
+│   ├── claudeCodeClient.ts          # Claude Code as a provider: runs the claude command as a model, parses its stream
+│   ├── claudeCodePath.ts            # Finds the claude command (setting, PATH, Claude Code extension)
+│   ├── modelFallback.ts             # Provider of a model, key status, fallback when a key is missing
 │   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
 │   ├── nativeTools.ts               # Provider-neutral JSON schemas + native tool-call decoding
 │   ├── providerConversation.ts      # OpenAI/Anthropic/Gemini native tool history serializers

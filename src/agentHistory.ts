@@ -10,11 +10,14 @@ export function appendAssistantIteration(
     history: ChatMessage[],
     content: string,
     nativeExecutions: NativeToolExecution[],
-    fallbackContent: string
+    fallbackContent: string,
+    reasoning = ''
 ): void {
     history.push({
         role: 'assistant',
         content: content || (nativeExecutions.length > 0 ? '' : fallbackContent),
+        // Kept only when the provider sent it for replay (DeepSeek requires it back)
+        ...(reasoning ? { reasoning } : {}),
         ...(nativeExecutions.length > 0
             ? { nativeToolCalls: nativeExecutions.map(execution => execution.call) }
             : {}),
