@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
