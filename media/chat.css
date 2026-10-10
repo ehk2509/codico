@@ -1544,3 +1544,7 @@ body.density-compact .user-bubble{padding:4px 9px;font-size:12px}
 body.density-compact .agent-out{font-size:12px;line-height:1.45}
 body.density-compact .step-pill{margin:1px 0}
 body.hide-reasoning .think-wrap{display:none!important}
+
+/* ── Provider selector (next to the model selector) ── */
+.provider-csel .csel-val{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width: 380px){ .provider-csel .csel-val{max-width:64px} }

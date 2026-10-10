@@ -101,6 +101,7 @@
           } else { opts[i].classList.remove('selected'); }
         }
       },
+      clear: function () { listEl.innerHTML = ''; delete el.dataset.value; },
       addGroup: function (label) {
         var g = document.createElement('div');
         g.className = 'csel-group';
@@ -128,20 +129,75 @@
     };
   }
 
-  // ── Build model dropdown from models.json ────────────────────────────────
+  // ── Provider and model dropdowns (from models.json) ──────────────────────
+  // The provider is where the model runs and whose key is used: OpenRouter, a direct
+  // provider (your own key) or local Ollama. The model menu lists that provider's models.
+  var MODEL_GROUPS = window.__MODELS__ || [];
+  function _providerOf(modelId) {
+    if (String(modelId).indexOf('ollama/') === 0) { return 'ollama'; }
+    var direct = /^direct:([^/]+)\//.exec(modelId);
+    return direct ? 'direct:' + direct[1] : 'openrouter';
+  }
+  function _groupsOf(providerId) {
+    return MODEL_GROUPS.filter(function (g) {
+      return (g.tier === 'local' ? 'ollama' : g.tier === 'direct' ? _providerOf(g.models[0].id) : 'openrouter') === providerId;
+    });
+  }
+  var _providerKeys = {};   // provider id → has an API key (from the extension)
+  var _lastModelOf = {};    // provider id → the model last used with it
   var modelDrop = _makeDrop(document.getElementById('model-csel'), function (v) {
+    _lastModelOf[_providerOf(v)] = v;
     vscode.postMessage({ type: 'changeModel', model: v });
   }, true);
-  (function () {
-    var groups = window.__MODELS__ || [];
-    var tiers = ['free', 'premium', 'direct'];
-    var icons = { free: '\uD83C\uDD93', premium: '\uD83D\uDC8E', direct: '\uD83D\uDD11' };
-    tiers.forEach(function (tier) {
-      groups.filter(function (g) { return g.tier === tier; }).forEach(function (g) {
-        modelDrop.addGroup(icons[tier] + ' ' + g.provider);
-        g.models.forEach(function (m) { modelDrop.addOpt(m.id, m.label, !!m.default); });
+  var providerDrop = _makeDrop(document.getElementById('provider-csel'), function (providerId) {
+    // Switching provider selects a model of it: the one used last, else its default or first
+    var groups = _groupsOf(providerId);
+    var all = [].concat.apply([], groups.map(function (g) { return g.models; }));
+    var pick = _lastModelOf[providerId] || (all.filter(function (m) { return m.default; })[0] || all[0] || {}).id;
+    _fillModels(providerId, pick);
+    if (pick) { vscode.postMessage({ type: 'changeModel', model: pick }); }
+  });
+  function _fillProviders(selected) {
+    providerDrop.clear();
+    var noKey = function (id) { return _providerKeys[id] === false ? ' · no key' : ''; };
+    providerDrop.addOpt('openrouter', 'OpenRouter' + noKey('openrouter'), selected === 'openrouter');
+    var direct = MODEL_GROUPS.filter(function (g) { return g.tier === 'direct'; });
+    if (direct.length) { providerDrop.addGroup('🔑 Your own key'); }
+    direct.forEach(function (g) {
+      var id = _providerOf(g.models[0].id);
+      providerDrop.addOpt(id, g.provider + noKey(id), selected === id);
+    });
+    if (_groupsOf('ollama').length) {
+      providerDrop.addGroup('💻 Local');
+      providerDrop.addOpt('ollama', 'Ollama', selected === 'ollama');
+    }
+  }
+  function _fillModels(providerId, selected) {
+    modelDrop.clear();
+    var icons = { free: '🆓', premium: '💎' };
+    var known = false;
+    _groupsOf(providerId).forEach(function (g) {
+      // OpenRouter has many vendors: keep their headings; a single provider needs none
+      if (providerId === 'openrouter') { modelDrop.addGroup((icons[g.tier] || '') + ' ' + g.provider); }
+      g.models.forEach(function (m) {
+        modelDrop.addOpt(m.id, m.label, m.id === selected);
+        if (m.id === selected) { known = true; }
       });
     });
+    // A model set in Settings that the list does not have (a custom Ollama model, an older id)
+    if (selected && !known) { modelDrop.addOpt(selected, selected.replace(/^(direct:[^/]+\/|ollama\/)/, ''), true); }
+  }
+  /** Shows a model (and its provider) as selected, without telling the extension. */
+  function _showModel(modelId) {
+    var providerId = _providerOf(modelId);
+    _lastModelOf[providerId] = modelId;
+    _fillProviders(providerId);
+    _fillModels(providerId, modelId);
+  }
+  (function () {
+    var all = [].concat.apply([], MODEL_GROUPS.map(function (g) { return g.models; }));
+    var initial = all.filter(function (m) { return m.default; })[0] || all[0];
+    if (initial) { _showModel(initial.id); }
   }());
 
   // ── Build effort dropdown ────────────────────────────────────────────────
@@ -3308,7 +3364,11 @@
         addCtxAttachment(data.kind, data.label, data.text);
         break;
       case 'setModel':
-        if (data.model) { modelDrop.setValue(data.model); }
+        if (data.model) { _showModel(data.model); }
+        break;
+      case 'providerKeys':
+        _providerKeys = data.keys || {};
+        _fillProviders(providerDrop.getValue() || 'openrouter');
         break;
       case 'selectionBadge':
         _updateSelectionBadge(data.label || '');

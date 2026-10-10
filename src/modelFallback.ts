@@ -28,3 +28,27 @@ export function directModelLabel(model: string): string {
     const name = provider?.models.find(m => m.id === parsed?.modelId)?.displayName ?? model;
     return provider ? `${name} (your ${provider.name} key)` : name;
 }
+
+/** The provider a model id belongs to, as the chat header names it. */
+export function providerOfModel(model: string): string {
+    if (model.startsWith('ollama/')) { return 'ollama'; }
+    const parsed = parseDirectModelId(model);
+    return parsed ? `direct:${parsed.providerId}` : 'openrouter';
+}
+
+/** Which providers have an API key (Ollama needs none), keyed like providerOfModel(). */
+export async function providerKeyStatus(context: vscode.ExtensionContext): Promise<Record<string, boolean>> {
+    const status: Record<string, boolean> = { ollama: true, openrouter: !!await context.secrets.get('openRouterApiKey') };
+    for (const provider of DIRECT_PROVIDERS) {
+        status[`direct:${provider.id}`] = !!await context.secrets.get(directSecretKey(provider.id));
+    }
+    return status;
+}
+
+/** After the user picks a model of a provider that has no key yet: ask for that key. */
+export async function promptForMissingKey(context: vscode.ExtensionContext, model: string): Promise<void> {
+    const provider = providerOfModel(model);
+    if ((await providerKeyStatus(context))[provider]) { return; }
+    if (provider === 'openrouter') { await vscode.commands.executeCommand('codico.setApiKey'); }
+    else { await vscode.commands.executeCommand('codico.setDirectApiKey', provider.slice('direct:'.length)); }
+}

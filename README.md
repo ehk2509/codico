@@ -497,8 +497,12 @@ Changes to these files invalidate the cache immediately — no reload required.
 
 ---
 
-### Model & Thinking Effort
-Switch models from the chat header dropdown. Models are grouped by tier:
+### Provider, Model & Thinking Effort
+The chat header has two menus. **Provider** chooses where the model runs and whose key is used: OpenRouter, a direct provider (your own key) or local Ollama. Providers without a key are marked "no key", and picking one asks for its key. **Model** then lists only that provider's models, and each provider remembers the model you last used with it.
+
+If the selected model needs an OpenRouter key that is not set but you have a direct provider key, Codico switches to that provider and tells you.
+
+The models, by provider:
 
 **🔑 Direct (your own keys)**
 - Anthropic: Claude Opus 4.5, Sonnet 4.5, Haiku 4.5, Claude 3.5 Sonnet

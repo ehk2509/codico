@@ -179,9 +179,11 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── Direct provider API keys ──────────────────────────────────────────────
     context.subscriptions.push(
-        vscode.commands.registerCommand('codico.setDirectApiKey', async () => {
-            const picked = await vscode.window.showQuickPick(
-                DIRECT_PROVIDERS.map(p => ({ label: p.name, description: p.apiBase, providerId: p.id })),
+        // providerId is passed when the chat header's provider menu asks for a specific provider's key
+        vscode.commands.registerCommand('codico.setDirectApiKey', async (providerId?: string) => {
+            const options = DIRECT_PROVIDERS.map(p => ({ label: p.name, description: p.apiBase, providerId: p.id }));
+            const picked = options.find(o => o.providerId === providerId) ?? await vscode.window.showQuickPick(
+                options,
                 { title: 'Codico: Select Provider', placeHolder: 'Choose a provider to set or update its API key' }
             );
             if (!picked) { return; }

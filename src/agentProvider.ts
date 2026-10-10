@@ -45,7 +45,7 @@ import { cutAtTurn, lastTurnId } from './threadEditing';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
-import { usableModel } from './modelFallback';
+import { promptForMissingKey, providerKeyStatus, usableModel } from './modelFallback';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -181,6 +181,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
         registerChangeDiffProvider(_context);
+        _context.secrets.onDidChange(() => providerKeyStatus(_context).then(keys => this._post({ type: 'providerKeys', keys })), undefined, _context.subscriptions);
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
@@ -242,6 +243,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         setTimeout(() => {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
+            void providerKeyStatus(this._context).then(keys => this._post({ type: 'providerKeys', keys }));
             this._postUiSettings();
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
@@ -451,6 +453,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await vscode.workspace
                     .getConfiguration('codico')
                     .update('model', msg.model, vscode.ConfigurationTarget.Global);
+                void promptForMissingKey(this._context, msg.model); // picked a provider with no key yet
                 break;
             }
             case 'changeEffort':

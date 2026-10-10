@@ -5,6 +5,7 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Provider menu in the chat header: choose OpenRouter, one of the direct providers (your own key: Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, Cerebras) or local Ollama; the model menu then lists only that provider's models and remembers the last model used with each. Providers without a key are marked "no key", and picking one asks for its key. Ollama models can now be picked from the header (they were missing from the old single list).
 - DeepSeek adapter for the direct provider (your own DeepSeek key). The models are now DeepSeek V4.1 Flash (`deepseek-flash`) and DeepSeek V4 Pro (`deepseek-v4-pro`); `deepseek-chat` and `deepseek-reasoner` saved by older versions keep working. Thinking is shown in the reasoning panel and follows the effort selector (Low → low, Medium → high, High → max), and the token counter shows DeepSeek's cache hits.
 
 ### Fixed

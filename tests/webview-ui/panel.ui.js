@@ -630,3 +630,56 @@ test('Stop stays visible when background processes and token counts crowd the st
     await send({ type: 'endMessage', id: 'b' + width });
   }
 });
+
+test('the provider menu chooses where models run; the model menu lists that provider only', async () => {
+  const { page, send, posted } = await openPanel();
+  const openMenu = async (id) => { await page.locator(id + ' .csel-val').click(); };
+  const options = (id) => page.locator(id + ' .csel-opt').allTextContents();
+
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'openrouter', 'the default model is an OpenRouter one');
+  const providers = await options('#provider-csel');
+  assert.equal(providers[0], 'OpenRouter');
+  assert.ok(providers.includes('DeepSeek') && providers.includes('Anthropic') && providers.includes('Ollama'), providers.join(', '));
+
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'direct:deepseek': true, 'direct:anthropic': false, ollama: true } });
+  const marked = await options('#provider-csel');
+  assert.ok(marked.includes('OpenRouter · no key') && marked.includes('DeepSeek') && marked.includes('Anthropic · no key'), marked.join(', '));
+
+  // Choosing DeepSeek selects one of its models and tells the extension
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^DeepSeek$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'direct:deepseek/deepseek-flash' });
+  assert.deepEqual(await options('#model-csel'), ['DeepSeek V4.1 Flash', 'DeepSeek V4 Pro'], 'only DeepSeek models are offered');
+  await openMenu('#model-csel');
+  await page.locator('#model-csel .csel-opt', { hasText: 'DeepSeek V4 Pro' }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'direct:deepseek/deepseek-v4-pro' });
+
+  // Ollama is selectable (it was missing from the old single list); coming back restores the last DeepSeek model
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^Ollama$/ }).click();
+  assert.match((await posted('changeModel')).pop().model, /^ollama\//);
+  await openMenu('#provider-csel');
+  await page.locator('#provider-csel .csel-opt', { hasText: /^DeepSeek$/ }).click();
+  assert.equal((await posted('changeModel')).pop().model, 'direct:deepseek/deepseek-v4-pro');
+});
+
+test('a model set by the extension shows its provider; an unlisted model is still shown', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'setModel', model: 'direct:anthropic/claude-opus-4-5' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'direct:anthropic');
+  assert.match(await page.locator('#model-csel .csel-val').textContent(), /Claude Opus 4\.5/);
+  await send({ type: 'setModel', model: 'ollama/my-custom-model:7b' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'ollama');
+  assert.match(await page.locator('#model-csel .csel-val').textContent(), /my-custom-model:7b/);
+  assert.equal((await posted('changeModel')).length, 0, 'showing a model does not change the setting');
+});
+
+test('the header with provider and model menus fits a narrow panel', async () => {
+  const { page, send } = await openPanel();
+  await page.setViewportSize({ width: 300, height: 700 });
+  await send({ type: 'providerKeys', keys: { openrouter: false } });
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  assert.ok(overflow <= 0, `the panel scrolls sideways by ${overflow}px`);
+  const right = await page.locator('#model-csel').evaluate(e => e.getBoundingClientRect().right);
+  assert.ok(right <= 300, 'the model menu is inside the panel');
+});
