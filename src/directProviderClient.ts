@@ -1,6 +1,7 @@
 import * as http from 'http';
 import * as https from 'https';
 import { ChatMessage, MessageContentPart, OpenRouterEndpoint, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
+import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
 import { deepseekAdapter, OpenAICompatAdapter } from './deepseekAdapter';
 import { GEMINI_MODELS, geminiGenerationConfig, geminiQuickConfig, geminiUsage, SKIP_THOUGHT_SIGNATURE, usesThoughtSignatures } from './geminiAdapter';
 import { OPENAI_MODELS, openaiAdapter } from './openaiAdapter';
@@ -145,6 +146,26 @@ function makeQueue<T>(): { push: (v: T | null | Error) => void; iterable: AsyncI
     };
 }
 
+/**
+ * Sends a request body, first through the optional optimizer. Optimization is strictly
+ * fail-open: an unavailable or faulty optimizer must never prevent the model request.
+ * @param format the request shape, as the optimizer names it
+ */
+function sendOptimized(
+    optimizer: ProviderRequestOptimizer | undefined,
+    format: 'openai' | 'anthropic' | 'gemini',
+    requestBody: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    push: (v: StreamChunk | null | Error) => void,
+    send: (body: string) => void
+): void {
+    if (!optimizer) { send(JSON.stringify(requestBody)); return; }
+    optimizer.optimize(format, requestBody).catch(() => requestBody).then(optimized => {
+        if (signal?.aborted) { push(null); return; }
+        try { send(JSON.stringify(optimized)); } catch (err) { push(err instanceof Error ? err : new Error(String(err))); push(null); }
+    });
+}
+
 // ── OpenAI-compatible streaming ───────────────────────────────────────────────
 
 function _streamOpenAICompat(
@@ -160,11 +181,12 @@ function _streamOpenAICompat(
     effort: 'high' | 'medium' | 'low' = 'medium',
     endpoint?: OpenRouterEndpoint,
     /** Leave out the adapter's extra fields (a retry after the API refused one of them). */
-    plain = false
+    plain = false,
+    optimizer?: ProviderRequestOptimizer
 ): void {
     const replayField = adapter?.replayReasoning ? adapter.reasoningField : undefined;
     const messages = toOpenAIMessages([{ role: 'system', content: system }, ...history], nativeTools.length > 0, replayField);
-    const body = JSON.stringify({
+    const requestBody: Record<string, unknown> = {
         model: adapter?.modelId(modelId) ?? modelId,
         messages,
         stream: true,
@@ -182,138 +204,141 @@ function _streamOpenAICompat(
             })),
             tool_choice: 'auto',
         } : {}),
-    });
+    };
 
-    // `endpoint` is for automated tests only (evaluation mode): a normal install talks to apiBase over HTTPS
-    const transport = endpoint?.protocol === 'http:' ? http : https;
-    const req = transport.request(
-        { hostname: endpoint?.hostname ?? apiBase, port: endpoint?.port, path: endpoint?.path ?? '/v1/chat/completions', method: 'POST',
-          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
-        (res) => {
-            if (res.statusCode && res.statusCode >= 400) {
-                res.setEncoding('utf8'); // keeps characters split across chunks intact
-                let e = ''; res.on('data', (d: string) => { e += d; });
-                res.on('end', () => {
-                    // An option this model does not take (e.g. an effort level): once more without the extras
-                    const extras = plain || !adapter ? [] : Object.keys(adapter.body(modelId, effort));
-                    if (res.statusCode === 400 && extras.some(field => e.includes(field)) && !signal?.aborted) {
-                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, nativeTools, adapter, effort, endpoint, true);
-                        return;
-                    }
-                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
-                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, [], adapter, effort, endpoint, plain);
-                        return;
-                    }
-                    push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
-                    push(null);
-                });
-                return;
-            }
-            let buf = '';
-            const completion = new StreamCompletionGuard();
-            const nativeCalls = new OpenAIToolCallAccumulator();
-            const think = new ThinkTagSplitter((type, text) => push({ type, text }));
-            // The reply's reasoning, sent on as one chunk so the caller can store it for replay
-            let reasoningText = '';
-            let reasoningSent = false;
-            const finishReasoning = (): void => {
-                if (replayField && reasoningText && !reasoningSent) { reasoningSent = true; push({ type: 'reasoning', text: reasoningText }); }
-            };
-            const emitNativeCalls = (final = false): void => {
-                for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
-                if (final && nativeCalls.hasPending) {
-                    push({
-                        type: 'stream_error',
-                        message: `${apiBase} returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
-                    });
-                }
-            };
-            res.setEncoding('utf8'); // keeps characters split across chunks intact
-            res.on('data', (chunk: string) => {
-                buf += chunk.toString();
-                const lines = buf.split('\n'); buf = lines.pop() ?? '';
-                for (const line of lines) {
-                    const t = line.trim();
-                    if (!t.startsWith('data:')) { continue; }
-                    const raw = t.slice(5).trim();
-                    if (raw === '[DONE]') {
-                        completion.markTerminal();
-                        think.flush();
-                        emitNativeCalls(true);
-                        finishReasoning();
+    const send = (body: string): void => {
+        // `endpoint` is for automated tests only (evaluation mode): a normal install talks to apiBase over HTTPS
+        const transport = endpoint?.protocol === 'http:' ? http : https;
+        const req = transport.request(
+            { hostname: endpoint?.hostname ?? apiBase, port: endpoint?.port, path: endpoint?.path ?? '/v1/chat/completions', method: 'POST',
+              headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+            (res) => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    res.setEncoding('utf8'); // keeps characters split across chunks intact
+                    let e = ''; res.on('data', (d: string) => { e += d; });
+                    res.on('end', () => {
+                        // An option this model does not take (e.g. an effort level): once more without the extras
+                        const extras = plain || !adapter ? [] : Object.keys(adapter.body(modelId, effort));
+                        if (res.statusCode === 400 && extras.some(field => e.includes(field)) && !signal?.aborted) {
+                            _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, nativeTools, adapter, effort, endpoint, true, optimizer);
+                            return;
+                        }
+                        if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                            push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                            _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, [], adapter, effort, endpoint, plain, optimizer);
+                            return;
+                        }
+                        push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
                         push(null);
-                        return;
+                    });
+                    return;
+                }
+                let buf = '';
+                const completion = new StreamCompletionGuard();
+                const nativeCalls = new OpenAIToolCallAccumulator();
+                const think = new ThinkTagSplitter((type, text) => push({ type, text }));
+                // The reply's reasoning, sent on as one chunk so the caller can store it for replay
+                let reasoningText = '';
+                let reasoningSent = false;
+                const finishReasoning = (): void => {
+                    if (replayField && reasoningText && !reasoningSent) { reasoningSent = true; push({ type: 'reasoning', text: reasoningText }); }
+                };
+                const emitNativeCalls = (final = false): void => {
+                    for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
+                    if (final && nativeCalls.hasPending) {
+                        push({
+                            type: 'stream_error',
+                            message: `${apiBase} returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
+                        });
                     }
-                    try {
-                        const json = JSON.parse(raw);
-                        if (json.error) {
+                };
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (chunk: string) => {
+                    buf += chunk.toString();
+                    const lines = buf.split('\n'); buf = lines.pop() ?? '';
+                    for (const line of lines) {
+                        const t = line.trim();
+                        if (!t.startsWith('data:')) { continue; }
+                        const raw = t.slice(5).trim();
+                        if (raw === '[DONE]') {
                             completion.markTerminal();
-                            push({ type: 'stream_error', message: json.error?.message ?? String(json.error) });
+                            think.flush();
+                            emitNativeCalls(true);
+                            finishReasoning();
                             push(null);
                             return;
                         }
-                        const delta = json.choices?.[0]?.delta as {
-                            content?: string;
-                            reasoning?: string;
-                            tool_calls?: Array<{
-                                index?: number;
-                                id?: string;
-                                function?: { name?: string; arguments?: string };
-                            }>;
-                        } | undefined;
-                        // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
-                        // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
-                        const adapted = adapter ? (delta as Record<string, unknown> | undefined)?.[adapter.reasoningField] : undefined;
-                        const reasoning = delta?.reasoning || (typeof adapted === 'string' ? adapted : '');
-                        if (reasoning) { reasoningText += reasoning; push({ type: 'thinking', text: reasoning }); }
-                        if (typeof delta?.content === 'string' && delta.content) { think.push(delta.content); }
-                        for (const toolCall of delta?.tool_calls ?? []) { nativeCalls.add(toolCall); }
-                        const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
-                        if (finishReason) {
-                            completion.markTerminal();
-                            emitNativeCalls(true);
-                            if (finishReason !== 'stop' && finishReason !== 'tool_calls') { push({ type: 'finish', reason: finishReason }); }
-                        }
-                        const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
-                        if (u != null && u.total_tokens != null) {
-                            // Cache hits: the provider's own field (DeepSeek), or OpenAI's prompt_tokens_details
-                            const cached = adapter?.cachedTokens(u as Record<string, unknown>) ?? (u.prompt_tokens_details?.cached_tokens || undefined);
-                            push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens, ...(cached ? { cachedTokens: cached } : {}) });
-                        }
-                    } catch { /* malformed SSE */ }
-                }
-            });
-            res.on('end', () => {
-                think.flush();
-                finishReasoning();
-                if (!signal?.aborted) {
-                    const interrupted = completion.unexpectedEofMessage(apiBase);
-                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
-                }
+                        try {
+                            const json = JSON.parse(raw);
+                            if (json.error) {
+                                completion.markTerminal();
+                                push({ type: 'stream_error', message: json.error?.message ?? String(json.error) });
+                                push(null);
+                                return;
+                            }
+                            const delta = json.choices?.[0]?.delta as {
+                                content?: string;
+                                reasoning?: string;
+                                tool_calls?: Array<{
+                                    index?: number;
+                                    id?: string;
+                                    function?: { name?: string; arguments?: string };
+                                }>;
+                            } | undefined;
+                            // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
+                            // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
+                            const adapted = adapter ? (delta as Record<string, unknown> | undefined)?.[adapter.reasoningField] : undefined;
+                            const reasoning = delta?.reasoning || (typeof adapted === 'string' ? adapted : '');
+                            if (reasoning) { reasoningText += reasoning; push({ type: 'thinking', text: reasoning }); }
+                            if (typeof delta?.content === 'string' && delta.content) { think.push(delta.content); }
+                            for (const toolCall of delta?.tool_calls ?? []) { nativeCalls.add(toolCall); }
+                            const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
+                            if (finishReason) {
+                                completion.markTerminal();
+                                emitNativeCalls(true);
+                                if (finishReason !== 'stop' && finishReason !== 'tool_calls') { push({ type: 'finish', reason: finishReason }); }
+                            }
+                            const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+                            if (u != null && u.total_tokens != null) {
+                                // Cache hits: the provider's own field (DeepSeek), or OpenAI's prompt_tokens_details
+                                const cached = adapter?.cachedTokens(u as Record<string, unknown>) ?? (u.prompt_tokens_details?.cached_tokens || undefined);
+                                push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens, ...(cached ? { cachedTokens: cached } : {}) });
+                            }
+                        } catch { /* malformed SSE */ }
+                    }
+                });
+                res.on('end', () => {
+                    think.flush();
+                    finishReasoning();
+                    if (!signal?.aborted) {
+                        const interrupted = completion.unexpectedEofMessage(apiBase);
+                        if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                    }
+                    push(null);
+                });
+                res.on('error', (e: Error) => {
+                    if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                        push(null);
+                    } else {
+                        push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
+                        push(null);
+                    }
+                });
+            }
+        );
+        req.on('error', (e: Error) => {
+            if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
                 push(null);
-            });
-            res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-                    push(null);
-                } else {
-                    push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
-                    push(null);
-                }
-            });
-        }
-    );
-    req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-            push(null);
-        } else {
-            push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
-            push(null);
-        }
-    });
-    if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
-    watchStreamStall(req);
-    req.write(body); req.end();
+            } else {
+                push({ type: 'stream_error', message: `${apiBase} stream transport error: ${e.message}` });
+                push(null);
+            }
+        });
+        if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+        watchStreamStall(req);
+        req.write(body); req.end();
+    };
+    sendOptimized(optimizer, 'openai', requestBody, signal, push, send);
 }
 
 // ── Anthropic streaming ───────────────────────────────────────────────────────
@@ -325,11 +350,12 @@ function _streamAnthropic(
     system: string,
     signal: AbortSignal | undefined,
     push: (v: StreamChunk | null | Error) => void,
-    nativeTools: NativeToolDefinition[]
+    nativeTools: NativeToolDefinition[],
+    optimizer?: ProviderRequestOptimizer
 ): void {
     const messages = toAnthropicMessages(history, nativeTools.length > 0);
 
-    const body = JSON.stringify({
+    const requestBody: Record<string, unknown> = {
         model: modelId,
         system,
         messages,
@@ -344,133 +370,136 @@ function _streamAnthropic(
                 input_schema: tool.inputSchema,
             })),
         } : {}),
-    });
+    };
 
-    const req = https.request(
-        { hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
-          headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
-        (res) => {
-            if (res.statusCode && res.statusCode >= 400) {
+    const send = (body: string): void => {
+        const req = https.request(
+            { hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+              headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+            (res) => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    res.setEncoding('utf8'); // keeps characters split across chunks intact
+                    let e = ''; res.on('data', (d: string) => { e += d; });
+                    res.on('end', () => {
+                        if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                            push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                            _streamAnthropic(apiKey, modelId, history, system, signal, push, [], optimizer);
+                            return;
+                        }
+                        push(new Error(`Anthropic HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
+                        push(null);
+                    });
+                    return;
+                }
+                let buf = '';
+                let lastEvent = '';
+                const completion = new StreamCompletionGuard();
+                const toolBlocks = new Map<number, { id?: string; name: string; args: string }>();
+                let inputTokens = 0;
+                let cachedTokens = 0;
+                let outputTokens = 0;
+
                 res.setEncoding('utf8'); // keeps characters split across chunks intact
-                let e = ''; res.on('data', (d: string) => { e += d; });
-                res.on('end', () => {
-                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
-                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamAnthropic(apiKey, modelId, history, system, signal, push, []);
-                        return;
+                res.on('data', (chunk: string) => {
+                    buf += chunk.toString();
+                    const lines = buf.split('\n'); buf = lines.pop() ?? '';
+                    for (const line of lines) {
+                        const t = line.trim();
+                        if (t.startsWith('event:')) { lastEvent = t.slice(6).trim(); continue; }
+                        if (!t.startsWith('data:')) { continue; }
+                        const raw = t.slice(5).trim();
+                        if (!raw) { continue; }
+                        try {
+                            const json = JSON.parse(raw);
+                            const type = json.type ?? lastEvent;
+                            lastEvent = '';
+                            if (type === 'message_start') {
+                                // input_tokens excludes cached tokens: the prompt is all three together
+                                const u = json.message?.usage ?? {};
+                                cachedTokens = u.cache_read_input_tokens ?? 0;
+                                inputTokens = (u.input_tokens ?? 0) + cachedTokens + (u.cache_creation_input_tokens ?? 0);
+                            } else if (type === 'content_block_start') {
+                                const block = json.content_block ?? {};
+                                if (block.type === 'tool_use' && block.name) {
+                                    toolBlocks.set(json.index ?? 0, {
+                                        id: block.id,
+                                        name: block.name,
+                                        args: block.input && typeof block.input === 'object' && Object.keys(block.input).length > 0
+                                            ? JSON.stringify(block.input)
+                                            : '',
+                                    });
+                                }
+                            } else if (type === 'content_block_delta') {
+                                const d = json.delta ?? {};
+                                if (d.type === 'thinking_delta' && d.thinking) { push({ type: 'thinking', text: d.thinking }); }
+                                else if (d.type === 'text_delta' && d.text) { push({ type: 'content', text: d.text }); }
+                                else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
+                                    const block = toolBlocks.get(json.index ?? 0);
+                                    if (block) { block.args += d.partial_json; }
+                                }
+                            } else if (type === 'content_block_stop') {
+                                const index = json.index ?? 0;
+                                const block = toolBlocks.get(index);
+                                if (block) {
+                                    try {
+                                        const parsed = block.args.trim() ? JSON.parse(block.args) : {};
+                                        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                                            push({ type: 'native_tool', call: { id: block.id, name: block.name, arguments: parsed } });
+                                        } else {
+                                            push({ type: 'stream_error', message: `Anthropic returned non-object arguments for native tool ${block.name}` });
+                                        }
+                                    } catch {
+                                        push({ type: 'stream_error', message: `Anthropic returned malformed native tool arguments for ${block.name}` });
+                                    }
+                                    toolBlocks.delete(index);
+                                }
+                            } else if (type === 'message_delta') {
+                                outputTokens = json.usage?.output_tokens ?? outputTokens;
+                                const stop = json.delta?.stop_reason;
+                                if (stop) {
+                                    completion.markTerminal();
+                                    if (stop !== 'end_turn' && stop !== 'tool_use') { push({ type: 'finish', reason: stop }); }
+                                }
+                            } else if (type === 'message_stop') {
+                                completion.markTerminal();
+                                const total = inputTokens + outputTokens;
+                                if (total > 0) { push({ type: 'usage', promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total, ...(cachedTokens ? { cachedTokens } : {}) }); }
+                                push(null);
+                            }
+                        } catch { /* malformed */ }
                     }
-                    push(new Error(`Anthropic HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
+                });
+                // push(null) here is deduplicated by the done-guard in streamDirect (message_stop already sent null)
+                res.on('end', () => {
+                    if (!signal?.aborted) {
+                        const interrupted = completion.unexpectedEofMessage('Anthropic');
+                        if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                    }
                     push(null);
                 });
-                return;
+                res.on('error', (e: Error) => {
+                    if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                        push(null);
+                    } else {
+                        push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
+                        push(null);
+                    }
+                });
             }
-            let buf = '';
-            let lastEvent = '';
-            const completion = new StreamCompletionGuard();
-            const toolBlocks = new Map<number, { id?: string; name: string; args: string }>();
-            let inputTokens = 0;
-            let cachedTokens = 0;
-            let outputTokens = 0;
-
-            res.setEncoding('utf8'); // keeps characters split across chunks intact
-            res.on('data', (chunk: string) => {
-                buf += chunk.toString();
-                const lines = buf.split('\n'); buf = lines.pop() ?? '';
-                for (const line of lines) {
-                    const t = line.trim();
-                    if (t.startsWith('event:')) { lastEvent = t.slice(6).trim(); continue; }
-                    if (!t.startsWith('data:')) { continue; }
-                    const raw = t.slice(5).trim();
-                    if (!raw) { continue; }
-                    try {
-                        const json = JSON.parse(raw);
-                        const type = json.type ?? lastEvent;
-                        lastEvent = '';
-                        if (type === 'message_start') {
-                            // input_tokens excludes cached tokens: the prompt is all three together
-                            const u = json.message?.usage ?? {};
-                            cachedTokens = u.cache_read_input_tokens ?? 0;
-                            inputTokens = (u.input_tokens ?? 0) + cachedTokens + (u.cache_creation_input_tokens ?? 0);
-                        } else if (type === 'content_block_start') {
-                            const block = json.content_block ?? {};
-                            if (block.type === 'tool_use' && block.name) {
-                                toolBlocks.set(json.index ?? 0, {
-                                    id: block.id,
-                                    name: block.name,
-                                    args: block.input && typeof block.input === 'object' && Object.keys(block.input).length > 0
-                                        ? JSON.stringify(block.input)
-                                        : '',
-                                });
-                            }
-                        } else if (type === 'content_block_delta') {
-                            const d = json.delta ?? {};
-                            if (d.type === 'thinking_delta' && d.thinking) { push({ type: 'thinking', text: d.thinking }); }
-                            else if (d.type === 'text_delta' && d.text) { push({ type: 'content', text: d.text }); }
-                            else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
-                                const block = toolBlocks.get(json.index ?? 0);
-                                if (block) { block.args += d.partial_json; }
-                            }
-                        } else if (type === 'content_block_stop') {
-                            const index = json.index ?? 0;
-                            const block = toolBlocks.get(index);
-                            if (block) {
-                                try {
-                                    const parsed = block.args.trim() ? JSON.parse(block.args) : {};
-                                    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                                        push({ type: 'native_tool', call: { id: block.id, name: block.name, arguments: parsed } });
-                                    } else {
-                                        push({ type: 'stream_error', message: `Anthropic returned non-object arguments for native tool ${block.name}` });
-                                    }
-                                } catch {
-                                    push({ type: 'stream_error', message: `Anthropic returned malformed native tool arguments for ${block.name}` });
-                                }
-                                toolBlocks.delete(index);
-                            }
-                        } else if (type === 'message_delta') {
-                            outputTokens = json.usage?.output_tokens ?? outputTokens;
-                            const stop = json.delta?.stop_reason;
-                            if (stop) {
-                                completion.markTerminal();
-                                if (stop !== 'end_turn' && stop !== 'tool_use') { push({ type: 'finish', reason: stop }); }
-                            }
-                        } else if (type === 'message_stop') {
-                            completion.markTerminal();
-                            const total = inputTokens + outputTokens;
-                            if (total > 0) { push({ type: 'usage', promptTokens: inputTokens, completionTokens: outputTokens, totalTokens: total, ...(cachedTokens ? { cachedTokens } : {}) }); }
-                            push(null);
-                        }
-                    } catch { /* malformed */ }
-                }
-            });
-            // push(null) here is deduplicated by the done-guard in streamDirect (message_stop already sent null)
-            res.on('end', () => {
-                if (!signal?.aborted) {
-                    const interrupted = completion.unexpectedEofMessage('Anthropic');
-                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
-                }
+        );
+        req.on('error', (e: Error) => {
+            if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
                 push(null);
-            });
-            res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-                    push(null);
-                } else {
-                    push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
-                    push(null);
-                }
-            });
-        }
-    );
-    req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-            push(null);
-        } else {
-            push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
-            push(null);
-        }
-    });
-    if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
-    watchStreamStall(req);
-    req.write(body); req.end();
+            } else {
+                push({ type: 'stream_error', message: `Anthropic stream transport error: ${e.message}` });
+                push(null);
+            }
+        });
+        if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+        watchStreamStall(req);
+        req.write(body); req.end();
+    };
+    sendOptimized(optimizer, 'anthropic', requestBody, signal, push, send);
 }
 
 // ── Google Gemini streaming ───────────────────────────────────────────────────
@@ -485,9 +514,10 @@ function _streamGoogle(
     nativeTools: NativeToolDefinition[],
     effort: 'high' | 'medium' | 'low' = 'medium',
     /** false: leave the thinking options out (a retry after the API refused them). */
-    thinking = true
+    thinking = true,
+    optimizer?: ProviderRequestOptimizer
 ): void {
-    const body = JSON.stringify({
+    const requestBody: Record<string, unknown> = {
         contents: toGeminiMessages(history, nativeTools.length > 0, usesThoughtSignatures(modelId) ? SKIP_THOUGHT_SIGNATURE : undefined),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
         generationConfig: geminiGenerationConfig(modelId, effort, thinking),
@@ -501,104 +531,107 @@ function _streamGoogle(
             }],
             toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
         } : {}),
-    });
+    };
 
-    const req = https.request(
-        { hostname: 'generativelanguage.googleapis.com',
-          path: `/v1beta/models/${encodeURIComponent(modelId)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
-        (res) => {
-            if (res.statusCode && res.statusCode >= 400) {
-                res.setEncoding('utf8'); // keeps characters split across chunks intact
-                let e = ''; res.on('data', (d: string) => { e += d; });
-                res.on('end', () => {
-                    // A thinking option this model does not take (e.g. a level): once more without them
-                    if (thinking && res.statusCode === 400 && /thinking/i.test(e) && !signal?.aborted) {
-                        _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, effort, false);
-                        return;
-                    }
-                    if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
-                        push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamGoogle(apiKey, modelId, history, system, signal, push, [], effort, thinking);
-                        return;
-                    }
-                    push(new Error(`Google HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
-                    push(null);
-                });
-                return;
-            }
-            let buf = '';
-            const completion = new StreamCompletionGuard();
-            const emittedFunctionCalls = new Set<string>();
-            res.setEncoding('utf8'); // keeps characters split across chunks intact
-            res.on('data', (chunk: string) => {
-                buf += chunk.toString();
-                const lines = buf.split('\n'); buf = lines.pop() ?? '';
-                for (const line of lines) {
-                    const t = line.trim();
-                    if (!t.startsWith('data:')) { continue; }
-                    const raw = t.slice(5).trim();
-                    if (!raw) { continue; }
-                    if (raw === '[DONE]') {
-                        completion.markTerminal();
+    const send = (body: string): void => {
+        const req = https.request(
+            { hostname: 'generativelanguage.googleapis.com',
+              path: `/v1beta/models/${encodeURIComponent(modelId)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`,
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+            (res) => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    res.setEncoding('utf8'); // keeps characters split across chunks intact
+                    let e = ''; res.on('data', (d: string) => { e += d; });
+                    res.on('end', () => {
+                        // A thinking option this model does not take (e.g. a level): once more without them
+                        if (thinking && res.statusCode === 400 && /thinking/i.test(e) && !signal?.aborted) {
+                            _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, effort, false, optimizer);
+                            return;
+                        }
+                        if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
+                            push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
+                            _streamGoogle(apiKey, modelId, history, system, signal, push, [], effort, thinking, optimizer);
+                            return;
+                        }
+                        push(new Error(`Google HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
                         push(null);
-                        return;
-                    }
-                    try {
-                        const json = JSON.parse(raw);
-                        const cand = json.candidates?.[0];
-                        if (cand) {
-                            for (const part of cand.content?.parts ?? []) {
-                                // A thought summary (asked for with includeThoughts) is not part of the answer
-                                if (typeof part.text === 'string' && part.text) { push({ type: part.thought === true ? 'thinking' : 'content', text: part.text }); }
-                                const fn = part.functionCall;
-                                if (fn?.name && fn.args && typeof fn.args === 'object' && !Array.isArray(fn.args)) {
-                                    const key = `${fn.name}:${JSON.stringify(fn.args)}`;
-                                    if (!emittedFunctionCalls.has(key)) {
-                                        emittedFunctionCalls.add(key);
-                                        push({ type: 'native_tool', call: { name: fn.name, arguments: fn.args, ...(typeof part.thoughtSignature === 'string' ? { signature: part.thoughtSignature } : {}) } });
+                    });
+                    return;
+                }
+                let buf = '';
+                const completion = new StreamCompletionGuard();
+                const emittedFunctionCalls = new Set<string>();
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (chunk: string) => {
+                    buf += chunk.toString();
+                    const lines = buf.split('\n'); buf = lines.pop() ?? '';
+                    for (const line of lines) {
+                        const t = line.trim();
+                        if (!t.startsWith('data:')) { continue; }
+                        const raw = t.slice(5).trim();
+                        if (!raw) { continue; }
+                        if (raw === '[DONE]') {
+                            completion.markTerminal();
+                            push(null);
+                            return;
+                        }
+                        try {
+                            const json = JSON.parse(raw);
+                            const cand = json.candidates?.[0];
+                            if (cand) {
+                                for (const part of cand.content?.parts ?? []) {
+                                    // A thought summary (asked for with includeThoughts) is not part of the answer
+                                    if (typeof part.text === 'string' && part.text) { push({ type: part.thought === true ? 'thinking' : 'content', text: part.text }); }
+                                    const fn = part.functionCall;
+                                    if (fn?.name && fn.args && typeof fn.args === 'object' && !Array.isArray(fn.args)) {
+                                        const key = `${fn.name}:${JSON.stringify(fn.args)}`;
+                                        if (!emittedFunctionCalls.has(key)) {
+                                            emittedFunctionCalls.add(key);
+                                            push({ type: 'native_tool', call: { name: fn.name, arguments: fn.args, ...(typeof part.thoughtSignature === 'string' ? { signature: part.thoughtSignature } : {}) } });
+                                        }
                                     }
                                 }
+                                if (cand.finishReason) {
+                                    completion.markTerminal();
+                                    if (cand.finishReason !== 'STOP') { push({ type: 'finish', reason: cand.finishReason }); }
+                                }
                             }
-                            if (cand.finishReason) {
-                                completion.markTerminal();
-                                if (cand.finishReason !== 'STOP') { push({ type: 'finish', reason: cand.finishReason }); }
-                            }
-                        }
-                        const usage = geminiUsage(json.usageMetadata);
-                        if (usage) { push({ type: 'usage', ...usage }); }
-                    } catch { /* malformed */ }
-                }
-            });
-            res.on('end', () => {
-                if (!signal?.aborted) {
-                    const interrupted = completion.unexpectedEofMessage('Google Gemini');
-                    if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
-                }
+                            const usage = geminiUsage(json.usageMetadata);
+                            if (usage) { push({ type: 'usage', ...usage }); }
+                        } catch { /* malformed */ }
+                    }
+                });
+                res.on('end', () => {
+                    if (!signal?.aborted) {
+                        const interrupted = completion.unexpectedEofMessage('Google Gemini');
+                        if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                    }
+                    push(null);
+                });
+                res.on('error', (e: Error) => {
+                    if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
+                        push(null);
+                    } else {
+                        push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
+                        push(null);
+                    }
+                });
+            }
+        );
+        req.on('error', (e: Error) => {
+            if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
                 push(null);
-            });
-            res.on('error', (e: Error) => {
-                if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-                    push(null);
-                } else {
-                    push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
-                    push(null);
-                }
-            });
-        }
-    );
-    req.on('error', (e: Error) => {
-        if ((e as NodeJS.ErrnoException).code === 'ABORT_ERR' || signal?.aborted) {
-            push(null);
-        } else {
-            push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
-            push(null);
-        }
-    });
-    if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
-    watchStreamStall(req);
-    req.write(body); req.end();
+            } else {
+                push({ type: 'stream_error', message: `Google Gemini stream transport error: ${e.message}` });
+                push(null);
+            }
+        });
+        if (signal) { signal.addEventListener('abort', () => req.destroy(), { once: true }); }
+        watchStreamStall(req);
+        req.write(body); req.end();
+    };
+    sendOptimized(optimizer, 'gemini', requestBody, signal, push, send);
 }
 
 // ── Public streaming API ──────────────────────────────────────────────────────
@@ -614,7 +647,9 @@ export function streamDirect(
     overrideSystemPrompt?: string,
     nativeTools: NativeToolDefinition[] = [],
     /** Automated tests only (evaluation mode); OpenAI-compatible providers. */
-    endpoint?: OpenRouterEndpoint
+    endpoint?: OpenRouterEndpoint,
+    /** Optional local optimizer (ACCO) the request body passes through before it is sent. */
+    requestOptimizer?: ProviderRequestOptimizer
 ): AsyncIterable<StreamChunk> {
     const provider = getDirectProvider(providerId);
     if (!provider) {
@@ -649,9 +684,9 @@ export function streamDirect(
         // object is created inside the format handler (pre-creation window).
         signal?.addEventListener('abort', () => push(null), { once: true });
         switch (provider.format) {
-            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools, provider.adapter, thinkingEffort, endpoint); break;
-            case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push, nativeTools);                      break;
-            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, thinkingEffort);         break;
+            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools, provider.adapter, thinkingEffort, endpoint, false, requestOptimizer); break;
+            case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push, nativeTools, requestOptimizer); break;
+            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, thinkingEffort, true, requestOptimizer); break;
         }
     }
 

@@ -58,9 +58,11 @@ Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.
 
 ### ACCO context optimization (optional)
 
-Codico can send its **provider-facing OpenRouter request copy** through a local
+Codico can send its **provider-facing request copy** through a local
 [ACCO — AI Coding Context Optimizer](https://github.com/ehk2509/ai-coding-context-optimizer)
-service before the request reaches OpenRouter. Codico keeps the canonical chat
+service before the request reaches the provider. This applies to OpenRouter and to
+the direct providers (your own key: Anthropic, OpenAI, Google, DeepSeek, Groq, Mistral,
+Grok, Cerebras). Codico keeps the canonical chat
 history, agent loop, file mutations, and verification state unchanged.
 
 ```bash
@@ -75,8 +77,9 @@ Then enable **`codico.accoEnabled`** in VS Code. The default service URL is
 
 The integration is deliberately fail-open: if ACCO is unavailable, times out, or
 declines a transform, Codico sends the original request unchanged. Non-loopback
-ACCO URLs are rejected. The first integration targets the benchmarked OpenRouter
-path; direct-provider and Ollama requests are unchanged.
+ACCO URLs are rejected. Ollama, Claude Code and ChatGPT requests are not optimized:
+ACCO has no request shape for them. ACCO works on tool results and tool definitions,
+so it changes little when a model falls back to Codico's text tool format.
 
 A paired frozen holdout on the `stream-resume-overlap` task kept the same success
 rate with ACCO enabled and disabled (**5/6 in both conditions**), while median

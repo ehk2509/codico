@@ -150,9 +150,10 @@ export class AccoProviderOptimizer implements ProviderRequestOptimizer {
 
 export function accoOptimizerFromConfiguration(
     config: vscode.WorkspaceConfiguration,
-    openRouterPath: boolean,
+    /** False for requests ACCO has no request shape for: Ollama, and the login-based CLI providers. */
+    supported: boolean,
 ): ProviderRequestOptimizer | undefined {
-    if (!openRouterPath || !config.get<boolean>('accoEnabled', false)) { return undefined; }
+    if (!supported || !config.get<boolean>('accoEnabled', false)) { return undefined; }
     try {
         return new AccoProviderOptimizer({
             baseUrl: config.get<string>('accoBaseUrl', 'http://127.0.0.1:8770'),
