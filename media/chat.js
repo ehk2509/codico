@@ -149,16 +149,21 @@
   var _lastModelOf = {};    // provider id → the model last used with it
   var modelDrop = _makeDrop(document.getElementById('model-csel'), function (v) {
     _lastModelOf[_providerOf(v)] = v;
+    _currentModel = v;
     vscode.postMessage({ type: 'changeModel', model: v });
   }, true);
-  var providerDrop = _makeDrop(document.getElementById('provider-csel'), function (providerId) {
-    // Switching provider selects a model of it: the one used last, else its default or first
+  var _currentModel = '';   // the model shown as selected
+  var _installed = {};      // login-based provider id → its command was found (from the extension)
+  /** Switching provider selects a model of it: the one used last, else its default or first. */
+  function _chooseProvider(providerId) {
     var groups = _groupsOf(providerId);
     var all = [].concat.apply([], groups.map(function (g) { return g.models; }));
     var pick = _lastModelOf[providerId] || (all.filter(function (m) { return m.default; })[0] || all[0] || {}).id;
     _fillModels(providerId, pick);
-    if (pick) { vscode.postMessage({ type: 'changeModel', model: pick }); }
-  });
+    if (pick) { _currentModel = pick; vscode.postMessage({ type: 'changeModel', model: pick }); }
+    _renderSetup();
+  }
+  var providerDrop = _makeDrop(document.getElementById('provider-csel'), _chooseProvider);
   function _fillProviders(selected) {
     providerDrop.clear();
     var noKey = function (id) { return _providerKeys[id] === false ? ' · no key' : ''; };
@@ -197,8 +202,44 @@
   function _showModel(modelId) {
     var providerId = _providerOf(modelId);
     _lastModelOf[providerId] = modelId;
+    _currentModel = modelId;
     _fillProviders(providerId);
     _fillModels(providerId, modelId);
+    _renderSetup();
+  }
+
+  // ── First run: no provider can answer yet, so the empty panel offers the ways to set one up ──
+  /** True when the selected model needs a key that is not set and no other provider has one either. */
+  function _needsSetup() {
+    if (_providerKeys[_providerOf(_currentModel)] !== false) { return false; }
+    return !Object.keys(_providerKeys).some(function (id) { return (id === 'openrouter' || id.indexOf('direct:') === 0) && _providerKeys[id]; });
+  }
+  function _renderSetup() {
+    var welcomeEl = document.getElementById('welcome');
+    var box = document.getElementById('wlc-setup-options');
+    if (!welcomeEl || !box) { return; }
+    var needed = _needsSetup();
+    welcomeEl.classList.toggle('needs-setup', needed);
+    if (!needed) { return; }
+    var tag = function (id) { return _installed[id] === true ? { text: 'found on this machine', ok: true } : _installed[id] === false ? { text: 'not installed' } : null; };
+    var options = [
+      { id: 'openrouter', name: 'OpenRouter', detail: 'One key for hundreds of models, including free ones. Get a key at openrouter.ai.', act: function () { vscode.postMessage({ type: 'setApiKey' }); } },
+      { id: 'claude-code', name: 'Claude Code', detail: 'Your Claude plan, no API key. Needs the claude command, signed in.', tag: tag('claude-code'), act: function () { _chooseProvider('claude-code'); _showModel(_currentModel); } },
+      { id: 'chatgpt', name: 'ChatGPT', detail: 'Your ChatGPT plan, no API key. Needs the codex command: run "codex login" once.', tag: tag('chatgpt'), act: function () { _chooseProvider('chatgpt'); _showModel(_currentModel); } },
+      { id: 'direct', name: 'Your own provider key', detail: 'Anthropic, OpenAI, Google, DeepSeek, Groq, Mistral, Grok or Cerebras.', act: function () { vscode.postMessage({ type: 'setApiKey', direct: true }); } },
+      { id: 'ollama', name: 'Ollama', detail: 'Models that run on this machine: private and free, no key.', act: function () { _chooseProvider('ollama'); _showModel(_currentModel); } },
+    ];
+    box.innerHTML = '';
+    options.forEach(function (o) {
+      if (o.id !== 'openrouter' && o.id !== 'direct' && !_groupsOf(o.id).length) { return; }
+      var b = document.createElement('button');
+      b.className = 'wlc-setup-opt';
+      b.dataset.setup = o.id;
+      b.innerHTML = '<span class="wlc-setup-name">' + esc(o.name) + (o.tag ? '<span class="wlc-setup-tag' + (o.tag.ok ? ' ok' : '') + '">' + esc(o.tag.text) + '</span>' : '') + '</span>' +
+        '<span class="wlc-setup-detail">' + esc(o.detail) + '</span>';
+      b.addEventListener('click', o.act);
+      box.appendChild(b);
+    });
   }
   (function () {
     var all = [].concat.apply([], MODEL_GROUPS.map(function (g) { return g.models; }));
@@ -655,8 +696,11 @@
       (function(el) {
         el.addEventListener('click', function() {
           var tid = el.dataset.tid;
+          var query = _searchInput.value.trim();
           _closeSearch();
-          vscode.postMessage({ type: 'switchThread', id: tid });
+          // Carry the search into the conversation: its matches are highlighted there
+          if (tid === _currentThreadIdForSearch) { _openFind(query); }
+          else { _pendingFind = query; vscode.postMessage({ type: 'switchThread', id: tid }); }
         });
         el.addEventListener('keydown', function(e) {
           if (e.key === 'Enter') { el.click(); }
@@ -672,6 +716,155 @@
       })(items[k]);
     }
   }
+
+  // ── Find in this conversation (Ctrl+F) ───────────────────────────────────
+  // Matches are painted with the CSS Custom Highlight API: the message DOM is not touched,
+  // so a reply that is still streaming keeps rendering normally while the bar is open.
+  var _findBar = document.getElementById('find-bar');
+  var _findInput = document.getElementById('find-input');
+  var _findCount = document.getElementById('find-count');
+  var _findBtn = document.getElementById('find-btn');
+  var _findRanges = [];
+  var _findIndex = -1;
+  var _findTimer = null;
+  var _findObserver = null;
+  var _pendingFind = null;   // a search to open once the thread being switched to has loaded
+  var _canHighlight = typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
+
+  /** Every match of the query in the conversation, as ranges. A match may span styled pieces of text (highlighted code). */
+  function _findCollect(query) {
+    var q = query.toLowerCase();
+    var ranges = [];
+    if (!q) { return ranges; }
+    var hideReasoning = document.body.classList.contains('hide-reasoning');
+    Array.prototype.forEach.call(msgs.children, function (block) {
+      if (block.id === 'welcome') { return; }
+      var nodes = []; var starts = []; var text = '';
+      var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      var node;
+      while ((node = walker.nextNode())) {
+        var parent = node.parentElement;
+        // Not the conversation: buttons (Copy, Edit…), and reasoning the user chose to hide
+        if (!parent || parent.closest('button:not(.step-summary), .msg-actions, textarea, select') || (hideReasoning && parent.closest('.think-wrap'))) { continue; }
+        if (!node.nodeValue) { continue; }
+        nodes.push(node); starts.push(text.length); text += node.nodeValue;
+      }
+      var lower = text.toLowerCase();
+      // Lower-casing can change a string's length for a few characters; offsets would then be off
+      if (lower.length !== text.length) { lower = text; q = query; }
+      var at = lower.indexOf(q); var n = 0;
+      while (at !== -1) {
+        var end = at + q.length;
+        while (n + 1 < nodes.length && starts[n + 1] <= at) { n++; }
+        var m = n;
+        while (m + 1 < nodes.length && starts[m + 1] < end) { m++; }
+        var range = document.createRange();
+        range.setStart(nodes[n], at - starts[n]);
+        range.setEnd(nodes[m], end - starts[m]);
+        ranges.push(range);
+        at = lower.indexOf(q, end);
+      }
+    });
+    return ranges;
+  }
+  function _findPaint() {
+    if (_canHighlight) {
+      CSS.highlights.delete('codico-find'); CSS.highlights.delete('codico-find-current');
+      if (_findRanges.length) {
+        var all = new Highlight(); _findRanges.forEach(function (r, i) { if (i !== _findIndex) { all.add(r); } });
+        CSS.highlights.set('codico-find', all);
+        if (_findIndex >= 0) { CSS.highlights.set('codico-find-current', new Highlight(_findRanges[_findIndex])); }
+      }
+    }
+    var has = _findRanges.length > 0;
+    _findCount.textContent = !_findInput.value ? '' : has ? (_findIndex + 1) + ' of ' + _findRanges.length : 'No results';
+    _findBar.classList.toggle('none', !!_findInput.value && !has);
+    document.getElementById('find-prev').disabled = !has;
+    document.getElementById('find-next').disabled = !has;
+  }
+  /** Opens whatever hides the match: a collapsed run of steps, a collapsed code block, a closed reasoning trace. */
+  function _findReveal(range) {
+    var el = range.startContainer.parentElement;
+    for (; el && el !== msgs; el = el.parentElement) {
+      if (el.tagName === 'DETAILS') { el.open = true; }
+      if (el.classList.contains('step-hidden')) {
+        var summary = el.dataset.run && msgs.querySelector('.step-summary[data-run="' + el.dataset.run + '"]');
+        if (summary) { summary.click(); }
+        el.classList.remove('step-hidden');
+      }
+      if (el.classList.contains('think-body') && !el.classList.contains('open')) {
+        var btn = el.parentElement && el.parentElement.querySelector('.think-btn');
+        if (btn) { btn.click(); }
+        el.classList.add('open');
+      }
+      if (el.classList.contains('code-wrap') && el.classList.contains('collapsed')) {
+        var toggle = el.querySelector('.code-toggle');
+        if (toggle) { toggle.click(); } else { el.classList.remove('collapsed'); }
+      }
+    }
+  }
+  function _findGo(index) {
+    if (!_findRanges.length) { _findIndex = -1; _findPaint(); return; }
+    _findIndex = (index + _findRanges.length) % _findRanges.length;
+    var range = _findRanges[_findIndex];
+    _findReveal(range);
+    _findPaint();
+    // Reading an earlier part: the view must not jump back to the newest text
+    _followStream = false;
+    var rect = range.getBoundingClientRect();
+    var box = msgs.getBoundingClientRect();
+    if (rect.top < box.top + 8 || rect.bottom > box.bottom - 8) {
+      msgs.scrollTo({ top: msgs.scrollTop + rect.top - box.top - box.height / 3, behavior: 'instant' });
+    }
+  }
+  /** Searches again; keeps the place when the conversation only grew (a reply streaming in). */
+  function _findRun(jump) {
+    var keep = _findIndex;
+    _findRanges = _findCollect(_findInput.value);
+    if (jump || keep < 0) { _findGo(0); }
+    else { _findIndex = Math.min(keep, _findRanges.length - 1); _findPaint(); }
+  }
+  function _openFind(query) {
+    _findBar.classList.add('open');
+    _findBtn.classList.add('active');
+    if (typeof query === 'string') { _findInput.value = query; }
+    _findInput.focus(); _findInput.select();
+    if (!_findObserver) {
+      _findObserver = new MutationObserver(function () {
+        clearTimeout(_findTimer);
+        _findTimer = setTimeout(function () { if (_findBar.classList.contains('open')) { _findRun(false); } }, 150);
+      });
+      _findObserver.observe(msgs, { childList: true, subtree: true, characterData: true });
+    }
+    _findIndex = -1;
+    _findRun(true);
+  }
+  function _closeFind() {
+    _findBar.classList.remove('open', 'none');
+    _findBtn.classList.remove('active');
+    if (_findObserver) { _findObserver.disconnect(); _findObserver = null; }
+    clearTimeout(_findTimer);
+    _findRanges = []; _findIndex = -1;
+    if (_canHighlight) { CSS.highlights.delete('codico-find'); CSS.highlights.delete('codico-find-current'); }
+    input.focus();
+  }
+  _findBtn.addEventListener('click', function () { if (_findBar.classList.contains('open')) { _closeFind(); } else { _openFind(); } });
+  document.getElementById('find-close').addEventListener('click', _closeFind);
+  document.getElementById('find-next').addEventListener('click', function () { _findGo(_findIndex + 1); });
+  document.getElementById('find-prev').addEventListener('click', function () { _findGo(_findIndex - 1); });
+  _findInput.addEventListener('input', function () { _findIndex = -1; _findRun(true); });
+  _findInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); _findGo(_findIndex + (e.shiftKey ? -1 : 1)); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeFind(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'f' || e.key === 'F')) {
+      e.preventDefault();
+      // The selected text is what one usually wants to find
+      var picked = String(window.getSelection() || '').trim();
+      _openFind(picked && picked.length <= 80 && picked.indexOf('\n') < 0 ? picked : undefined);
+    }
+  }, true);
 
   document.getElementById('diag-badge').addEventListener('click', function() {
     vscode.postMessage({ type: 'openProblems' });
@@ -3373,7 +3566,9 @@
         break;
       case 'providerKeys':
         _providerKeys = data.keys || {};
+        _installed = data.installed || {};
         _fillProviders(providerDrop.getValue() || 'openrouter');
+        _renderSetup();
         break;
       case 'selectionBadge':
         _updateSelectionBadge(data.label || '');
@@ -3519,6 +3714,9 @@
         }
         _placeRegenerate();
         scrollBottom(true);
+        // Opened from a search across threads: show its matches here. An open find bar searches the new thread.
+        if (_pendingFind !== null) { var findQuery = _pendingFind; _pendingFind = null; setTimeout(function () { _openFind(findQuery); }, 0); }
+        else if (_findBar.classList.contains('open')) { setTimeout(function () { _findIndex = -1; _findRun(true); }, 0); }
         break;
     }
   }

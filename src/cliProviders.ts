@@ -55,6 +55,12 @@ export function codexCommand(): CliCommand {
     return { command: 'codex' };
 }
 
+/** Whether each provider's command was found (a bare command name means it was not). */
+export function cliProvidersInstalled(): Record<string, boolean> {
+    const found = (command: string): boolean => path.isAbsolute(command) && fs.existsSync(command);
+    return { 'claude-code': found(claudeCodeCommand().command), chatgpt: found(codexCommand().command) };
+}
+
 export function streamCliModel(
     model: string,
     history: ChatMessage[],

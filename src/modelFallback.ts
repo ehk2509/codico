@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { CHATGPT_PREFIX } from './chatgptClient';
 import { CLAUDE_CODE_PREFIX } from './claudeCodeClient';
+import { cliProvidersInstalled } from './cliProviders';
 import { DIRECT_PROVIDERS, directSecretKey, getDirectProvider, parseDirectModelId, pickDirectFallback } from './directProviderClient';
 
 /**
@@ -48,6 +49,11 @@ export async function providerKeyStatus(context: vscode.ExtensionContext): Promi
         status[`direct:${provider.id}`] = !!await context.secrets.get(directSecretKey(provider.id));
     }
     return status;
+}
+
+/** What the panel needs to mark providers: which have a key, and which login-based ones are installed. */
+export async function providerStatusMessage(context: vscode.ExtensionContext): Promise<{ type: 'providerKeys'; keys: Record<string, boolean>; installed: Record<string, boolean> }> {
+    return { type: 'providerKeys', keys: await providerKeyStatus(context), installed: cliProvidersInstalled() };
 }
 
 /** After the user picks a model of a provider that has no key yet: ask for that key. */

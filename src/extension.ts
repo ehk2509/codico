@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { onboardOnFirstRun, openWalkthrough } from './firstRun';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentProvider } from './agentProvider';
@@ -82,6 +83,9 @@ export function activate(context: vscode.ExtensionContext): void {
         )
     );
 
+    // First run after install: the Get Started guide, once
+    void onboardOnFirstRun(context).catch(() => { /* the guide is optional */ });
+
     // ── Restore local index metadata, then optionally auto-index ────────────────
     void (async () => {
         if (!vscode.workspace.workspaceFolders?.length) { return; }
@@ -125,6 +129,7 @@ export function activate(context: vscode.ExtensionContext): void {
     registerCodeLens(context, (text) => provider.sendMessage(text));
 
     context.subscriptions.push(
+        vscode.commands.registerCommand('codico.gettingStarted', () => openWalkthrough()),
         vscode.commands.registerCommand('codico.openChat', () => {
             vscode.commands.executeCommand(
                 'workbench.view.extension.codico-container'

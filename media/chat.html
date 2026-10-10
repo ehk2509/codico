@@ -52,6 +52,7 @@
 <div id="thread-bar">
   <button id="sessions-toggle-btn" title="Toggle sessions list">&#9776;</button>
   <span id="sessions-active-name">New Chat</span>
+  <button id="find-btn" title="Find in this conversation (Ctrl+F)">&#8981;</button>
   <button id="search-threads-btn" title="Search across all threads">&#128269;</button>
   <button id="new-thread-btn" title="New session">+</button>
 </div>
@@ -68,14 +69,27 @@
   </div>
 </div>
 
+<div id="find-bar">
+  <input id="find-input" type="text" placeholder="Find in this conversation" autocomplete="off" spellcheck="false">
+  <span id="find-count"></span>
+  <button id="find-prev" title="Previous match (Shift+Enter)">&#8593;</button>
+  <button id="find-next" title="Next match (Enter)">&#8595;</button>
+  <button id="find-close" title="Close (Escape)">&#10005;</button>
+</div>
+
 <div id="messages">
   <div id="welcome">
     <div class="wlc-icon">&#129302;</div>
     <div class="wlc-title">Codico</div>
     <div class="wlc-sub">Autonomous coding assistant for your workspace</div>
+    <div id="wlc-setup">
+      <div class="wlc-setup-title">First, choose how Codico runs models</div>
+      <div class="wlc-setup-options" id="wlc-setup-options"></div>
+      <div class="wlc-setup-note">You can change this at any time with the provider menu at the top.</div>
+    </div>
     <div class="wlc-starters" id="wlc-starters"></div>
-    <div class="wlc-hint">
-      Works with OpenRouter, direct provider keys or local Ollama models. <em>Click &#9881; above to set an API key first.</em>
+    <div class="wlc-hint" id="wlc-hint">
+      Works with OpenRouter, your Claude or ChatGPT login, direct provider keys or local Ollama models. Switch with the provider menu at the top.
     </div>
   </div>
 </div>

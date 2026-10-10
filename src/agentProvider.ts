@@ -45,8 +45,10 @@ import { cutAtTurn, lastTurnId } from './threadEditing';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
-import { promptForMissingKey, providerKeyStatus, usableModel } from './modelFallback';
+import { promptForMissingKey, providerStatusMessage, usableModel } from './modelFallback';
 import { cliModelCompletion, isCliModel, streamCliModel } from './cliProviders';
+import { noteAttention } from './attentionNotifier';
+import { searchThreads } from './threadSearch';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -182,7 +184,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._webviewAssets = new WebviewAssets(_extensionUri);
         this._editProposals.register(_context);
         registerChangeDiffProvider(_context);
-        _context.secrets.onDidChange(() => providerKeyStatus(_context).then(keys => this._post({ type: 'providerKeys', keys })), undefined, _context.subscriptions);
+        _context.secrets.onDidChange(() => providerStatusMessage(_context).then(status => this._post(status)), undefined, _context.subscriptions);
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
@@ -244,7 +246,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         setTimeout(() => {
             this._post({ type: 'setModel', model: currentModel });
             this._post({ type: 'setEffort', effort: this._thinkingEffort });
-            void providerKeyStatus(this._context).then(keys => this._post({ type: 'providerKeys', keys }));
+            void providerStatusMessage(this._context).then(status => this._post(status));
             this._postUiSettings();
             this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
@@ -367,7 +369,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
                 break;
             case 'setApiKey':
-                await vscode.commands.executeCommand('codico.setApiKey');
+                await vscode.commands.executeCommand(msg.direct ? 'codico.setDirectApiKey' : 'codico.setApiKey');
                 break;
             case 'openSettings': {
                 const choice = await vscode.window.showQuickPick([
@@ -574,7 +576,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await this._handleThreadContextMenu(msg.id);
                 break;
             case 'searchThreads':
-                this._post({ type: 'threadSearchResults', query: msg.query, results: this._searchThreads(msg.query) });
+                this._post({ type: 'threadSearchResults', query: msg.query, results: searchThreads(this._store.get<ThreadEntry[]>(this._threadsIndexKey, []), id => this._store.get<DisplayMessage[]>(this._threadDisplayKey(id), []), msg.query) });
                 break;
             case 'resumeSession': {
                 if (!this._busy) {
@@ -2808,42 +2810,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._post({ type: 'threadContextMenuRequest', id, name: thread.name });
     }
 
-    private _searchThreads(query: string): Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> {
-        const q = query.trim().toLowerCase();
-        if (!q) { return []; }
-        const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> = [];
-
-        for (const thread of threads) {
-            const displayMsgs = this._store.get<DisplayMessage[]>(this._threadDisplayKey(thread.id), []);
-            const snippets: Array<{ role: string; snippet: string }> = [];
-
-            for (const msg of displayMsgs) {
-                const lower = msg.text.toLowerCase();
-                let pos = lower.indexOf(q);
-                while (pos !== -1 && snippets.length < 3) {
-                    const start = Math.max(0, pos - 60);
-                    const end = Math.min(msg.text.length, pos + q.length + 80);
-                    const prefix = start > 0 ? '\u2026' : '';
-                    const suffix = end < msg.text.length ? '\u2026' : '';
-                    snippets.push({ role: msg.role, snippet: prefix + msg.text.slice(start, end) + suffix });
-                    pos = lower.indexOf(q, pos + 1);
-                }
-                if (snippets.length >= 3) { break; }
-            }
-
-            // Also match on thread name
-            const nameMatch = thread.name.toLowerCase().includes(q);
-            if (snippets.length > 0 || nameMatch) {
-                results.push({ threadId: thread.id, threadName: thread.name, snippets });
-            }
-        }
-
-        return results;
-    }
-
     private _post(msg: ExtensionMessage): void {
         this._view?.webview.postMessage(msg);
+        noteAttention(msg, !!this._view?.visible);
         if (this._recording && (msg as { id?: unknown }).id === this._recording.msgId) {
             this._recordEvent(msg);
         }

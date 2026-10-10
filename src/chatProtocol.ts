@@ -50,7 +50,7 @@ export type WebviewMessage =
     | { type: 'sendMessage'; text: string; contentParts?: Array<{ type: string; [key: string]: unknown }>; injectActiveDiagnostics?: boolean }
     | { type: 'clearChat' }
     | { type: 'openProblems' }
-    | { type: 'setApiKey' }
+    | { type: 'setApiKey'; /** Ask for a direct provider's key rather than the OpenRouter key. */ direct?: boolean }
     | { type: 'openSettings' }
     | { type: 'closePanel' }
     | { type: 'abortStream' }
@@ -123,7 +123,7 @@ export type ExtensionMessage =
     | { type: 'error'; message: string }
     | { type: 'setModel'; model: string }
     /** Which providers have an API key, keyed as the header's provider menu names them. */
-    | { type: 'providerKeys'; keys: Record<string, boolean> }
+    | { type: 'providerKeys'; keys: Record<string, boolean>; /** Whether the command of each login-based provider (Claude Code, ChatGPT) was found on this machine. */ installed?: Record<string, boolean> }
     | { type: 'agentActive'; agent: string }
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }
     | { type: 'undoRedoState'; canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }

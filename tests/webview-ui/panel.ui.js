@@ -723,3 +723,122 @@ test('ChatGPT is a provider with its own models and needs no key', async () => {
   assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'chatgpt');
   assert.equal(await page.locator('#model-csel').getAttribute('data-value'), 'chatgpt/gpt-5.5');
 });
+
+test('Ctrl+F finds text in the conversation, across styled pieces, and steps through the matches', async () => {
+  const { page, send, errors } = await openPanel();
+  await send({ type: 'threadLoaded', id: 't', name: 'T', displayMessages: [
+    { role: 'user', text: 'where is the retry limit set?', id: 'u1' },
+    { role: 'assistant', text: 'The **retry** limit is in `config.ts`.\n\n```js\nconst retryLimit = 3;\n```\n\n' + 'Filler line.\n\n'.repeat(60) + 'Change the Retry value there.' },
+  ] });
+  await page.locator('#msg-input').focus();
+  await page.keyboard.press('Control+f');
+  assert.equal(await page.locator('#find-bar').evaluate(e => getComputedStyle(e).display), 'flex');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'find-input');
+  await page.keyboard.type('retry');
+  await page.waitForTimeout(80);
+  // The question, the bold word, the code and the last line: case does not matter
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 4');
+  const painted = () => page.evaluate(() => ({ all: CSS.highlights.get('codico-find').size, current: [...CSS.highlights.get('codico-find-current')][0].toString() }));
+  assert.deepEqual(await painted(), { all: 3, current: 'retry' });
+  // A match inside syntax-highlighted code, which is split into several elements
+  await page.locator('#find-input').fill('const retryLimit = 3');
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 1');
+  assert.equal((await painted()).current, 'const retryLimit = 3');
+  // Enter goes on, Shift+Enter back, wrapping around; the match is scrolled into view
+  await page.locator('#find-input').fill('retry');
+  await page.waitForTimeout(80);
+  await page.keyboard.press('Shift+Enter');
+  assert.equal(await page.locator('#find-count').textContent(), '4 of 4');
+  const inView = await page.evaluate(() => { const r = [...CSS.highlights.get('codico-find-current')][0].getBoundingClientRect(); const b = document.getElementById('messages').getBoundingClientRect(); return r.top >= b.top && r.bottom <= b.bottom; });
+  assert.ok(inView, 'the last match is in view');
+  await page.keyboard.press('Enter');
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 4');
+  // No match
+  await page.locator('#find-input').fill('zzz-not-here');
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('#find-count').textContent(), 'No results');
+  assert.equal(await page.locator('#find-next').isDisabled(), true);
+  // Buttons are not searched: "Copy" on the code block is not part of the conversation
+  await page.locator('#find-input').fill('copy');
+  await page.waitForTimeout(80);
+  assert.equal(await page.locator('#find-count').textContent(), 'No results');
+  // Escape closes the bar, clears the highlights and does not stop anything else
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#find-bar').evaluate(e => getComputedStyle(e).display), 'none');
+  assert.equal(await page.evaluate(() => CSS.highlights.has('codico-find') || CSS.highlights.has('codico-find-current')), false);
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'msg-input');
+  assert.deepEqual(errors, []);
+});
+
+test('find keeps up with a reply that is streaming, and opens what hides a match', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'startMessage', id: 'r1' }, { type: 'appendThinking', id: 'r1', text: 'I should look for the needle in the parser.' }, { type: 'appendContent', id: 'r1', text: 'Looking for the needle.' });
+  await page.locator('#find-btn').click();
+  await page.keyboard.type('needle');
+  await page.waitForTimeout(80);
+  const before = Number((await page.locator('#find-count').textContent()).split(' of ')[1]);
+  assert.ok(before >= 1, 'found in the reply so far');
+  // More text arrives: the count follows without typing again, and the place is kept
+  await send({ type: 'appendContent', id: 'r1', text: ' Found another needle here.' });
+  await page.waitForTimeout(350);
+  const after = (await page.locator('#find-count').textContent()).split(' of ').map(Number);
+  assert.equal(after[1], before + 1);
+  assert.equal(after[0], 1);
+  await send({ type: 'endMessage', id: 'r1' });
+  // A match inside the closed reasoning trace: going to it opens the trace
+  const total = Number((await page.locator('#find-count').textContent()).split(' of ')[1]);
+  let opened = false;
+  for (let i = 0; i < total && !opened; i++) {
+    await page.locator('#find-next').click();
+    opened = await page.evaluate(() => { const r = [...CSS.highlights.get('codico-find-current')][0]; const body = r.startContainer.parentElement.closest('.think-body'); return !!body && getComputedStyle(body).display !== 'none'; });
+  }
+  assert.ok(opened, 'the reasoning trace opened for its match');
+});
+
+test('a result of the search across threads opens that thread with its matches highlighted', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'threadList', threads: [{ id: 'cur', name: 'Current', updatedAt: Date.now(), preview: '', messageCount: 1, active: true }, { id: 'old', name: 'Old one', updatedAt: Date.now() - 1e6, preview: '', messageCount: 2, active: false }] });
+  await page.locator('#search-threads-btn').click();
+  await page.locator('#thread-search-input').fill('websocket');
+  await send({ type: 'threadSearchResults', query: 'websocket', results: [{ threadId: 'old', threadName: 'Old one', snippets: [{ role: 'assistant', snippet: 'the websocket closes early' }] }] });
+  await page.locator('.ts-result').click();
+  assert.deepEqual((await posted('switchThread')).pop(), { type: 'switchThread', id: 'old' });
+  await send({ type: 'threadLoaded', id: 'old', name: 'Old one', displayMessages: [{ role: 'user', text: 'why does it drop?', id: 'u' }, { role: 'assistant', text: 'Because the WebSocket closes early. Reopen the websocket.' }] });
+  await page.waitForTimeout(120);
+  assert.equal(await page.locator('#find-input').inputValue(), 'websocket');
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 2');
+});
+
+test('first run: with no way to reach a model, the empty panel offers the ways to set one up', async () => {
+  const { page, send, posted } = await openPanel();
+  const setupShown = () => page.locator('#wlc-setup').evaluate(e => getComputedStyle(e).display !== 'none');
+  // Before the extension says which keys exist, nothing is assumed
+  assert.equal(await setupShown(), false);
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'direct:deepseek': false, 'direct:openai': false, ollama: true, 'claude-code': true, chatgpt: true }, installed: { 'claude-code': true, chatgpt: false } });
+  assert.equal(await setupShown(), true);
+  assert.equal(await page.locator('#wlc-starters').evaluate(e => getComputedStyle(e).display), 'none', 'starters wait until a provider works');
+  assert.deepEqual(await page.locator('.wlc-setup-opt').evaluateAll(els => els.map(e => e.dataset.setup)), ['openrouter', 'claude-code', 'chatgpt', 'direct', 'ollama']);
+  assert.equal(await page.locator('[data-setup="claude-code"] .wlc-setup-tag').textContent(), 'found on this machine');
+  assert.equal(await page.locator('[data-setup="chatgpt"] .wlc-setup-tag').textContent(), 'not installed');
+  // Keys are asked for by the extension
+  await page.locator('[data-setup="openrouter"]').click();
+  assert.deepEqual((await posted('setApiKey')).pop(), { type: 'setApiKey' });
+  await page.locator('[data-setup="direct"]').click();
+  assert.deepEqual((await posted('setApiKey')).pop(), { type: 'setApiKey', direct: true });
+  // A login-based provider is selected at once, and the setup goes away
+  await page.locator('[data-setup="claude-code"]').click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'claude-code/sonnet' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'claude-code');
+  assert.equal(await setupShown(), false);
+  assert.notEqual(await page.locator('#wlc-starters').evaluate(e => getComputedStyle(e).display), 'none');
+});
+
+test('no setup card for someone who has a key, even when the selected provider has none', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'direct:deepseek': true, ollama: true, 'claude-code': true, chatgpt: true } });
+  assert.equal(await page.locator('#wlc-setup').evaluate(e => getComputedStyle(e).display), 'none');
+  await send({ type: 'providerKeys', keys: { openrouter: true, 'direct:deepseek': false, ollama: true, 'claude-code': true, chatgpt: true } });
+  assert.equal(await page.locator('#wlc-setup').evaluate(e => getComputedStyle(e).display), 'none');
+});
+

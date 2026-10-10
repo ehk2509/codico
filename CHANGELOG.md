@@ -2,6 +2,14 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Find in a conversation: `Ctrl+F` / `Cmd+F` in the chat (or the ⌕ button) opens a find bar. Matches are highlighted in messages, replies, code and reasoning, with a count and `Enter` / `Shift+Enter` to step through them; a match inside a collapsed code block, a folded run of steps or a closed reasoning trace opens it. It keeps up with a reply that is still streaming.
+- A result of the search across threads now opens that thread with its matches highlighted, instead of leaving you to look for them.
+- Notifications when you are not looking at the chat: a reply finished, or Codico is waiting for your approval (a file change, a command, a "continue?" pause). A desktop notification when VS Code is in the background, a notification inside VS Code with "Show Codico" when only the chat is hidden. `codico.notifications: "off"` disables it.
+- First-run onboarding: a "Get started with Codico" guide opens once after install (and from the "Codico: Get Started" command), and until a provider is set up the empty chat offers the ways to do it — an OpenRouter key, your Claude Code or ChatGPT login (marked "found on this machine" or "not installed"), your own provider key, or local Ollama.
+
 ## 0.3.9 - 2026-10-10
 
 ### Added

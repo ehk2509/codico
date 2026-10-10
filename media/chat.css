@@ -203,19 +203,62 @@ body{
   transition:color .12s, background .12s;
 }
 #new-thread-btn:hover { color:var(--vscode-foreground); background:var(--vscode-list-hoverBackground); }
-#search-threads-btn {
+#find-btn, #search-threads-btn {
   flex-shrink:0; border:none; background:transparent; font-family:inherit;
   color:var(--vscode-descriptionForeground); cursor:pointer;
   font-size:13px; padding:0 8px; line-height:1;
   border-left:1px solid var(--vscode-panel-border);
   transition:color .12s, background .12s;
 }
-#search-threads-btn:hover { color:var(--vscode-foreground); background:var(--vscode-list-hoverBackground); }
-#search-threads-btn.active { color:var(--vscode-focusBorder,#a78bfa); }
+#find-btn:hover, #search-threads-btn:hover { color:var(--vscode-foreground); background:var(--vscode-list-hoverBackground); }
+#find-btn.active, #search-threads-btn.active { color:var(--vscode-focusBorder,#a78bfa); }
 #messages { flex:1 1 0; min-height:0; }
 #chat-body {
   position:relative; display:flex; flex-direction:column; flex:1 1 0; min-height:0; overflow:hidden;
 }
+/* ── Find in this conversation ── */
+#find-bar{
+  display:none;align-items:center;gap:4px;flex-shrink:0;
+  padding:4px 8px;border-bottom:1px solid var(--vscode-panel-border);
+  background:var(--vscode-editorWidget-background,var(--vscode-sideBar-background));
+}
+#find-bar.open{display:flex}
+#find-input{
+  flex:1 1 auto;min-width:0;font:inherit;font-size:12px;padding:3px 6px;border-radius:3px;
+  color:var(--vscode-input-foreground);background:var(--vscode-input-background);
+  border:1px solid var(--vscode-input-border,transparent);outline:none;
+}
+#find-input:focus{border-color:var(--vscode-focusBorder)}
+#find-bar.none #find-input{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
+#find-count{font-size:10px;color:var(--vscode-descriptionForeground);white-space:nowrap;min-width:52px;text-align:center}
+#find-bar button{
+  flex-shrink:0;border:none;background:transparent;color:var(--vscode-descriptionForeground);
+  cursor:pointer;font-size:12px;padding:2px 6px;border-radius:3px;font-family:inherit;
+}
+#find-bar button:hover{color:var(--vscode-foreground);background:var(--vscode-list-hoverBackground)}
+#find-bar button:disabled{opacity:.4;cursor:default}
+::highlight(codico-find){background-color:var(--vscode-editor-findMatchHighlightBackground,rgba(234,179,8,.35))}
+::highlight(codico-find-current){background-color:var(--vscode-editor-findMatchBackground,#f59e0b);color:var(--vscode-editor-background,#000)}
+
+/* ── First run: choose a provider ── */
+#wlc-setup{display:none;flex-direction:column;gap:8px;width:100%;max-width:340px;margin-top:6px;text-align:left}
+#welcome.needs-setup #wlc-setup{display:flex}
+#welcome.needs-setup #wlc-starters, #welcome.needs-setup #wlc-hint{display:none}
+.wlc-setup-title{font-size:12px;font-weight:600;color:var(--vscode-foreground);text-align:center}
+.wlc-setup-options{display:flex;flex-direction:column;gap:6px}
+.wlc-setup-opt{
+  display:flex;flex-direction:column;gap:2px;text-align:left;cursor:pointer;font-family:inherit;
+  padding:7px 10px;border-radius:6px;color:var(--vscode-foreground);
+  background:var(--vscode-editorWidget-background,transparent);
+  border:1px solid var(--vscode-panel-border);
+}
+.wlc-setup-opt:hover{border-color:var(--vscode-focusBorder);background:var(--vscode-list-hoverBackground)}
+.wlc-setup-name{font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px}
+.wlc-setup-detail{font-size:10.5px;line-height:1.45;color:var(--vscode-descriptionForeground)}
+.wlc-setup-tag{font-size:9px;font-weight:500;padding:1px 6px;border-radius:8px;border:1px solid var(--vscode-panel-border);color:var(--vscode-descriptionForeground)}
+.wlc-setup-tag.ok{border-color:var(--vscode-testing-iconPassed,#22c55e);color:var(--vscode-testing-iconPassed,#22c55e)}
+.wlc-setup-note{font-size:10px;text-align:center;opacity:.8}
+
 /* ── Thread search overlay ── */
 #thread-search-overlay {
   display:none; flex-direction:column;
