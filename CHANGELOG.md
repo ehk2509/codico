@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.8 - 2026-10-10
 
 ### Fixed
 - The task list's progress bar never filled (it was an inline element, which ignores width).
