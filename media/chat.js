@@ -2389,6 +2389,8 @@
           hideWelcome();
           appendUserMsg('\u2705 Plan approved \u2014 executing\u2026', []);
           setStreaming(true);
+          // Planning is over: the Agent tab shows what is happening now, and what the next message will do
+          if (_mode !== 'agent') { _setMode('agent'); }
           vscode.postMessage({ type: 'approvePlan', executionPrompt: executionPrompt });
         });
 

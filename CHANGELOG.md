@@ -14,8 +14,11 @@ All notable changes to Codico will be documented in this file.
 - MCP catalog: **🔌 MCP** in the chat header lists known servers (Playwright, Chrome DevTools, Context7, Memory, Sequential Thinking), each pinned to a version and checked to connect with Codico. A card shows the exact command; **Add…** opens a VS Code dialog with that command, its requirements and tool count, and adds the server to this project (`.mcp.json`) or to all projects (user settings) only when you choose. **Remove** takes it out. The panel can only name a catalog entry: the command always comes from the bundled catalog.
 - Project skills and agents: a project can define its own, as Markdown files in a `.codico` folder committed with the code. A skill (`.codico/skills/<name>/SKILL.md`, the same layout as Claude Code's) holds the steps for one kind of task: Codico is told its name, description and path and reads it when a task matches, or you run it with `/name`. An agent (`.codico/agents/<name>.md`) is called with `@name` and puts its instructions in charge of the turn. Both appear in the `/` and `@` menus marked "project", "Codico: New Skill" and "Codico: New Agent" create a starting file, and file changes are picked up at once. Files with an unusable name, no instructions or more than 20,000 characters are skipped with a message; nothing is loaded in an untrusted folder.
 
+### Changed
+- Approving a plan switches the mode tab from Plan to Agent: the plan is being executed, and your next message is an ordinary agent message instead of a new plan.
+
 ### Removed
-- The pause that asked "Continue?" every 50 steps, and its setting `codico.checkpointSteps`. A long task now runs until it is done, you press Stop, or it reaches `codico.maxIterations`. The optional token budget (`codico.taskTokenBudget`) still pauses when you set one.
+- The pause that asked "Continue?" every 50 steps, and its setting `codico.checkpointSteps`. A long task now runs until it is done or you press Stop; `codico.maxIterations` limits a run only if you set it (its default is no limit). The optional token budget (`codico.taskTokenBudget`) still pauses when you set one.
 
 ### Fixed
 - Copy on a code block did nothing while the reply was still streaming, or in a reply loaded from a thread saved by an older version: the button was only wired up when a reply finished. Clicks are now handled in one place.

@@ -1152,3 +1152,36 @@ test('a queued message can be put back in the box to change it, and typing meanw
   assert.equal(await page.locator('#msg-input').inputValue(), 'a later thought');
 });
 
+test('approving a plan moves the mode to Agent', async () => {
+  const { page, send, posted } = await openPanel();
+  const active = () => page.locator('.mode-btn.mode-active').getAttribute('id');
+  await page.locator('#mode-plan-btn').click();
+  assert.equal(await active(), 'mode-plan-btn');
+  await page.fill('#msg-input', 'add a settings page');
+  await page.click('#send-btn');
+  const plan = (await posted('generatePlan')).pop() || (await posted()).filter(m => /plan/i.test(m.type)).pop();
+  assert.ok(plan, 'the plan was requested');
+  const id = 'pl1';
+  await send({ type: 'startMessage', id, planGoal: 'add a settings page' }, { type: 'appendContent', id, text: '## Plan\n\n1. Create the page\n2. Wire the route\n' }, { type: 'endMessage', id });
+  assert.equal(await active(), 'mode-plan-btn', 'still planning until the plan is approved');
+  await page.locator('#msg-' + id + ' .plan-approve-btn').click();
+  assert.equal(await active(), 'mode-agent-btn');
+  // The extension is told to leave read-only mode before it is told to execute
+  const order = (await posted()).map(m => m.type).filter(t => t === 'toggleChatMode' || t === 'approvePlan');
+  assert.deepEqual(order.slice(-2), ['toggleChatMode', 'approvePlan']);
+  assert.deepEqual((await posted('toggleChatMode')).pop(), { type: 'toggleChatMode', chatMode: false });
+  // The next message is an ordinary agent message, not another plan
+  await send({ type: 'endMessage', id: 'exec' });
+  await page.fill('#msg-input', 'also add a test');
+  await page.click('#send-btn');
+  assert.equal((await posted('sendMessage')).pop().text, 'also add a test');
+});
+
+test('cancelling a plan leaves the mode on Plan', async () => {
+  const { page, send } = await openPanel();
+  await page.locator('#mode-plan-btn').click();
+  await send({ type: 'startMessage', id: 'pl2', planGoal: 'x' }, { type: 'appendContent', id: 'pl2', text: '## Plan\n\n1. One\n' }, { type: 'endMessage', id: 'pl2' });
+  await page.locator('#msg-pl2 .plan-cancel-btn').click();
+  assert.equal(await page.locator('.mode-btn.mode-active').getAttribute('id'), 'mode-plan-btn');
+});
+
