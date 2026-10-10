@@ -376,5 +376,15 @@ async function run() {
     return { ok: !error && reqs.length === 2 && settings && replayed && readResult,
       why: `${reqs.length} req (no 400, no fallback); model and thinking settings sent: ${settings}; reasoning sent back with the tool result: ${replayed}; tool result delivered: ${readResult}` };
   });
+
+  // No OpenRouter key, a DeepSeek key, and the default (OpenRouter) model selected: use the DeepSeek key
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: '', model: 'deepseek/deepseek-v4-flash', maxIterations: 12, directApiKeys: { deepseek: 'ds-test-key' } });
+  await scenario('ds_fallback', ({ reqs, error }) => {
+    const viaDeepSeek = reqs.length === 1 && reqs[0].deepseek && reqs[0].model === 'deepseek-flash';
+    const setting = vscode.workspace.getConfiguration('codico').get('model');
+    return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
+      why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
+  });
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
 }
 module.exports = { run };

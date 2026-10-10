@@ -81,6 +81,8 @@ const SCRIPTS = (port) => ({
   big_read: [tool('read_file', 'filepath: fixtures/big.md'), 'Read it.'],
   // Direct DeepSeek with native tools: the reasoning of each reply must come back with the next request
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
+  // Only a DeepSeek key is set, but the selected model is an OpenRouter one
+  ds_fallback: ['Answered through DeepSeek.'],
   // Stopped during setup: must never reach the model
   stop_setup: ['This request should never have been sent.'],
   // A plan queued behind another plan must still be read-only

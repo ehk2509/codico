@@ -9,6 +9,7 @@ All notable changes to Codico will be documented in this file.
 
 ### Fixed
 - Direct DeepSeek with tools: DeepSeek requires each reply's reasoning to be sent back with later requests and answers 400 otherwise, so the agent could fail after its first tool call. The reasoning is now stored with the reply and sent back.
+- With only a direct provider key set (for example DeepSeek) and no OpenRouter key, Codico still asked for an OpenRouter key: the default model is an OpenRouter one, and saving a direct key did not select one of its models. Now, when the selected model needs an OpenRouter key that is not set, Codico switches to a provider you have a key for (the same vendor when possible) and says so; saving a direct key switches straight away or offers to. The header's model selector follows the setting.
 - Direct OpenAI-compatible providers now report cached prompt tokens (`prompt_tokens_details.cached_tokens`).
 
 ## 0.3.8 - 2026-10-10

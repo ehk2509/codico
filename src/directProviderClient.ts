@@ -104,6 +104,22 @@ export function getDirectProvider(providerId: string): DirectProvider | undefine
     return DIRECT_PROVIDERS.find(p => p.id === providerId);
 }
 
+/** OpenRouter vendor prefix (`deepseek/…`) → the direct provider that serves the same vendor's models. */
+const VENDOR_PROVIDER: Record<string, string> = {
+    deepseek: 'deepseek', anthropic: 'anthropic', openai: 'openai', google: 'google', 'x-ai': 'grok', mistralai: 'mistral',
+};
+
+/**
+ * A direct model to use in place of an OpenRouter model when there is no OpenRouter key:
+ * the same vendor's provider if its key is set, otherwise the first provider with a key.
+ */
+export function pickDirectFallback(model: string, providersWithKey: readonly string[]): string | undefined {
+    const vendor = VENDOR_PROVIDER[model.split('/')[0]];
+    const id = vendor && providersWithKey.includes(vendor) ? vendor : providersWithKey[0];
+    const provider = id ? getDirectProvider(id) : undefined;
+    return provider ? `direct:${provider.id}/${provider.models[0].id}` : undefined;
+}
+
 /** VS Code secrets key name for a given direct provider. */
 export function directSecretKey(providerId: string): string {
     return `directApiKey.${providerId}`;

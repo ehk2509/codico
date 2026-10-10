@@ -97,3 +97,15 @@ test('replies from another provider earlier in the thread still get the field', 
   const sent = toOpenAIMessages(history, true, 'reasoning_content');
   assert.deepEqual(sent.filter(m => m.role === 'assistant').map(m => m.reasoning_content), ['', '']);
 });
+
+test('without an OpenRouter key, an OpenRouter model falls back to a direct provider that has a key', () => {
+  const { pickDirectFallback } = require('../out/directProviderClient.js');
+  // The default model is an OpenRouter id; only a DeepSeek key is set
+  assert.equal(pickDirectFallback('deepseek/deepseek-v4-flash', ['deepseek']), 'direct:deepseek/deepseek-flash');
+  // The same vendor's provider is preferred over the first one with a key
+  assert.equal(pickDirectFallback('deepseek/deepseek-v4-flash', ['anthropic', 'deepseek']), 'direct:deepseek/deepseek-flash');
+  assert.equal(pickDirectFallback('anthropic/claude-sonnet-5.5', ['openai', 'anthropic']), 'direct:anthropic/claude-opus-4-5');
+  // No matching vendor: the first provider with a key
+  assert.equal(pickDirectFallback('qwen/qwen3-coder', ['groq']), 'direct:groq/llama-3.3-70b-versatile');
+  assert.equal(pickDirectFallback('deepseek/deepseek-v4-flash', []), undefined, 'no key at all: nothing to fall back to');
+});

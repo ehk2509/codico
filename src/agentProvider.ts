@@ -45,6 +45,7 @@ import { cutAtTurn, lastTurnId } from './threadEditing';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider } from './chatFiles';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
+import { usableModel } from './modelFallback';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -197,6 +198,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
             }
             if (e.affectsConfiguration('codico.chatDensity') || e.affectsConfiguration('codico.showReasoning')) { this._postUiSettings(); }
+            // The header selector follows the setting (changed in Settings, or by the no-OpenRouter-key fallback)
+            if (e.affectsConfiguration('codico.model')) { this._post({ type: 'setModel', model: vscode.workspace.getConfiguration('codico').get<string>('model', 'deepseek/deepseek-v4-flash') }); }
         }, undefined, _context.subscriptions);
     }
 
@@ -581,7 +584,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._busy = true;
                 try {
                     const compactCfg = vscode.workspace.getConfiguration('codico');
-                    const compactModel = compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash');
+                    const compactModel = await usableModel(this._context, compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash'));
                     const isCompactOllama = compactModel.startsWith('ollama/');
                     const isCompactDirect = compactModel.startsWith('direct:');
                     const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
@@ -602,7 +605,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     } else {
                         compactApiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
                         if (!compactApiKey) {
-                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                            this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon to add an OpenRouter key or a direct provider key (Anthropic, OpenAI, DeepSeek…).' });
                             break;
                         }
                     }
@@ -872,7 +875,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         const config = vscode.workspace.getConfiguration('codico');
-        const model = config.get<string>('model', 'deepseek/deepseek-v4-flash');
+        // Without an OpenRouter key but with a direct provider key, that provider's model is used
+        const model = await usableModel(this._context, config.get<string>('model', 'deepseek/deepseek-v4-flash'));
         const isOllama = model.startsWith('ollama/');
         const isDirect = model.startsWith('direct:');
         const ollamaModel = model.slice('ollama/'.length);
@@ -897,7 +901,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         } else {
             apiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
             if (!apiKey) {
-                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon or run "Codico: Set OpenRouter API Key".' });
+                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon to add an OpenRouter key or a direct provider key (Anthropic, OpenAI, DeepSeek…).' });
                 return;
             }
             // Keep the index aware of the current API key for embedding calls
