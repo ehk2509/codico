@@ -613,3 +613,20 @@ test('the task list of an approved plan: numbered steps with title and details, 
   assert.ok(fill[0] > 10, 'the progress bar fills: ' + JSON.stringify(fill));
   assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });
+
+test('Stop stays visible when background processes and token counts crowd the status bar', async () => {
+  const { page, send } = await openPanel();
+  for (const width of [300, 420]) {
+    await page.setViewportSize({ width, height: 700 });
+    await send({ type: 'startMessage', id: 'b' + width },
+      { type: 'tokenUsage', promptTokens: 31000, completionTokens: 281, totalTokens: 31281, cachedTokens: 10000, taskTokens: 148000, taskCostUsd: 0.005 },
+      { type: 'backgroundProcesses', processes: [{ command: 'sleep 30', startedAt: Date.now() }] });
+    const stop = await page.locator('#stop-btn').evaluate(e => { const r = e.getBoundingClientRect(); return { left: r.left, right: r.right, visible: r.width > 20 }; });
+    const panelRight = await page.locator('#status').evaluate(e => e.getBoundingClientRect().right);
+    assert.ok(stop.visible && stop.right <= panelRight && stop.left >= 0, `Stop fully visible at ${width}px: ${JSON.stringify(stop)} panel right ${panelRight}`);
+    const words = await page.locator('#bg-btn .bg-words').isVisible();
+    assert.equal(words, width >= 400, `background chip ${words ? 'with' : 'without'} words at ${width}px`);
+    assert.match(await page.locator('#bg-btn').getAttribute('title'), /1 background process — click to stop:\nsleep 30/);
+    await send({ type: 'endMessage', id: 'b' + width });
+  }
+});

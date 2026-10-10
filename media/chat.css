@@ -402,7 +402,14 @@ body{
   color:var(--vscode-descriptionForeground);
   border-top:1px solid var(--vscode-panel-border);
   display:flex;align-items:center;gap:5px;flex-shrink:0;min-height:22px;
+  min-width:0;container-type:inline-size;
 }
+/* Everything but Stop gives way when the panel is narrow: text shortens with "…" */
+#s-text,#s-step,#s-tokens{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
+#s-tokens{margin-left:auto}
+#status #stop-btn{margin-left:auto}
+#s-tokens + #stop-btn{margin-left:4px}
+@container (max-width: 380px){ #bg-btn .bg-words{display:none} }
 .s-dot{width:5px;height:5px;border-radius:50%;background:var(--vscode-testing-iconPassed,#22c55e);flex-shrink:0}
 .s-dot.thinking{background:var(--vscode-charts-purple,#a78bfa);animation:pulse 1s ease-in-out infinite}
 .s-dot.writing{background:var(--vscode-charts-yellow,#facc15);animation:pulse 1s ease-in-out infinite}
@@ -704,7 +711,8 @@ body{
   background:transparent;color:inherit;
   border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));
   border-radius:4px;padding:0 6px;
-  cursor:pointer;font-size:10px;font-family:inherit;white-space:nowrap;flex-shrink:0;
+  cursor:pointer;font-size:10px;font-family:inherit;white-space:nowrap;
+  flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;
 }
 #bg-btn:hover{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
 .checkpoint-stop-btn{

@@ -7,6 +7,7 @@ All notable changes to Codico will be documented in this file.
 ### Fixed
 - The task list's progress bar never filled (it was an inline element, which ignores width).
 - "↓ Jump to latest" could sit over the Attach toolbar; it now stays inside the message area.
+- The Stop button was pushed out of view when the background-process chip appeared in a narrow panel. The status bar now shortens its text with "…", the chip becomes "⚙ 1 ✕" when space is short (full text on hover), and Stop stays visible.
 - Compaction could replace the conversation with a broken "summary": some models (seen with DeepSeek V4 Flash) continued the transcript in its own format instead of summarising it, Codico accepted any non-empty answer, and the agent forgot the work it had done (then re-read files to recover). The transcript is now delimited with the instruction repeated after it; an answer that copies the transcript or is far too short is rejected and retried once, and otherwise the history is kept unchanged. A failed automatic compaction is not retried on every step, and the summary has more room (4,000 tokens, low reasoning effort on OpenRouter).
 
 ### Changed

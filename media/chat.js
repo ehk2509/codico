@@ -3299,8 +3299,9 @@
         var procs = data.processes || [];
         bgBtn.disabled = false;
         bgBtn.style.display = procs.length ? 'inline-block' : 'none';
-        bgBtn.textContent = '\u2699 ' + procs.length + ' background ' + (procs.length === 1 ? 'process' : 'processes') + ' \u2715';
-        bgBtn.title = 'Click to stop:\n' + procs.map(function(p) { return p.command.slice(0, 120); }).join('\n');
+        // The words hide in a narrow panel ("⚙ 1 ✕"): the Stop button must stay visible beside it
+        bgBtn.innerHTML = '\u2699 ' + procs.length + '<span class="bg-words"> background ' + (procs.length === 1 ? 'process' : 'processes') + '</span> \u2715';
+        bgBtn.title = procs.length + ' background ' + (procs.length === 1 ? 'process' : 'processes') + ' \u2014 click to stop:\n' + procs.map(function(p) { return p.command.slice(0, 120); }).join('\n');
         break;
       }
       case 'contextSnippet':
