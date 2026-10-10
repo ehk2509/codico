@@ -2,6 +2,15 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- DeepSeek adapter for the direct provider (your own DeepSeek key). The models are now DeepSeek V4.1 Flash (`deepseek-flash`) and DeepSeek V4 Pro (`deepseek-v4-pro`); `deepseek-chat` and `deepseek-reasoner` saved by older versions keep working. Thinking is shown in the reasoning panel and follows the effort selector (Low → low, Medium → high, High → max), and the token counter shows DeepSeek's cache hits.
+
+### Fixed
+- Direct DeepSeek with tools: DeepSeek requires each reply's reasoning to be sent back with later requests and answers 400 otherwise, so the agent could fail after its first tool call. The reasoning is now stored with the reply and sent back.
+- Direct OpenAI-compatible providers now report cached prompt tokens (`prompt_tokens_details.cached_tokens`).
+
 ## 0.3.8 - 2026-10-10
 
 ### Fixed

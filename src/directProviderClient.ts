@@ -1,5 +1,7 @@
+import * as http from 'http';
 import * as https from 'https';
-import { ChatMessage, MessageContentPart, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
+import { ChatMessage, MessageContentPart, OpenRouterEndpoint, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
+import { deepseekAdapter, OpenAICompatAdapter } from './deepseekAdapter';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toAnthropicMessages, toGeminiMessages, toOpenAIMessages } from './providerConversation';
@@ -17,6 +19,8 @@ export interface DirectProvider {
     apiBase: string;
     format: 'openai' | 'anthropic' | 'google';
     models: DirectProviderModel[];
+    /** Where this provider's OpenAI-compatible API departs from the generic protocol. */
+    adapter?: OpenAICompatAdapter;
 }
 
 export const DIRECT_PROVIDERS: readonly DirectProvider[] = [
@@ -55,10 +59,10 @@ export const DIRECT_PROVIDERS: readonly DirectProvider[] = [
         ],
     },
     {
-        id: 'deepseek', name: 'DeepSeek', apiBase: 'api.deepseek.com', format: 'openai',
+        id: 'deepseek', name: 'DeepSeek', apiBase: 'api.deepseek.com', format: 'openai', adapter: deepseekAdapter,
         models: [
-            { id: 'deepseek-chat', displayName: 'DeepSeek V3' },
-            { id: 'deepseek-reasoner', displayName: 'DeepSeek R1' },
+            { id: 'deepseek-flash', displayName: 'DeepSeek V4.1 Flash' },
+            { id: 'deepseek-v4-pro', displayName: 'DeepSeek V4 Pro' },
         ],
     },
     {
@@ -142,15 +146,20 @@ function _streamOpenAICompat(
     system: string,
     signal: AbortSignal | undefined,
     push: (v: StreamChunk | null | Error) => void,
-    nativeTools: NativeToolDefinition[]
+    nativeTools: NativeToolDefinition[],
+    adapter?: OpenAICompatAdapter,
+    effort: 'high' | 'medium' | 'low' = 'medium',
+    endpoint?: OpenRouterEndpoint
 ): void {
-    const messages = toOpenAIMessages([{ role: 'system', content: system }, ...history], nativeTools.length > 0);
+    const replayField = adapter?.replayReasoning ? adapter.reasoningField : undefined;
+    const messages = toOpenAIMessages([{ role: 'system', content: system }, ...history], nativeTools.length > 0, replayField);
     const body = JSON.stringify({
-        model: modelId,
+        model: adapter?.modelId(modelId) ?? modelId,
         messages,
         stream: true,
-        max_tokens: 8192,
+        max_tokens: adapter?.maxTokens ?? 8192,
         stream_options: { include_usage: true },
+        ...adapter?.body(modelId, effort),
         ...(nativeTools.length > 0 ? {
             tools: nativeTools.map(tool => ({
                 type: 'function',
@@ -164,8 +173,10 @@ function _streamOpenAICompat(
         } : {}),
     });
 
-    const req = https.request(
-        { hostname: apiBase, path: '/v1/chat/completions', method: 'POST',
+    // `endpoint` is for automated tests only (evaluation mode): a normal install talks to apiBase over HTTPS
+    const transport = endpoint?.protocol === 'http:' ? http : https;
+    const req = transport.request(
+        { hostname: endpoint?.hostname ?? apiBase, port: endpoint?.port, path: endpoint?.path ?? '/v1/chat/completions', method: 'POST',
           headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
         (res) => {
             if (res.statusCode && res.statusCode >= 400) {
@@ -174,7 +185,7 @@ function _streamOpenAICompat(
                 res.on('end', () => {
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, []);
+                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, [], adapter, effort, endpoint);
                         return;
                     }
                     push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
@@ -186,6 +197,12 @@ function _streamOpenAICompat(
             const completion = new StreamCompletionGuard();
             const nativeCalls = new OpenAIToolCallAccumulator();
             const think = new ThinkTagSplitter((type, text) => push({ type, text }));
+            // The reply's reasoning, sent on as one chunk so the caller can store it for replay
+            let reasoningText = '';
+            let reasoningSent = false;
+            const finishReasoning = (): void => {
+                if (replayField && reasoningText && !reasoningSent) { reasoningSent = true; push({ type: 'reasoning', text: reasoningText }); }
+            };
             const emitNativeCalls = (final = false): void => {
                 for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
                 if (final && nativeCalls.hasPending) {
@@ -207,6 +224,7 @@ function _streamOpenAICompat(
                         completion.markTerminal();
                         think.flush();
                         emitNativeCalls(true);
+                        finishReasoning();
                         push(null);
                         return;
                     }
@@ -229,7 +247,9 @@ function _streamOpenAICompat(
                         } | undefined;
                         // delta.reasoning is an explicit thinking field (e.g. some providers); delta.content
                         // may also contain <think> blocks for models like DeepSeek-R1 on Groq/DeepSeek direct.
-                        if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
+                        const adapted = adapter ? (delta as Record<string, unknown> | undefined)?.[adapter.reasoningField] : undefined;
+                        const reasoning = delta?.reasoning || (typeof adapted === 'string' ? adapted : '');
+                        if (reasoning) { reasoningText += reasoning; push({ type: 'thinking', text: reasoning }); }
                         if (typeof delta?.content === 'string' && delta.content) { think.push(delta.content); }
                         for (const toolCall of delta?.tool_calls ?? []) { nativeCalls.add(toolCall); }
                         const finishReason = json.choices?.[0]?.finish_reason as string | null | undefined;
@@ -238,13 +258,18 @@ function _streamOpenAICompat(
                             emitNativeCalls(true);
                             if (finishReason !== 'stop' && finishReason !== 'tool_calls') { push({ type: 'finish', reason: finishReason }); }
                         }
-                        const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
-                        if (u != null && u.total_tokens != null) { push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens }); }
+                        const u = json.usage as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } } | undefined;
+                        if (u != null && u.total_tokens != null) {
+                            // Cache hits: the provider's own field (DeepSeek), or OpenAI's prompt_tokens_details
+                            const cached = adapter?.cachedTokens(u as Record<string, unknown>) ?? (u.prompt_tokens_details?.cached_tokens || undefined);
+                            push({ type: 'usage', promptTokens: u.prompt_tokens ?? 0, completionTokens: u.completion_tokens ?? 0, totalTokens: u.total_tokens, ...(cached ? { cachedTokens: cached } : {}) });
+                        }
                     } catch { /* malformed SSE */ }
                 }
             });
             res.on('end', () => {
                 think.flush();
+                finishReasoning();
                 if (!signal?.aborted) {
                     const interrupted = completion.unexpectedEofMessage(apiBase);
                     if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
@@ -559,9 +584,11 @@ export function streamDirect(
     modelId: string,
     systemPromptPrefix?: string,
     signal?: AbortSignal,
-    _thinkingEffort?: 'high' | 'medium' | 'low',
+    thinkingEffort?: 'high' | 'medium' | 'low',
     overrideSystemPrompt?: string,
-    nativeTools: NativeToolDefinition[] = []
+    nativeTools: NativeToolDefinition[] = [],
+    /** Automated tests only (evaluation mode); OpenAI-compatible providers. */
+    endpoint?: OpenRouterEndpoint
 ): AsyncIterable<StreamChunk> {
     const provider = getDirectProvider(providerId);
     if (!provider) {
@@ -596,7 +623,7 @@ export function streamDirect(
         // object is created inside the format handler (pre-creation window).
         signal?.addEventListener('abort', () => push(null), { once: true });
         switch (provider.format) {
-            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools); break;
+            case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools, provider.adapter, thinkingEffort, endpoint); break;
             case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push, nativeTools);                      break;
             case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools);                         break;
         }
@@ -641,7 +668,7 @@ export async function directSingleCompletion(
                 headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) },
             };
         } else {
-            reqBody = JSON.stringify({ model: modelId, messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens });
+            reqBody = JSON.stringify({ model: provider.adapter?.modelId(modelId) ?? modelId, messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, ...provider.adapter?.quickBody });
             reqOpts = {
                 hostname: provider.apiBase, path: '/v1/chat/completions', method: 'POST',
                 headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) },

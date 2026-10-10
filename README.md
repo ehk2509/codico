@@ -23,7 +23,7 @@ Call AI providers directly with your own API keys — no OpenRouter account requ
 | **OpenAI** | GPT-4o, GPT-4o Mini, o3, o4-mini | `Codico: Set Direct Provider API Key` |
 | **Google** | Gemini 2.0 Flash, Gemini 2.5 Pro, Gemini 1.5 Flash | `Codico: Set Direct Provider API Key` |
 | **Groq** | Llama 3.3 70B, Llama 3.1 8B Instant, DeepSeek R1 70B | `Codico: Set Direct Provider API Key` |
-| **DeepSeek** | DeepSeek V3, DeepSeek R1 | `Codico: Set Direct Provider API Key` |
+| **DeepSeek** | DeepSeek V4.1 Flash, DeepSeek V4 Pro | `Codico: Set Direct Provider API Key` |
 | **Mistral** | Mistral Large, Codestral, Mistral Small | `Codico: Set Direct Provider API Key` |
 | **Grok (xAI)** | Grok 3, Grok 3 Mini | `Codico: Set Direct Provider API Key` |
 | **Cerebras** | Llama 4 Scout 17B, Llama 3.1 70B | `Codico: Set Direct Provider API Key` |
@@ -505,7 +505,7 @@ Switch models from the chat header dropdown. Models are grouped by tier:
 - OpenAI: GPT-4o, GPT-4o Mini, o3, o4-mini
 - Google: Gemini 2.0 Flash, Gemini 2.5 Pro, Gemini 1.5 Flash
 - Groq: Llama 3.3 70B, Llama 3.1 8B Instant, DeepSeek R1 70B
-- DeepSeek: DeepSeek V3, DeepSeek R1
+- DeepSeek: DeepSeek V4.1 Flash, DeepSeek V4 Pro (thinking shown; reasoning effort follows the header selector)
 - Mistral: Mistral Large, Codestral, Mistral Small
 - Grok (xAI): Grok 3, Grok 3 Mini
 - Cerebras: Llama 4 Scout 17B, Llama 3.1 70B
@@ -647,6 +647,7 @@ codico/
 │   ├── openRouterClient.ts          # OpenRouter SSE streaming client + system prompt
 │   ├── ollamaClient.ts              # Ollama OpenAI-compatible streaming client
 │   ├── directProviderClient.ts      # Direct provider streaming (Anthropic, OpenAI-compat, Google)
+│   ├── deepseekAdapter.ts           # DeepSeek's differences from the OpenAI protocol (thinking, reasoning replay, cache hits)
 │   ├── toolParser.ts                # Tool-call fence scanner/parser (handles nested code blocks)
 │   ├── nativeTools.ts               # Provider-neutral JSON schemas + native tool-call decoding
 │   ├── providerConversation.ts      # OpenAI/Anthropic/Gemini native tool history serializers

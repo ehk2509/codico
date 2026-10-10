@@ -363,5 +363,18 @@ async function run() {
     const corrective = !!result && /no tool named "ask_user"/.test(result.lastText);
     return { ok: nativeOnly(reqs) && corrective, why: `corrective tool result for unknown tool: ${corrective}` };
   });
+
+  // ── Direct DeepSeek through its adapter; the fake server enforces DeepSeek's reasoning rule ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'direct:deepseek/deepseek-flash', maxIterations: 12, directApiKeys: { deepseek: 'ds-test-key' } });
+  await scenario('ds_tools', ({ reqs, error }) => {
+    const [first, second] = reqs;
+    const settings = !!first && first.deepseek && first.model === 'deepseek-flash' && first.thinking && first.thinking.type === 'enabled' && first.effort === 'high';
+    // The thread also holds replies from earlier scenarios (other providers): they carry an empty field
+    const back = second ? second.reasoningBack : [];
+    const replayed = back.length > 0 && back.every(r => typeof r === 'string') && back[back.length - 1] === 'Thinking about step 0. Deciding what to do.';
+    const readResult = !!second && second.lastRole === 'tool' && /NOTES-MARKER/.test(second.lastText);
+    return { ok: !error && reqs.length === 2 && settings && replayed && readResult,
+      why: `${reqs.length} req (no 400, no fallback); model and thinking settings sent: ${settings}; reasoning sent back with the tool result: ${replayed}; tool result delivered: ${readResult}` };
+  });
 }
 module.exports = { run };

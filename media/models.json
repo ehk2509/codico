@@ -410,8 +410,8 @@
     "tier": "direct",
     "provider": "DeepSeek",
     "models": [
-      { "id": "direct:deepseek/deepseek-chat", "label": "DeepSeek V3" },
-      { "id": "direct:deepseek/deepseek-reasoner", "label": "DeepSeek R1" }
+      { "id": "direct:deepseek/deepseek-flash", "label": "DeepSeek V4.1 Flash" },
+      { "id": "direct:deepseek/deepseek-v4-pro", "label": "DeepSeek V4 Pro" }
     ]
   },
   {

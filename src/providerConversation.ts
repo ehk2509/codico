@@ -51,7 +51,8 @@ export function flattenChatHistory(history: ChatMessage[]): PlainChatMessage[] {
     });
 }
 
-export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean): unknown[] {
+/** @param reasoningField set for providers that require each reply's reasoning back (DeepSeek: `reasoning_content`) */
+export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean, reasoningField?: string): unknown[] {
     if (!useNativeTools) { return flattenChatHistory(history); }
 
     return history.map(message => {
@@ -70,6 +71,8 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
             return {
                 role: 'assistant',
                 content,
+                // Replies from before the switch to this provider have none: the field must still be present
+                ...(reasoningField ? { [reasoningField]: message.reasoning ?? '' } : {}),
                 tool_calls: message.nativeToolCalls.map(call => ({
                     id: call.id,
                     type: 'function',
@@ -81,6 +84,9 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
             };
         }
 
+        if (message.role === 'assistant' && reasoningField) {
+            return { role: 'assistant', content: message.content, [reasoningField]: message.reasoning ?? '' };
+        }
         return { role: message.role, content: message.content };
     });
 }

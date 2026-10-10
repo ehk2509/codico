@@ -1059,6 +1059,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 let recoverableFinishReason: string | null = null;
 
                 let resumeBuffer = '';
+                let iterationReasoning = ''; // the reply's reasoning, when the provider needs it back (DeepSeek)
 
                 // Large write_file/edit_file bodies are hidden until complete; show their
                 // progress in the status bar so a long write never looks idle.
@@ -1242,7 +1243,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 for await (const chunk of isOllama
                     ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
-                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools)
+                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined)
                         : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
@@ -1286,6 +1287,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         }
                         const dispatched = await dispatchToolCall(tool);
                         nativeToolExecutions.push({ call, result: dispatched.result });
+                    } else if (chunk.type === 'reasoning') {
+                        iterationReasoning = chunk.text;
                     } else if (chunk.type === 'usage') {
                         this._lastPromptTokens = chunk.promptTokens;
                         this._evalPromptTokens += chunk.promptTokens;
@@ -1364,12 +1367,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     // Preserve completed native tool calls/results even when the user stops
                     // the turn after a tool has already finished.
                     if (fullContent.trim() || inlineToolResults.length > 0) {
-                        appendAssistantIteration(
-                            this._history,
-                            fullContent,
-                            nativeToolExecutions,
-                            '(interrupted)'
-                        );
+                        appendAssistantIteration(this._history, fullContent, nativeToolExecutions, '(interrupted)', iterationReasoning);
                     }
                     break;
                 }
@@ -1380,7 +1378,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     nativeToolExecutions,
                     recoverableStreamInterruption
                         ? '[Stream interrupted before content]'
-                        : '[Assistant turn completed without text]'
+                        : '[Assistant turn completed without text]',
+                    iterationReasoning
                 );
 
                 // Unexpected transport EOFs are recoverable: preserve the partial

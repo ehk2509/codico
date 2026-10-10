@@ -32,11 +32,14 @@ export function activate(context: vscode.ExtensionContext): void {
                 maxTotalTokens?: number;
                 accoEnabled?: boolean;
                 accoBaseUrl?: string;
+                /** Keys for direct providers, by provider id (e.g. { deepseek: '…' }). */
+                directApiKeys?: Record<string, string>;
             }) => {
                 if (!options?.openRouterApiKey?.trim()) {
                     throw new Error('Evaluation requires an OpenRouter API key.');
                 }
                 await context.secrets.store('openRouterApiKey', options.openRouterApiKey.trim());
+                for (const [providerId, key] of Object.entries(options.directApiKeys ?? {})) { await context.secrets.store(directSecretKey(providerId), key); }
                 const cfg = vscode.workspace.getConfiguration('codico');
                 await cfg.update('model', options.model, vscode.ConfigurationTarget.Global);
                 await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
