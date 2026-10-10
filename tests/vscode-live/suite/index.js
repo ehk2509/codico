@@ -9,7 +9,7 @@ async function run() {
   await vscode.extensions.getExtension('codico.codico').activate();
   const cfg = vscode.workspace.getConfiguration('codico');
   const set = (k, v) => cfg.update(k, v, vscode.ConfigurationTarget.Global);
-  for (const [k, v] of Object.entries({ model: 'ollama/fake-model', ollamaBaseUrl: `http://127.0.0.1:${PORT}`, checkpointSteps: 0,
+  for (const [k, v] of Object.entries({ model: 'ollama/fake-model', ollamaBaseUrl: `http://127.0.0.1:${PORT}`,
     maxIterations: 12, followUpSuggestionsEnabled: false, completionNotificationsEnabled: false, responseSummaryEnabled: false,
     autoIndex: false, terminalTimeoutSeconds: 10 })) { await set(k, v); }
   await vscode.commands.executeCommand('codico.openChat');

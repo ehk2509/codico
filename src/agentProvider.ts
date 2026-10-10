@@ -907,8 +907,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
-        // Pause for confirmation every N steps (0 = never)
-        const checkpointSteps = config.get<number>('checkpointSteps', 50);
         this._passport = new PassportRecorder();
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
@@ -1512,12 +1510,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (fencedToolResults.length > 0) {
                     const resultText = `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`;
                     this._history.push({ role: 'user', content: resultText });
-                }
-
-                // Periodic checkpoint so a run that has gone off track does not spend
-                // tokens indefinitely. Waits for the user; Stop also ends the wait.
-                if (checkpointSteps > 0 && (i + 1) % checkpointSteps === 0 && shouldRunAgentIteration(i + 1, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration)) {
-                    if (!await this._awaitCheckpoint(msgId, i + 1, signal)) { break; }
                 }
 
                 // Token budget: pause each time the task crosses another budget's worth
