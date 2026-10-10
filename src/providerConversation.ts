@@ -168,7 +168,7 @@ export function toAnthropicMessages(
 type GeminiPart =
     | { text: string }
     | { inlineData: { mimeType: string; data: string } }
-    | { functionCall: { name: string; args: Record<string, unknown> } }
+    | { functionCall: { name: string; args: Record<string, unknown> }; thoughtSignature?: string }
     | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 function geminiContentParts(content: string | MessageContentPart[]): GeminiPart[] {
@@ -192,7 +192,9 @@ function geminiContentParts(content: string | MessageContentPart[]): GeminiPart[
 
 export function toGeminiMessages(
     history: ChatMessage[],
-    useNativeTools = true
+    useNativeTools = true,
+    /** Sent with the first tool call of a reply that has no signature of its own (Gemini 3 demands one). */
+    missingSignature?: string
 ): Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> {
     const messages: Array<{ role: 'user' | 'model'; parts: GeminiPart[] }> = [];
     const source: ChatMessage[] = useNativeTools ? history : flattenChatHistory(history);
@@ -222,14 +224,17 @@ export function toGeminiMessages(
 
         const parts = geminiContentParts(message.content);
         if (message.role === 'assistant' && message.nativeToolCalls?.length) {
-            for (const call of message.nativeToolCalls) {
+            message.nativeToolCalls.forEach((call, index) => {
+                // Only the first call of a reply carries (and needs) a signature
+                const signature = call.signature ?? (index === 0 ? missingSignature : undefined);
                 parts.push({
                     functionCall: {
                         name: call.name,
                         args: call.arguments,
                     },
+                    ...(signature ? { thoughtSignature: signature } : {}),
                 });
-            }
+            });
         }
         append(message.role === 'assistant' ? 'model' : 'user', parts);
     }

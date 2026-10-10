@@ -15,6 +15,8 @@ export interface NativeToolCall {
     id?: string;
     name: string;
     arguments: Record<string, unknown>;
+    /** Gemini's signature of the call: it must be sent back with the call on later requests. */
+    signature?: string;
 }
 
 const noArgs: JsonSchema = {

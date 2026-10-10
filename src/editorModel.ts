@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
  * another model selected every request would be rejected, so they are not sent.
  */
 export function unsupportedEditorModel(model: string, ollamaSupported = false): boolean {
-    return model.startsWith('direct:') || model.startsWith('claude-code/') || (!ollamaSupported && model.startsWith('ollama/'));
+    return model.startsWith('direct:') || model.startsWith('claude-code/') || model.startsWith('chatgpt/') || (!ollamaSupported && model.startsWith('ollama/'));
 }
 
 export function unsupportedModelMessage(feature: string, model: string, ollamaSupported = false): string {

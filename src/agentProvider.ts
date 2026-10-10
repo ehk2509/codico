@@ -46,8 +46,7 @@ import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvid
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { promptForMissingKey, providerKeyStatus, usableModel } from './modelFallback';
-import { CLAUDE_CODE_PREFIX, claudeCodeCompletion, streamClaudeCode } from './claudeCodeClient';
-import { claudeCodeCommand } from './claudeCodePath';
+import { cliModelCompletion, isCliModel, streamCliModel } from './cliProviders';
 import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
@@ -590,7 +589,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 try {
                     const compactCfg = vscode.workspace.getConfiguration('codico');
                     const compactModel = await usableModel(this._context, compactCfg.get<string>('model', 'deepseek/deepseek-v4-flash'));
-                    const isCompactOllama = compactModel.startsWith('ollama/') || compactModel.startsWith(CLAUDE_CODE_PREFIX); // neither needs a key
+                    const isCompactOllama = compactModel.startsWith('ollama/') || isCliModel(compactModel); // neither needs a key
                     const isCompactDirect = compactModel.startsWith('direct:');
                     const compactOllamaBaseUrl = compactCfg.get<string>('ollamaBaseUrl', 'http://localhost:11434');
                     const compactOllamaModel = compactModel.slice('ollama/'.length);
@@ -883,7 +882,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Without an OpenRouter key but with a direct provider key, that provider's model is used
         const model = await usableModel(this._context, config.get<string>('model', 'deepseek/deepseek-v4-flash'));
         const isOllama = model.startsWith('ollama/');
-        const isClaudeCode = model.startsWith(CLAUDE_CODE_PREFIX); // through the user's `claude` command and login
+        const isCli = isCliModel(model); // through a command the user is signed in to (claude, codex)
         const isDirect = model.startsWith('direct:');
         const ollamaModel = model.slice('ollama/'.length);
         const ollamaBaseUrl = config.get<string>('ollamaBaseUrl', 'http://localhost:11434');
@@ -891,7 +890,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         let apiKey = '';
         let directApiKey = '';
-        if (isOllama || isClaudeCode) {
+        if (isOllama || isCli) {
             // no key needed for local Ollama or for Claude Code (its own login)
         } else if (isDirect) {
             if (!directParsed) {
@@ -1034,7 +1033,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const MAX_BLOCKED_ONLY_ITERATIONS = 3;
         let blockedOnlyIterations = 0;
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
-        const nativeTools = !isOllama && !isClaudeCode && nativeToolCalling
+        const nativeTools = !isOllama && !isCli && nativeToolCalling
             ? getNativeToolDefinitions(this._readOnly)
             : [];
 
@@ -1250,8 +1249,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                for await (const chunk of isClaudeCode
-                    ? streamClaudeCode(claudeCodeCommand(), requestHistory, model.slice(CLAUDE_CODE_PREFIX.length), effectivePrefix, signal, this._thinkingEffort, systemPromptOverride)
+                for await (const chunk of isCli
+                    ? streamCliModel(model, requestHistory, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride)
                     : isOllama
                     ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
                     : isDirect && directParsed
@@ -1777,8 +1776,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const SUMMARY_MAX_TOKENS = 4000;
 
         const ask = async (): Promise<string> => {
-            if (model.startsWith(CLAUDE_CODE_PREFIX)) {
-                return claudeCodeCompletion(claudeCodeCommand(), prompt, model.slice(CLAUDE_CODE_PREFIX.length), signal);
+            if (isCliModel(model)) {
+                return cliModelCompletion(model, prompt, signal);
             } else if (isOllama) {
                 return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal);
             } else if (isDirect) {

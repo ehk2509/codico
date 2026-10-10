@@ -695,3 +695,22 @@ test('Claude Code is a provider with its own models and needs no key', async () 
   assert.deepEqual(await page.locator('#model-csel .csel-opt').allTextContents(),
     ['Claude Sonnet (latest)', 'Claude Opus (latest)', 'Claude Haiku (latest)', 'Claude Fable (latest)']);
 });
+
+test('ChatGPT is a provider with its own models and needs no key', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'providerKeys', keys: { openrouter: false, 'claude-code': true, chatgpt: true, ollama: true } });
+  const providers = await page.locator('#provider-csel .csel-opt').allTextContents();
+  // Listed with Claude Code under "your own login", with no "no key" mark
+  assert.ok(providers.includes('ChatGPT'), providers.join(', '));
+  assert.equal(providers.indexOf('ChatGPT'), providers.indexOf('Claude Code') + 1, providers.join(', '));
+  await page.locator('#provider-csel .csel-val').click();
+  await page.locator('#provider-csel .csel-opt', { hasText: /^ChatGPT$/ }).click();
+  assert.deepEqual((await posted('changeModel')).pop(), { type: 'changeModel', model: 'chatgpt/gpt-6.1-sol' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'chatgpt');
+  assert.deepEqual(await page.locator('#model-csel .csel-opt').allTextContents(),
+    ['GPT-6.1 Sol', 'GPT-6 Sol', 'GPT-6 Astra', 'GPT-6 Luna', 'GPT-5.5']);
+  // A model set from Settings shows under the same provider
+  await send({ type: 'setModel', model: 'chatgpt/gpt-5.5' });
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'chatgpt');
+  assert.equal(await page.locator('#model-csel').getAttribute('data-value'), 'chatgpt/gpt-5.5');
+});

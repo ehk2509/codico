@@ -2,6 +2,8 @@ import * as http from 'http';
 import * as https from 'https';
 import { ChatMessage, MessageContentPart, OpenRouterEndpoint, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
 import { deepseekAdapter, OpenAICompatAdapter } from './deepseekAdapter';
+import { GEMINI_MODELS, geminiGenerationConfig, geminiQuickConfig, geminiUsage, SKIP_THOUGHT_SIGNATURE, usesThoughtSignatures } from './geminiAdapter';
+import { OPENAI_MODELS, openaiAdapter } from './openaiAdapter';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
 import { toAnthropicMessages, toGeminiMessages, toOpenAIMessages } from './providerConversation';
@@ -34,21 +36,12 @@ export const DIRECT_PROVIDERS: readonly DirectProvider[] = [
         ],
     },
     {
-        id: 'openai', name: 'OpenAI', apiBase: 'api.openai.com', format: 'openai',
-        models: [
-            { id: 'gpt-4o', displayName: 'GPT-4o' },
-            { id: 'gpt-4o-mini', displayName: 'GPT-4o Mini' },
-            { id: 'o3', displayName: 'o3' },
-            { id: 'o4-mini', displayName: 'o4-mini' },
-        ],
+        id: 'openai', name: 'OpenAI', apiBase: 'api.openai.com', format: 'openai', adapter: openaiAdapter,
+        models: OPENAI_MODELS,
     },
     {
         id: 'google', name: 'Google', apiBase: 'generativelanguage.googleapis.com', format: 'google',
-        models: [
-            { id: 'gemini-2.0-flash', displayName: 'Gemini 2.0 Flash' },
-            { id: 'gemini-2.5-pro-preview-05-06', displayName: 'Gemini 2.5 Pro' },
-            { id: 'gemini-1.5-flash-latest', displayName: 'Gemini 1.5 Flash' },
-        ],
+        models: GEMINI_MODELS,
     },
     {
         id: 'groq', name: 'Groq', apiBase: 'api.groq.com', format: 'openai',
@@ -165,7 +158,9 @@ function _streamOpenAICompat(
     nativeTools: NativeToolDefinition[],
     adapter?: OpenAICompatAdapter,
     effort: 'high' | 'medium' | 'low' = 'medium',
-    endpoint?: OpenRouterEndpoint
+    endpoint?: OpenRouterEndpoint,
+    /** Leave out the adapter's extra fields (a retry after the API refused one of them). */
+    plain = false
 ): void {
     const replayField = adapter?.replayReasoning ? adapter.reasoningField : undefined;
     const messages = toOpenAIMessages([{ role: 'system', content: system }, ...history], nativeTools.length > 0, replayField);
@@ -173,9 +168,9 @@ function _streamOpenAICompat(
         model: adapter?.modelId(modelId) ?? modelId,
         messages,
         stream: true,
-        max_tokens: adapter?.maxTokens ?? 8192,
+        [adapter?.maxTokensField ?? 'max_tokens']: adapter?.maxTokens(modelId) ?? 8192,
         stream_options: { include_usage: true },
-        ...adapter?.body(modelId, effort),
+        ...(plain ? {} : adapter?.body(modelId, effort)),
         ...(nativeTools.length > 0 ? {
             tools: nativeTools.map(tool => ({
                 type: 'function',
@@ -199,9 +194,15 @@ function _streamOpenAICompat(
                 res.setEncoding('utf8'); // keeps characters split across chunks intact
                 let e = ''; res.on('data', (d: string) => { e += d; });
                 res.on('end', () => {
+                    // An option this model does not take (e.g. an effort level): once more without the extras
+                    const extras = plain || !adapter ? [] : Object.keys(adapter.body(modelId, effort));
+                    if (res.statusCode === 400 && extras.some(field => e.includes(field)) && !signal?.aborted) {
+                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, nativeTools, adapter, effort, endpoint, true);
+                        return;
+                    }
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, [], adapter, effort, endpoint);
+                        _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, [], adapter, effort, endpoint, plain);
                         return;
                     }
                     push(new Error(`${apiBase} HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
@@ -481,12 +482,15 @@ function _streamGoogle(
     system: string,
     signal: AbortSignal | undefined,
     push: (v: StreamChunk | null | Error) => void,
-    nativeTools: NativeToolDefinition[]
+    nativeTools: NativeToolDefinition[],
+    effort: 'high' | 'medium' | 'low' = 'medium',
+    /** false: leave the thinking options out (a retry after the API refused them). */
+    thinking = true
 ): void {
     const body = JSON.stringify({
-        contents: toGeminiMessages(history, nativeTools.length > 0),
+        contents: toGeminiMessages(history, nativeTools.length > 0, usesThoughtSignatures(modelId) ? SKIP_THOUGHT_SIGNATURE : undefined),
         ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
-        generationConfig: { maxOutputTokens: 8192 },
+        generationConfig: geminiGenerationConfig(modelId, effort, thinking),
         ...(nativeTools.length > 0 ? {
             tools: [{
                 functionDeclarations: nativeTools.map(tool => ({
@@ -509,9 +513,14 @@ function _streamGoogle(
                 res.setEncoding('utf8'); // keeps characters split across chunks intact
                 let e = ''; res.on('data', (d: string) => { e += d; });
                 res.on('end', () => {
+                    // A thinking option this model does not take (e.g. a level): once more without them
+                    if (thinking && res.statusCode === 400 && /thinking/i.test(e) && !signal?.aborted) {
+                        _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, effort, false);
+                        return;
+                    }
                     if (nativeTools.length > 0 && /tool|function|unsupported|not supported/i.test(e) && !signal?.aborted) {
                         push({ type: 'thinking', text: '\n[Native tools unavailable for this model — retrying with compatibility tool format…]\n' });
-                        _streamGoogle(apiKey, modelId, history, system, signal, push, []);
+                        _streamGoogle(apiKey, modelId, history, system, signal, push, [], effort, thinking);
                         return;
                     }
                     push(new Error(`Google HTTP ${res.statusCode}: ${e.slice(0, 300)}`));
@@ -541,13 +550,14 @@ function _streamGoogle(
                         const cand = json.candidates?.[0];
                         if (cand) {
                             for (const part of cand.content?.parts ?? []) {
-                                if (typeof part.text === 'string' && part.text) { push({ type: 'content', text: part.text }); }
+                                // A thought summary (asked for with includeThoughts) is not part of the answer
+                                if (typeof part.text === 'string' && part.text) { push({ type: part.thought === true ? 'thinking' : 'content', text: part.text }); }
                                 const fn = part.functionCall;
                                 if (fn?.name && fn.args && typeof fn.args === 'object' && !Array.isArray(fn.args)) {
                                     const key = `${fn.name}:${JSON.stringify(fn.args)}`;
                                     if (!emittedFunctionCalls.has(key)) {
                                         emittedFunctionCalls.add(key);
-                                        push({ type: 'native_tool', call: { name: fn.name, arguments: fn.args } });
+                                        push({ type: 'native_tool', call: { name: fn.name, arguments: fn.args, ...(typeof part.thoughtSignature === 'string' ? { signature: part.thoughtSignature } : {}) } });
                                     }
                                 }
                             }
@@ -556,8 +566,8 @@ function _streamGoogle(
                                 if (cand.finishReason !== 'STOP') { push({ type: 'finish', reason: cand.finishReason }); }
                             }
                         }
-                        const u = json.usageMetadata;
-                        if (u != null && u.totalTokenCount != null) { push({ type: 'usage', promptTokens: u.promptTokenCount ?? 0, completionTokens: u.candidatesTokenCount ?? 0, totalTokens: u.totalTokenCount }); }
+                        const usage = geminiUsage(json.usageMetadata);
+                        if (usage) { push({ type: 'usage', ...usage }); }
                     } catch { /* malformed */ }
                 }
             });
@@ -641,7 +651,7 @@ export function streamDirect(
         switch (provider.format) {
             case 'openai':     _streamOpenAICompat(apiKey, provider.apiBase, modelId, history, system, signal, push, nativeTools, provider.adapter, thinkingEffort, endpoint); break;
             case 'anthropic':  _streamAnthropic(apiKey, modelId, history, system, signal, push, nativeTools);                      break;
-            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools);                         break;
+            case 'google':     _streamGoogle(apiKey, modelId, history, system, signal, push, nativeTools, thinkingEffort);         break;
         }
     }
 
@@ -649,6 +659,12 @@ export function streamDirect(
 }
 
 // ── Non-streaming single completion (follow-ups, compact, commit) ─────────────
+
+/** The answer of a Gemini reply: its text parts, without thought summaries. */
+function googleAnswerText(parts: unknown): string {
+    if (!Array.isArray(parts)) { return ''; }
+    return (parts as Array<{ text?: unknown; thought?: unknown }>).filter(p => typeof p.text === 'string' && p.thought !== true).map(p => p.text as string).join('');
+}
 
 export async function directSingleCompletion(
     apiKey: string,
@@ -676,7 +692,7 @@ export async function directSingleCompletion(
                 headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01', 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) },
             };
         } else if (provider.format === 'google') {
-            reqBody = JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens } });
+            reqBody = JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: geminiQuickConfig(modelId, maxTokens) });
             reqOpts = {
                 hostname: 'generativelanguage.googleapis.com',
                 path: `/v1beta/models/${encodeURIComponent(modelId)}:generateContent?key=${encodeURIComponent(apiKey)}`,
@@ -684,7 +700,7 @@ export async function directSingleCompletion(
                 headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) },
             };
         } else {
-            reqBody = JSON.stringify({ model: provider.adapter?.modelId(modelId) ?? modelId, messages: [{ role: 'user', content: prompt }], max_tokens: maxTokens, ...provider.adapter?.quickBody });
+            reqBody = JSON.stringify({ model: provider.adapter?.modelId(modelId) ?? modelId, messages: [{ role: 'user', content: prompt }], [provider.adapter?.maxTokensField ?? 'max_tokens']: provider.adapter?.quickMaxTokens?.(modelId, maxTokens) ?? maxTokens, ...provider.adapter?.quickBody(modelId) });
             reqOpts = {
                 hostname: provider.apiBase, path: '/v1/chat/completions', method: 'POST',
                 headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(reqBody) },
@@ -704,7 +720,7 @@ export async function directSingleCompletion(
                 try {
                     const json = JSON.parse(data);
                     if (provider.format === 'anthropic') { done(json.content?.[0]?.text ?? ''); }
-                    else if (provider.format === 'google') { done(json.candidates?.[0]?.content?.parts?.[0]?.text ?? ''); }
+                    else if (provider.format === 'google') { done(googleAnswerText(json.candidates?.[0]?.content?.parts)); }
                     else { done(json.choices?.[0]?.message?.content ?? ''); }
                 } catch { done(''); }
             });

@@ -81,6 +81,8 @@ const SCRIPTS = (port) => ({
   big_read: [tool('read_file', 'filepath: fixtures/big.md'), 'Read it.'],
   // Direct DeepSeek with native tools: the reasoning of each reply must come back with the next request
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
+  oa_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
+  oa_plain: ['Answered without the effort option.'],
   // Only a DeepSeek key is set, but the selected model is an OpenRouter one
   ds_fallback: ['Answered through DeepSeek.'],
   // Stopped during setup: must never reach the model
@@ -127,7 +129,10 @@ function start(port0) {
       let json = {}; try { json = JSON.parse(body); } catch {}
       const messages = json.messages || [];
       // The DeepSeek API (direct provider tests): its reasoning rule and usage fields
-      const deepseek = (req.url || '').startsWith('/deepseek');
+      const direct = (req.url || '').startsWith('/deepseek');
+      const deepseek = direct && /^deepseek/.test(json.model || '');
+      // The OpenAI API (same test URL, an OpenAI model): its token limit field and effort option
+      const openai = direct && !deepseek;
       const assistants = messages.filter(m => m.role === 'assistant');
       const { scenario, step } = locate(messages);
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
@@ -136,7 +141,7 @@ function start(port0) {
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),
-        deepseek, model: json.model, thinking: json.thinking, effort: json.reasoning_effort, reasoningBack: assistants.map(m => m.reasoning_content),
+        deepseek, openai, maxTokens: json.max_tokens, maxCompletionTokens: json.max_completion_tokens, model: json.model, thinking: json.thinking, effort: json.reasoning_effort, reasoningBack: assistants.map(m => m.reasoning_content),
         // A summary in the transcript's own format: only a bad summary produces that
         copiedSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\][\s\S]*### TOOL RESULT/.test(textOf(m.content))),
         native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
@@ -146,6 +151,15 @@ function start(port0) {
       if (deepseek && json.tools && assistants.some(m => m.reasoning_content === undefined)) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: { message: 'Missing reasoning_content in an assistant message.' } }));
+      }
+      // OpenAI's reasoning models refuse max_tokens; this stand-in model also refuses the effort option
+      if (openai && json.max_tokens !== undefined) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }));
+      }
+      if (openai && json.model === 'gpt-5.4-mini' && json.reasoning_effort !== undefined) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { message: "Unsupported parameter: 'reasoning_effort' is not supported with this model." } }));
       }
       if (json.stream === false) {
         res.setHeader('content-type', 'application/json');

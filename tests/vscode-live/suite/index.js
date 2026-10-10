@@ -377,6 +377,23 @@ async function run() {
       why: `${reqs.length} req (no 400, no fallback); model and thinking settings sent: ${settings}; reasoning sent back with the tool result: ${replayed}; tool result delivered: ${readResult}` };
   });
 
+  // ── Direct OpenAI through its adapter; the fake server refuses max_tokens like the real API ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'direct:openai/gpt-5.5', maxIterations: 12, directApiKeys: { openai: 'oa-test-key' } });
+  await scenario('oa_tools', ({ reqs, error }) => {
+    const [first, second] = reqs;
+    const settings = !!first && first.openai && first.model === 'gpt-5.5' && first.maxTokens === undefined && first.maxCompletionTokens === 64000 && first.effort === 'medium';
+    const readResult = !!second && second.lastRole === 'tool' && /NOTES-MARKER/.test(second.lastText);
+    return { ok: !error && reqs.length === 2 && settings && !!first.native && readResult,
+      why: `${reqs.length} req (no 400); max_completion_tokens and effort sent, no max_tokens: ${settings}; native tools: ${!!first && first.native}; tool result delivered: ${readResult}` };
+  });
+  // A model that refuses the effort option: asked once more without it, tools kept
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'direct:openai/gpt-5.4-mini', maxIterations: 12, directApiKeys: { openai: 'oa-test-key' } });
+  await scenario('oa_plain', ({ reqs, error }) => {
+    const [refused, retried] = reqs;
+    const retry = reqs.length === 2 && refused.effort === 'medium' && retried.effort === undefined && retried.native && retried.maxCompletionTokens === 64000;
+    return { ok: !error && retry, why: `${reqs.length} req; refused with the effort option, answered without it and with tools kept: ${retry}${error ? '; error: ' + error : ''}` };
+  });
+
   // No OpenRouter key, a DeepSeek key, and the default (OpenRouter) model selected: use the DeepSeek key
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: '', model: 'deepseek/deepseek-v4-flash', maxIterations: 12, directApiKeys: { deepseek: 'ds-test-key' } });
   await scenario('ds_fallback', ({ reqs, error }) => {
@@ -398,6 +415,22 @@ async function run() {
     const resultBack = !!second && /<conversation>/.test(second.prompt) && /\[Tool Results\][\s\S]*NOTES-MARKER/.test(second.prompt);
     results.push({ name: 'cc_tools', ms: Date.now() - t0, requests: calls.length, ok: !error && calls.length === 2 && noTools && fenced && resultBack,
       why: `${calls.length} runs of claude; its own tools off, model sonnet: ${noTools}; Codico's tool format in the system prompt: ${fenced}; file read by Codico and sent back: ${resultBack}; no key needed: ${!error}${error ? ' (' + error + ')' : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+  // ── ChatGPT as a provider: the agent loop through the `codex` command (a stand-in here) ──
+  {
+    const t0 = Date.now(); let error = null;
+    await set('codexPath', process.env.LIVE_FAKE_CODEX);
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: '', model: 'chatgpt/gpt-5.5', maxIterations: 12, directApiKeys: {} });
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:cx_tools] please do the task'); } catch (e) { error = String(e && e.message || e); }
+    const calls = (fs.existsSync(process.env.FAKE_CODEX_LOG) ? fs.readFileSync(process.env.FAKE_CODEX_LOG, 'utf8').trim().split('\n').map(l => JSON.parse(l)) : []).filter(c => c.args[0] === 'exec');
+    const [first, second] = calls;
+    const after = (c, flag) => c.args[c.args.indexOf(flag) + 1];
+    const locked = !!first && after(first, '-s') === 'read-only' && after(first, '-m') === 'gpt-5.5' && first.args.includes('shell_tool');
+    const fenced = !!first && /fenced-code-block formats/.test(first.instructions || '');
+    const resultBack = !!second && /<conversation>/.test(second.prompt) && /\[Tool Results\][\s\S]*NOTES-MARKER/.test(second.prompt);
+    results.push({ name: 'cx_tools', ms: Date.now() - t0, requests: calls.length, ok: !error && calls.length === 2 && locked && fenced && resultBack,
+      why: `${calls.length} runs of codex; read-only, its shell off, model gpt-5.5: ${locked}; Codico's tool format as its instructions: ${fenced}; file read by Codico and sent back: ${resultBack}; no key needed: ${!error}${error ? ' (' + error + ')' : ''}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });

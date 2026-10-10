@@ -9,9 +9,13 @@ export interface OpenAICompatAdapter {
     /** Extra request fields (thinking mode, effort). */
     body(modelId: string, effort: 'high' | 'medium' | 'low'): Record<string, unknown>;
     /** Extra request fields for one-shot jobs (summaries, commit messages). */
-    quickBody: Record<string, unknown>;
-    /** Output token limit sent as max_tokens. */
-    maxTokens: number;
+    quickBody(modelId: string): Record<string, unknown>;
+    /** Output token limit for a model. */
+    maxTokens(modelId: string): number;
+    /** The request field the limit is sent in, when it is not max_tokens. */
+    maxTokensField?: string;
+    /** The limit for a one-shot job that asked for `requested` tokens, when the model needs more (room to think). */
+    quickMaxTokens?(modelId: string, requested: number): number;
     /** Stream delta field that carries the reasoning text. */
     reasoningField: string;
     /** The reasoning of a reply must be sent back with every later request that offers tools. */
@@ -42,8 +46,8 @@ export const deepseekAdapter: OpenAICompatAdapter = {
         return { thinking: { type: 'enabled' }, reasoning_effort: reasoningEffort };
     },
     // No thinking for one-shot jobs: its tokens would come out of the answer's limit
-    quickBody: { thinking: { type: 'disabled' } },
-    maxTokens: 32_768,
+    quickBody: () => ({ thinking: { type: 'disabled' } }),
+    maxTokens: () => 32_768,
     reasoningField: 'reasoning_content',
     replayReasoning: true,
     cachedTokens(usage) {

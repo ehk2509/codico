@@ -289,6 +289,11 @@
           "default": "",
           "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
         },
+        "codico.codexPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the codex command for the ChatGPT provider. Empty: found on the PATH, or in OpenAI's VS Code extension"
+        },
         "codico.chatDensity": {
           "type": "string",
           "enum": [

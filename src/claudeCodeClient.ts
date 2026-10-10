@@ -1,5 +1,5 @@
-import * as cp from 'child_process';
 import * as os from 'os';
+import { CliCommand, collectText, runCli } from './cliProcess';
 import { ChatMessage, StreamChunk, SYSTEM_PROMPT } from './openRouterClient';
 import { flattenChatHistory } from './providerConversation';
 
@@ -16,12 +16,7 @@ export const CLAUDE_CODE_PREFIX = 'claude-code/';
 /** Model aliases Claude Code resolves to its current models. */
 export const CLAUDE_CODE_MODELS = ['sonnet', 'opus', 'haiku', 'fable'] as const;
 
-/** How to start the CLI. Tests pass a script run by Node instead of the real command. */
-export interface ClaudeCodeCommand {
-    command: string;
-    /** Arguments placed before Codico's own (e.g. the script path, for tests). */
-    baseArgs?: string[];
-}
+export type ClaudeCodeCommand = CliCommand;
 
 /** A command line longer than this is refused on Windows; the system prompt then travels in the prompt instead. */
 const MAX_SYSTEM_PROMPT_ARG = 24_000;
@@ -103,87 +98,19 @@ export function streamClaudeCode(
     const fits = fullSystem.length <= MAX_SYSTEM_PROMPT_ARG;
     const system = fits ? fullSystem : base.slice(0, MAX_SYSTEM_PROMPT_ARG);
     const prompt = (fits ? '' : `<instructions>\n${fullSystem.slice(system.length)}\n</instructions>\n\n`) + claudeCodePrompt(history);
-
-    const queue: Array<StreamChunk | null | Error> = [];
-    let wake: (() => void) | null = null;
-    let ended = false;
-    const push = (item: StreamChunk | null | Error): void => {
-        if (ended) { return; }
-        if (item === null || item instanceof Error) { ended = true; }
-        queue.push(item);
-        wake?.(); wake = null;
-    };
-
-    if (signal?.aborted) {
-        push(null);
-    } else {
-        let child: cp.ChildProcess;
-        try {
-            child = cp.spawn(cli.command, [...(cli.baseArgs ?? []), ...buildArgs(model, system, effort)], {
-                // A neutral folder: the user's project CLAUDE.md, settings and hooks are for their own Claude Code sessions
-                cwd: os.tmpdir(), env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-            });
-        } catch (err) {
-            push(new Error(`Could not start Claude Code: ${err instanceof Error ? err.message : String(err)}`));
-            return iterate(queue, w => { wake = w; });
-        }
-        const state = { sawText: false };
-        let buffer = '';
-        let stderr = '';
-        child.stdout?.setEncoding('utf8');
-        child.stderr?.setEncoding('utf8');
-        child.stdout?.on('data', (data: string) => {
-            buffer += data;
-            const lines = buffer.split('\n');
-            buffer = lines.pop() ?? '';
-            for (const line of lines) { if (line.trim()) { parseClaudeCodeLine(line, state).forEach(push); } }
-        });
-        child.stderr?.on('data', (data: string) => { stderr = (stderr + data).slice(-2000); });
-        child.on('error', (err: NodeJS.ErrnoException) => {
-            push(new Error(err.code === 'ENOENT'
-                ? 'Claude Code was not found. Install it (or the Claude Code VS Code extension), or set "codico.claudeCodePath" to the claude command.'
-                : `Could not start Claude Code: ${err.message}`));
-        });
-        child.on('close', (code) => {
-            if (buffer.trim()) { parseClaudeCodeLine(buffer, state).forEach(push); }
-            if (code !== 0 && !signal?.aborted && !ended) {
-                const reason = stderr.trim().split('\n').pop() || `it exited with code ${code}`;
-                push({ type: 'stream_error', message: `Claude Code: ${reason}. If you are not signed in, run "claude" in a terminal and log in.` });
-            }
-            push(null);
-        });
-        // The prompt goes in on stdin: it can be far longer than a command line allows
-        child.stdin?.on('error', () => { /* the process exited early; 'close' reports why */ });
-        child.stdin?.end(prompt);
-        signal?.addEventListener('abort', () => { child.kill(); push(null); }, { once: true });
-    }
-    return iterate(queue, w => { wake = w; });
-}
-
-function iterate(queue: Array<StreamChunk | null | Error>, wait: (wake: () => void) => void): AsyncIterable<StreamChunk> {
-    return {
-        [Symbol.asyncIterator]() {
-            return {
-                async next(): Promise<IteratorResult<StreamChunk>> {
-                    while (queue.length === 0) { await new Promise<void>(resolve => wait(resolve)); }
-                    const item = queue.shift()!;
-                    if (item === null) { return { value: undefined as unknown as StreamChunk, done: true }; }
-                    if (item instanceof Error) { throw item; }
-                    return { value: item, done: false };
-                },
-            };
-        },
-    };
+    const state = { sawText: false };
+    return runCli({
+        name: 'Claude Code', cli, args: buildArgs(model, system, effort), stdin: prompt, signal,
+        // A neutral folder: the user's project CLAUDE.md, settings and hooks are for their own Claude Code sessions
+        cwd: os.tmpdir(), env: childEnv(),
+        parseLine: line => parseClaudeCodeLine(line, state),
+        notFound: 'Claude Code was not found. Install it (or the Claude Code VS Code extension), or set "codico.claudeCodePath" to the claude command.',
+        signInHint: 'If you are not signed in, run "claude" in a terminal and log in.',
+    });
 }
 
 /** A one-shot request (compaction summaries): the reply text, or '' on failure. */
-export async function claudeCodeCompletion(cli: ClaudeCodeCommand, prompt: string, model: string, signal?: AbortSignal): Promise<string> {
-    let text = '';
-    try {
-        for await (const chunk of streamClaudeCode(cli, [{ role: 'user', content: prompt }], model, undefined, signal, 'low',
-            'You complete one writing task and reply with the result only.')) {
-            if (chunk.type === 'content') { text += chunk.text; }
-        }
-    } catch { return ''; }
-    return text;
+export function claudeCodeCompletion(cli: ClaudeCodeCommand, prompt: string, model: string, signal?: AbortSignal): Promise<string> {
+    return collectText(streamClaudeCode(cli, [{ role: 'user', content: prompt }], model, undefined, signal, 'low',
+        'You complete one writing task and reply with the result only.'));
 }

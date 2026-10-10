@@ -136,12 +136,13 @@
   function _providerOf(modelId) {
     if (String(modelId).indexOf('ollama/') === 0) { return 'ollama'; }
     if (String(modelId).indexOf('claude-code/') === 0) { return 'claude-code'; }
+    if (String(modelId).indexOf('chatgpt/') === 0) { return 'chatgpt'; }
     var direct = /^direct:([^/]+)\//.exec(modelId);
     return direct ? 'direct:' + direct[1] : 'openrouter';
   }
   function _groupsOf(providerId) {
     return MODEL_GROUPS.filter(function (g) {
-      return (g.tier === 'local' ? 'ollama' : g.tier === 'claude-code' ? 'claude-code' : g.tier === 'direct' ? _providerOf(g.models[0].id) : 'openrouter') === providerId;
+      return (g.tier === 'local' ? 'ollama' : g.tier === 'claude-code' || g.tier === 'chatgpt' ? g.tier : g.tier === 'direct' ? _providerOf(g.models[0].id) : 'openrouter') === providerId;
     });
   }
   var _providerKeys = {};   // provider id → has an API key (from the extension)
@@ -162,11 +163,10 @@
     providerDrop.clear();
     var noKey = function (id) { return _providerKeys[id] === false ? ' · no key' : ''; };
     providerDrop.addOpt('openrouter', 'OpenRouter' + noKey('openrouter'), selected === 'openrouter');
-    // Claude Code: the user's installed `claude` command and Claude login, no key
-    if (_groupsOf('claude-code').length) {
-      providerDrop.addGroup('\u2728 Your Claude login');
-      providerDrop.addOpt('claude-code', 'Claude Code', selected === 'claude-code');
-    }
+    // Through a command the user installed and signed in to (claude, codex): no key
+    if (_groupsOf('claude-code').length || _groupsOf('chatgpt').length) { providerDrop.addGroup('\u2728 Your own login'); }
+    if (_groupsOf('claude-code').length) { providerDrop.addOpt('claude-code', 'Claude Code', selected === 'claude-code'); }
+    if (_groupsOf('chatgpt').length) { providerDrop.addOpt('chatgpt', 'ChatGPT', selected === 'chatgpt'); }
     var direct = MODEL_GROUPS.filter(function (g) { return g.tier === 'direct'; });
     if (direct.length) { providerDrop.addGroup('🔑 Your own key'); }
     direct.forEach(function (g) {
@@ -191,7 +191,7 @@
       });
     });
     // A model set in Settings that the list does not have (a custom Ollama model, an older id)
-    if (selected && !known) { modelDrop.addOpt(selected, selected.replace(/^(direct:[^/]+\/|ollama\/|claude-code\/)/, ''), true); }
+    if (selected && !known) { modelDrop.addOpt(selected, selected.replace(/^(direct:[^/]+\/|ollama\/|claude-code\/|chatgpt\/)/, ''), true); }
   }
   /** Shows a model (and its provider) as selected, without telling the extension. */
   function _showModel(modelId) {

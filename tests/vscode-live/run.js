@@ -45,6 +45,8 @@ async function main() {
   // A stand-in `claude` command for the Claude Code provider (the real one is not installed in CI)
   const fakeClaude = path.join(work, 'fake-claude');
   fs.writeFileSync(fakeClaude, `#!/bin/sh\nexec "${process.execPath}" "${path.join(root, 'tests/fixtures/fakeClaude.js')}" "$@"\n`, { mode: 0o755 });
+  const fakeCodex = path.join(work, 'fake-codex');
+  fs.writeFileSync(fakeCodex, `#!/bin/sh\nexec "${process.execPath}" "${path.join(root, 'tests/fixtures/fakeCodex.js')}" "$@"\n`, { mode: 0o755 });
   process.env.LIVE_WORK_DIR = work;
   const server = await start(0);
   const results = path.join(work, 'results.json');
@@ -53,7 +55,7 @@ async function main() {
       version: '1.120.0',
       extensionDevelopmentPath: root,
       extensionTestsPath: path.join(__dirname, 'suite'),
-      extensionTestsEnv: { CODICO_EVAL_MODE: '1', CODICO_TEST_OPENROUTER_URL: `http://127.0.0.1:${server.address().port}/api/v1/chat/completions`, CODICO_TEST_DIRECT_URL: `http://127.0.0.1:${server.address().port}/deepseek/v1/chat/completions`, LIVE_FAKE_CLAUDE: fakeClaude, FAKE_CLAUDE_LOG: path.join(work, 'fake-claude.jsonl'), LIVE_PORT: String(server.address().port), LIVE_OUT: results, LIVE_ONLY: process.env.LIVE_ONLY || '' },
+      extensionTestsEnv: { CODICO_EVAL_MODE: '1', CODICO_TEST_OPENROUTER_URL: `http://127.0.0.1:${server.address().port}/api/v1/chat/completions`, CODICO_TEST_DIRECT_URL: `http://127.0.0.1:${server.address().port}/deepseek/v1/chat/completions`, LIVE_FAKE_CLAUDE: fakeClaude, FAKE_CLAUDE_LOG: path.join(work, 'fake-claude.jsonl'), LIVE_FAKE_CODEX: fakeCodex, FAKE_CODEX_LOG: path.join(work, 'fake-codex.jsonl'), LIVE_PORT: String(server.address().port), LIVE_OUT: results, LIVE_ONLY: process.env.LIVE_ONLY || '' },
       launchArgs: [ws, '--disable-extensions', '--skip-welcome', '--skip-release-notes',
         '--user-data-dir', path.join(work, 'user-data'), '--extensions-dir', path.join(work, 'extensions')],
     });

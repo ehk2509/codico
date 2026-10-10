@@ -10,6 +10,17 @@
     ]
   },
   {
+    "tier": "chatgpt",
+    "provider": "ChatGPT",
+    "models": [
+      { "id": "chatgpt/gpt-6.1-sol", "label": "GPT-6.1 Sol" },
+      { "id": "chatgpt/gpt-6-sol", "label": "GPT-6 Sol" },
+      { "id": "chatgpt/gpt-6-astra", "label": "GPT-6 Astra" },
+      { "id": "chatgpt/gpt-6-luna", "label": "GPT-6 Luna" },
+      { "id": "chatgpt/gpt-5.5", "label": "GPT-5.5" }
+    ]
+  },
+  {
     "tier": "local",
     "provider": "Ollama",
     "models": [
@@ -392,19 +403,24 @@
     "tier": "direct",
     "provider": "OpenAI",
     "models": [
-      { "id": "direct:openai/gpt-4o", "label": "GPT-4o" },
-      { "id": "direct:openai/gpt-4o-mini", "label": "GPT-4o Mini" },
-      { "id": "direct:openai/o3", "label": "o3" },
-      { "id": "direct:openai/o4-mini", "label": "o4-mini" }
+      { "id": "direct:openai/gpt-6.1-sol", "label": "GPT-6.1 Sol" },
+      { "id": "direct:openai/gpt-6-sol", "label": "GPT-6 Sol" },
+      { "id": "direct:openai/gpt-6-astra", "label": "GPT-6 Astra" },
+      { "id": "direct:openai/gpt-6-luna", "label": "GPT-6 Luna" },
+      { "id": "direct:openai/gpt-5.5", "label": "GPT-5.5" },
+      { "id": "direct:openai/gpt-5.4-mini", "label": "GPT-5.4 Mini" }
     ]
   },
   {
     "tier": "direct",
     "provider": "Google",
     "models": [
-      { "id": "direct:google/gemini-2.0-flash", "label": "Gemini 2.0 Flash" },
-      { "id": "direct:google/gemini-2.5-pro-preview-05-06", "label": "Gemini 2.5 Pro" },
-      { "id": "direct:google/gemini-1.5-flash-latest", "label": "Gemini 1.5 Flash" }
+      { "id": "direct:google/gemini-3.8-flash", "label": "Gemini 3.8 Flash" },
+      { "id": "direct:google/gemini-3.5-flash", "label": "Gemini 3.5 Flash" },
+      { "id": "direct:google/gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash Lite" },
+      { "id": "direct:google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro" },
+      { "id": "direct:google/gemini-2.5-pro", "label": "Gemini 2.5 Pro" },
+      { "id": "direct:google/gemini-2.5-flash", "label": "Gemini 2.5 Flash" }
     ]
   },
   {
