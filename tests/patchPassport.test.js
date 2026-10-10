@@ -177,3 +177,9 @@ test('the Markdown form', () => {
     '',
   ].join('\n'));
 });
+
+test('the report is saved with the reply, so a reopened thread shows it again', () => {
+  const { REPLAY_TYPES } = require('../out/chatProtocol.js');
+  assert.ok(REPLAY_TYPES.has('patchPassport'));
+});
+

@@ -40,7 +40,7 @@ export interface DisplayMessage {
 /** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
 export const REPLAY_TYPES = new Set([
     'appendThinking', 'appendContent', 'toolStart', 'toolResult', 'fileWriteResult',
-    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError',
+    'terminalChunk', 'todoUpdate', 'streamFinishReason', 'streamError', 'patchPassport',
 ]);
 /** Approximate characters of streamed text stored per reply. */
 export const REPLAY_BUDGET = 400_000;
