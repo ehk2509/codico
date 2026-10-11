@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.13 - 2026-10-11
 
 ### Changed
 - Fewer requests per task. The agent was told to make one tool call per reply, so every look at the code cost a full request (around 36,000 tokens each in long tasks). It is now told to issue independent reads and searches together in one reply; the loop already ran several calls per reply.
