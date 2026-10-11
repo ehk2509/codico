@@ -102,6 +102,20 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         },
     },
     {
+        name: 'search_code',
+        description: 'Ranked search of the whole repository: describe what you are looking for in words or identifiers ("where the retry delay is computed", "session token refresh") and get the best-matching definitions with file and line, the symbols they define and the files that import them. Use it first when you do not know where something is. Use search_files when you know the exact text.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string', description: 'Words or identifiers describing the code you are looking for.' },
+                path: { type: 'string', description: 'Optional folder to search under, such as src/api.' },
+                max_results: { type: 'integer', minimum: 1, maximum: 20, description: 'How many results (default 8).' },
+            },
+            required: ['query'],
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'find_files',
         description: 'Find files by name or glob under an optional directory.',
         inputSchema: {
@@ -253,6 +267,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
 
 const READ_ONLY = new Set<ToolCall['type']>([
     'delegate',
+    'search_code',
     'read_file',
     'list_directory',
     'search_files',
@@ -516,6 +531,12 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'get_diagnostics':
             return { type: 'get_diagnostics', filepath: stringArg(args, 'filepath') };
+        case 'search_code': {
+            const query = stringArg(args, 'query');
+            const pathPrefix = stringArg(args, 'path');
+            const max = typeof args.max_results === 'number' && args.max_results > 0 ? Math.floor(args.max_results) : undefined;
+            return query ? { type: 'search_code', query, ...(pathPrefix ? { path: pathPrefix } : {}), ...(max ? { maxResults: max } : {}) } : null;
+        }
         case 'delegate': {
             const task = stringArg(args, 'task');
             const agent = stringArg(args, 'agent');

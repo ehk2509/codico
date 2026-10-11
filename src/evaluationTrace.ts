@@ -29,6 +29,8 @@ export function evaluationToolTarget(tool: ToolCall): string {
             return tool.filepath ?? 'workspace';
         case 'delegate':
             return clip(tool.task);
+        case 'search_code':
+            return clip(`${tool.query}${tool.path ? ` @ ${tool.path}` : ''}`);
         case 'fetch_url':
         case 'browser_navigate':
             return clip(tool.url);

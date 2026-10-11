@@ -344,6 +344,13 @@
           "default": "",
           "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
         },
+        "codico.codeSearchMaxFiles": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 100,
+          "maximum": 100000,
+          "description": "How many files the local code search (the agent's search_code tool) indexes. The index is built on your machine the first time it is used, needs no API key, and takes roughly 2 to 3 MB of memory per MB of source"
+        },
         "codico.subagentMaxSteps": {
           "type": "number",
           "default": 15,

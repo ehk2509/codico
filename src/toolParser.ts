@@ -115,6 +115,15 @@ export interface UpdateTodoTool {
     items: Array<{ status: 'pending' | 'active' | 'done' | 'failed'; text: string }>;
 }
 
+/** Ranked search of the whole repository for a description or identifiers. */
+export interface SearchCodeTool {
+    type: 'search_code';
+    query: string;
+    /** Only files under this folder. */
+    path?: string;
+    maxResults?: number;
+}
+
 /** Hands a look-around task to a subagent with its own conversation; only its report comes back. */
 export interface DelegateTool {
     type: 'delegate';
@@ -145,7 +154,8 @@ export type ToolCall =
     | DebugGetCallstackTool
     | DebugListBreakpointsTool
     | UpdateTodoTool
-    | DelegateTool;
+    | DelegateTool
+    | SearchCodeTool;
 
 /**
  * Identity of a tool call for loop detection: the tool type plus a hash of all
@@ -157,7 +167,7 @@ export function toolFingerprint(tool: ToolCall): string {
     return `${tool.type}:${hash}`;
 }
 
-const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate';
+const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code';
 const TOOL_FENCE_OPEN_RE = new RegExp('(`{3,})(' + TOOL_NAMES + ')[ \\t]*\\r?\\n', 'g');
 const FENCE_LINE_RE = /^ {0,3}(`{3,})(.*)$/;
 
@@ -322,6 +332,15 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
         case 'fetch_url': {
             const url = extractField(body, 'url');
             if (url) { tools.push({ type: 'fetch_url', url }); }
+            break;
+        }
+        case 'search_code': {
+            const query = extractField(body, 'query');
+            if (query) {
+                const pathPrefix = extractField(body, 'path');
+                const max = parseInt(extractField(body, 'max_results') ?? '', 10);
+                tools.push({ type: 'search_code', query, ...(pathPrefix ? { path: pathPrefix } : {}), ...(max > 0 ? { maxResults: max } : {}) });
+            }
             break;
         }
         case 'delegate': {

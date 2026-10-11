@@ -14,7 +14,7 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
  */
 
 /** What a subagent may use. No edits, no commands, no web, and no `delegate`. */
-export const SUBAGENT_TOOLS: ReadonlySet<ToolCall['type']> = new Set(['read_file', 'list_directory', 'search_files', 'find_files', 'get_diagnostics', 'lsp_symbol']);
+export const SUBAGENT_TOOLS: ReadonlySet<ToolCall['type']> = new Set(['read_file', 'list_directory', 'search_files', 'search_code', 'find_files', 'get_diagnostics', 'lsp_symbol']);
 
 export const SUBAGENT_DEFAULT_MAX_STEPS = 15;
 /** A report longer than this is cut: the point of a subagent is a short answer. */

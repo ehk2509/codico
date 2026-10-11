@@ -402,6 +402,25 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── Local code search: the search_code tool ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
+  await scenario('cs_native', ({ reqs, error }) => {
+    const results = ((reqs[1] || {}).toolResults || []).join('\n=====\n');
+    const [first, second] = (reqs[1] || {}).toolResults || [];
+    // The definition first, with what it defines and who imports it
+    const ranked = /^\[search_code: compute the shipping cost for an order\][^\n]*\n\n1\. shop\/shipping\.ts:1-\d+  defines: shippingCost\n/.test(first || '') && /2\texport function shippingCost/.test(first || '') && /used by: shop\/checkout\.ts/.test(first || '');
+    // The file excluded by .codicoignore holds "SECRET-TOKEN": it is not indexed
+    // Nor is the file outside the workspace that a symbolic link inside it points to
+    const noSecret = !!second && !/SECRET-TOKEN-12345|OUTSIDE-SECRET|fixtures\/link\b|^\d+\. fixtures\/secret\.txt/m.test(results);
+    return { ok: !error && reqs.length === 2 && ranked && noSecret, why: `${reqs.length} requests; the definition ranked first, with its symbol and importer: ${ranked}; neither the ignored secret file nor the file behind a symbolic link out of the workspace is in any result: ${noSecret}` };
+  });
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  await scenario('cs_fresh', ({ reqs, error }) => {
+    const text = reqs.map(r => r.lastUser).join('\n');
+    const found = /\[search_code: zebra quokka handler\][^\n]*\n\n1\. live\/cs-new\.ts:1-\d+  defines: zebraQuokkaHandler/.test(text);
+    return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
+  });
+
   // ── Subagents: the delegate tool runs a second agent with its own conversation ──
   for (const [main, child, model, marker, sawFile] of [['sub_main', 'sub_child', 'deepseek/deepseek-v4-flash', 'SUBAGENT-FOUND', 'sawNotesFile'], ['subf_main', 'subf_child', 'ollama/fake-model', 'FENCED-SUB', 'sawConfigFile']]) {
     await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model, maxIterations: 12 });

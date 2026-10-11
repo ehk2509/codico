@@ -1203,3 +1203,15 @@ test('a delegation shows as a step, with the subagent\'s own reads under it', as
   assert.deepEqual(errors, []);
 });
 
+test('a code search shows as a step with its result count, and its fenced form is not shown as code', async () => {
+  const { page, send, errors } = await openPanel();
+  await send({ type: 'startMessage', id: 'cs1' }, { type: 'toolStart', id: 'cs1', tool: 'search_code', label: 'where the retry delay is computed' },
+    { type: 'toolResult', id: 'cs1', tool: 'search_code', label: 'where the retry delay is computed — 8 results', success: true },
+    { type: 'appendContent', id: 'cs1', text: 'Looking.\n\n```search_code\nquery: retry delay\n```\n' }, { type: 'endMessage', id: 'cs1' });
+  const pill = await page.locator('#msg-cs1 .step-pill').first().textContent();
+  assert.match(pill, /Searched code/);
+  assert.match(pill, /8 results/);
+  assert.equal(await page.locator('#msg-cs1 .code-wrap').count(), 0);
+  assert.deepEqual(errors, []);
+});
+

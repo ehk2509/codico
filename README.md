@@ -260,6 +260,18 @@ When a reply finishes, or Codico waits for your approval (a file change, a comma
 - VS Code in front but the chat hidden → a notification inside VS Code with a **Show Codico** button
 - Nothing while the chat is in view. Turn it off with `"codico.notifications": "off"`. In a remote window (SSH, WSL, containers) only the in-editor notification is used
 
+### Code Search
+The agent has a ranked search of the whole repository, `search_code`. It describes what it is looking for in words or identifiers — "where the retry delay is computed", "session token refresh" — and gets back the best-matching definitions with file and line, the symbols each defines, a few of its lines, and the files that import it. One call often replaces a round of trial-and-error text searches.
+
+- **Local and free.** The index is built on your machine the first time the tool is used. No API key, no embeddings, and nothing leaves the machine.
+- **Symbol-aware.** Files are cut at function and class boundaries, so a result is a whole definition. The chunk that defines a symbol outranks the ones that mention it. `autoCompactThreshold`, `auto_compact_threshold` and "compact threshold" all find the same code. Definitions are recognised in TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby and PHP; other files are searched as text.
+- **Knows who uses what.** For JavaScript, TypeScript and Python, the first results list the files that import them.
+- **Large repositories.** Up to `codico.codeSearchMaxFiles` files (default 5,000) and about 30 MB of source; files that git ignores, generated or binary files, lock files and files over 200 KB are skipped. On a test tree of 3,365 files (39 MB) the index took 3.4 seconds to build and a query 2 ms.
+- **Current.** Changed files are re-indexed before the next search, and the agent's own edits at once.
+- **Same protections as reading.** Files excluded by `.codicoignore`, files behind a symbolic link that leads outside the workspace, `.env` files and private keys are never indexed or shown.
+
+This is separate from the optional embeddings index used by `@workspace` (**Codico: Index Workspace**), which sends code to an embeddings API and is limited to 600 files.
+
 ### Subagents
 For a question that needs a lot of reading before anything can be done — how a feature works end to end, every place something is used, what a change would affect — the agent can **delegate** it. A subagent starts with a conversation of its own, reads and searches as much as the question needs, and returns a short report with file paths and line numbers. Only the report enters the main conversation, which stays small however much was read.
 
@@ -729,6 +741,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.responseSummaryEnabled` | `boolean` | `true` | Append a short Summary and Conclusion block to AI responses |
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
 | `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
+| `codico.codeSearchMaxFiles` | `number` | `5000` | Files indexed by the local code search (`search_code`) |
 | `codico.subagentMaxSteps` | `number` | `15` | Requests a subagent may make before it must write its report |
 | `codico.changeReport` | `boolean` | `true` | Show a change report after a reply that changed files |
 | `codico.notifications` | `string` | `"whenAway"` | Notify when Codico finishes or needs you while you are not looking at the chat (`off` to disable) |

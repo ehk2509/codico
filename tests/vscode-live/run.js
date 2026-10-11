@@ -28,6 +28,11 @@ async function main() {
   fs.writeFileSync(path.join(ws, '.codicoignore'), 'fixtures/secret.txt\n');
   fs.writeFileSync(path.join(ws, 'live/keep-me.txt'), 'keep\n');
   fs.writeFileSync(path.join(ws, 'fixtures/numbered.txt'), 'alpha=1\nbeta=2\ngamma=3\n');
+  // For the code search: a definition, a file that imports it, and a file that only mentions the words
+  fs.mkdirSync(path.join(ws, 'shop'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'shop/shipping.ts'), '/** Price of sending an order. */\nexport function shippingCost(order: { weight: number }): number {\n  return 4 + order.weight * 0.5;\n}\n');
+  fs.writeFileSync(path.join(ws, 'shop/checkout.ts'), "import { shippingCost } from './shipping';\n\nexport function total(order: { weight: number; price: number }): number {\n  return order.price + shippingCost(order);\n}\n");
+  fs.writeFileSync(path.join(ws, 'shop/notes.md'), 'Orders are shipped on Mondays.\n');
   // Read only by subagents: their content must never reach the main conversation
   fs.writeFileSync(path.join(ws, 'fixtures/sub-native.txt'), 'SUB-NATIVE-CONTENT\n');
   fs.writeFileSync(path.join(ws, 'fixtures/sub-fenced.txt'), 'SUB-FENCED-CONTENT\n');

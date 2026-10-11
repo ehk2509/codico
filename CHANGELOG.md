@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Local code search for the agent: a `search_code` tool that ranks the whole repository for a description or identifiers and returns the best-matching definitions with file and line, the symbols they define, a few of their lines and the files that import them. It is symbol-aware (files are cut at function and class boundaries; the chunk that defines a symbol outranks those that mention it; `autoCompactThreshold` and "compact threshold" find the same code), built on your machine on first use with no API key, kept current as files change, and sized for large repositories (`codico.codeSearchMaxFiles`, default 5,000 files). It applies the read tool's protections: nothing from `.codicoignore`d files, from files behind a symbolic link out of the workspace, from `.env` files or private keys. Available in Ask mode and to subagents.
+
 ## 0.3.14 - 2026-10-11
 
 ### Added

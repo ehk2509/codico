@@ -4,6 +4,7 @@ const EXPLORATION_TOOLS = new Set<ToolCall['type']>([
     'read_file',
     'list_directory',
     'search_files',
+    'search_code',
     'find_files',
     'get_diagnostics',
     'fetch_url',
@@ -30,6 +31,7 @@ export function explorationTarget(tool: ToolCall): string | null {
         case 'fetch_url': return `fetch_url:${tool.url}`;
         case 'browser_get_text': return `browser_get_text:${tool.selector ?? 'page'}`;
         case 'search_files': return `search_files:${tool.pattern}:${tool.glob ?? ''}`;
+        case 'search_code': return `search_code:${tool.query}:${tool.path ?? ''}`;
         case 'find_files': return `find_files:${tool.pattern}:${tool.dirpath ?? ''}`;
         default: return null;
     }

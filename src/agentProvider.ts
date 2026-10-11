@@ -14,6 +14,7 @@ import { passportMarkdown, PassportRecorder, PatchPassport } from './patchPasspo
 import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
 import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
+import { CodeSearchService } from './codeSearchService';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
@@ -127,6 +128,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _mcpReady = false;
     private _watchersCreated = false;
     private readonly _workspaceIndex: WorkspaceIndex;
+    private readonly _codeSearch = new CodeSearchService();
     private _history: ChatMessage[] = [];
     private _activeThreadId: string = '';
     private _displayMessages: DisplayMessage[] = [];
@@ -286,9 +288,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._watchersCreated = true;
 
             const watcher = vscode.workspace.createFileSystemWatcher('**/*');
-            watcher.onDidChange(uri => { if (this._workspaceIndex.isIndexed) { void this._workspaceIndex.reindexFile(uri); } });
-            watcher.onDidCreate(uri => { if (this._workspaceIndex.isIndexed) { void this._workspaceIndex.reindexFile(uri); } });
-            watcher.onDidDelete(uri => this._workspaceIndex.removeFile(uri));
+            watcher.onDidChange(uri => { this._codeSearch.changed(uri); if (this._workspaceIndex.isIndexed) { void this._workspaceIndex.reindexFile(uri); } });
+            watcher.onDidCreate(uri => { this._codeSearch.changed(uri); if (this._workspaceIndex.isIndexed) { void this._workspaceIndex.reindexFile(uri); } });
+            watcher.onDidDelete(uri => { this._codeSearch.removed(uri); this._workspaceIndex.removeFile(uri); });
             this._context.subscriptions.push(watcher);
 
             // Watch Problems panel — push live error/warning counts to the webview badge
@@ -1915,6 +1917,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 result = await this._handleRunTerminal(tool, msgId, signal);
                 break;
             }
+            case 'search_code': {
+                this._post({ type: 'toolStart', id: msgId, tool: 'search_code', label: tool.query.slice(0, 70) });
+                const found = await this._codeSearch.run(tool, signal);
+                this._post({ type: 'toolResult', id: msgId, tool: 'search_code', label: found.label, success: found.success, error: found.error });
+                result = found.text;
+                break;
+            }
             case 'search_files': {
                 // Use the same label format that _handleSearchFiles will use for toolResult
                 // so showToolResult can find the pending pill and update it in-place.
@@ -2019,6 +2028,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             }
         }
+        // The agent's own edit is searchable at once, without waiting for the file watcher
+        if (tool.type === 'write_file' || tool.type === 'edit_file') { this._codeSearch.changedPath(tool.filepath); }
         this._lastInlineResult = result;
     }
 
