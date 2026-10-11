@@ -27,6 +27,7 @@ async function main() {
   fs.writeFileSync(path.join(ws, 'fixtures/secret.txt'), 'SECRET-TOKEN-12345\n');
   fs.writeFileSync(path.join(ws, '.codicoignore'), 'fixtures/secret.txt\n');
   fs.writeFileSync(path.join(ws, 'live/keep-me.txt'), 'keep\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/numbered.txt'), 'alpha=1\nbeta=2\ngamma=3\n');
   // For the change report: a file to edit and a test that reads it
   fs.writeFileSync(path.join(ws, 'fixtures/pp.txt'), 'value=1\n');
   fs.writeFileSync(path.join(ws, 'fixtures/pp.test.js'), "const test = require('node:test'); const assert = require('node:assert'); const fs = require('node:fs');\ntest('value is 2', () => { assert.match(fs.readFileSync(__dirname + '/pp.txt', 'utf8'), /value=2/); });\n");

@@ -35,3 +35,44 @@ test('a large file outline lists symbols with line ranges, nested one level', ()
   const many = formatOutline(Array.from({ length: 5 }, (_, i) => ({ name: 'f' + i, kind: 'function', startLine: i + 1, endLine: i + 1, depth: 0 })), 3);
   assert.match(many, /… 2 more symbols/);
 });
+
+test('reads are numbered like cat -n, from the line the window starts at', () => {
+  const { numberLines } = require('../out/fileReadWindow.js');
+  assert.equal(numberLines('a\n\n  c', 1), '1\ta\n2\t\n3\t  c');
+  assert.equal(numberLines('x\ny', 998), '998\tx\n999\ty');
+});
+
+test('line numbers copied from a read are taken off an edit, and only then', () => {
+  const { withoutLineNumbers } = require('../out/fileReadWindow.js');
+  const { withoutCopiedLineNumbers } = require('../out/editMatcher.js');
+  assert.equal(withoutLineNumbers('12\tconst a = 1;\n13\t\n14\t  return a;'), 'const a = 1;\n\n  return a;');
+  assert.equal(withoutLineNumbers('  7\tx'), 'x');
+  // Not numbered lines: left alone
+  assert.equal(withoutLineNumbers('const a = 1;\n13\treturn a;'), null);
+  assert.equal(withoutLineNumbers('12 const a = 1;'), null, 'a number and a space is code, not a line number');
+  assert.equal(withoutLineNumbers(''), null);
+
+  const source = 'alpha=1\nbeta=2\ngamma=3\n';
+  assert.deepEqual(withoutCopiedLineNumbers(source, '2\tbeta=2', '2\tbeta=20'), { oldText: 'beta=2', newText: 'beta=20' });
+  // The new text was written without numbers: it is used as it is
+  assert.deepEqual(withoutCopiedLineNumbers(source, '2\tbeta=2\n3\tgamma=3', 'beta=20\ngamma=30'), { oldText: 'beta=2\ngamma=3', newText: 'beta=20\ngamma=30' });
+  // The old text matches as given: nothing is touched, even if it looks numbered
+  const tsv = '1\tone\n2\ttwo\n';
+  assert.deepEqual(withoutCopiedLineNumbers(tsv, '2\ttwo', '2\tTWO'), { oldText: '2\ttwo', newText: '2\tTWO' });
+  // Stripping would not match either: left for the normal "not found" message
+  assert.deepEqual(withoutCopiedLineNumbers(source, '9\tdelta=4', '9\tx'), { oldText: '9\tdelta=4', newText: '9\tx' });
+});
+
+test('the prompt asks for looks to be batched, and for files to be read with the read tool', () => {
+  const { SYSTEM_PROMPT } = require('../out/openRouterClient.js');
+  const { NATIVE_TOOL_PROMPT } = require('../out/nativeTools.js');
+  assert.doesNotMatch(SYSTEM_PROMPT, /one tool fence at a time|One tool per response/i);
+  assert.match(SYSTEM_PROMPT, /issue them together in the same response/);
+  assert.match(SYSTEM_PROMPT, /never with run_terminal \(no cat, sed, awk, head, tail or grep/);
+  assert.match(SYSTEM_PROMPT, /start_line: <optional first line>/);
+  assert.match(NATIVE_TOOL_PROMPT, /several tool calls in the same response/);
+  // Rule numbers stay in sequence
+  const rules = SYSTEM_PROMPT.slice(SYSTEM_PROMPT.indexOf('## Rules')).match(/^\d+(?=\. )/gm).map(Number);
+  assert.deepEqual(rules, rules.map((_, i) => i + 1));
+});
+
