@@ -402,6 +402,25 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── Subagents: the delegate tool runs a second agent with its own conversation ──
+  for (const [main, child, model, marker, sawFile] of [['sub_main', 'sub_child', 'deepseek/deepseek-v4-flash', 'SUBAGENT-FOUND', 'sawNotesFile'], ['subf_main', 'subf_child', 'ollama/fake-model', 'FENCED-SUB', 'sawConfigFile']]) {
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model, maxIterations: 12 });
+    const before = (await getLog()).length; const t0 = Date.now(); let error = null;
+    try { await vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${main}] please do the task`); } catch (e) { error = String(e && e.message || e); }
+    const log = (await getLog()).slice(before).filter(e => e.stream);
+    const mainReqs = log.filter(e => e.scenario === main); const childReqs = log.filter(e => e.scenario === child);
+    const followUp = mainReqs[1] || {};
+    const reportBack = new RegExp(`Its reads are not in this conversation[\\s\\S]*## Subagent report\\n\\nREPORT: ${marker}`).test(followUp.lastText || followUp.lastUser || '');
+    // The file the child read never enters the main conversation
+    const isolated = mainReqs.length > 0 && mainReqs.every(r => !r[sawFile]) && childReqs.length === 2 && childReqs[1][sawFile];
+    const ownPrompt = childReqs.length > 0 && childReqs.every(r => r.subagentPrompt) && mainReqs.every(r => !r.subagentPrompt);
+    const native = model.startsWith('deepseek');
+    const readOnly = !native || (!childReqs[0].toolNames.some(n => ['edit_file', 'write_file', 'run_terminal', 'delegate'].includes(n)) && childReqs[1].refusedTool && read('fixtures/sub-native.txt') === 'SUB-NATIVE-CONTENT\n');
+    results.push({ name: main, ms: Date.now() - t0, requests: log.length, ok: !error && mainReqs.length === 2 && reportBack && isolated && ownPrompt && readOnly,
+      why: `main ${mainReqs.length} requests, subagent ${childReqs.length}; report returned to the main agent: ${reportBack}; the file it read stayed out of the main conversation: ${isolated}; its own system prompt: ${ownPrompt}; read-only (edit refused, file unchanged): ${readOnly}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Fewer requests: several looks in one reply, and reads that carry line numbers ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
   await scenario('batch_native', ({ reqs, error }) => {

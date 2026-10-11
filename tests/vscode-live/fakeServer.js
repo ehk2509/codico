@@ -83,6 +83,11 @@ const SCRIPTS = (port) => ({
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_plain: ['Answered without the effort option.'],
+  // A subagent: the main agent delegates, the child reads (and tries an edit it may not make), only the report comes back
+  sub_main: [{ toolCalls: [{ name: 'delegate', args: { task: 'Find the notes marker and report its file and line.\n[SCENARIO:sub_child]' } }] }, 'The subagent found it.'],
+  sub_child: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/sub-native.txt' } }, { name: 'edit_file', args: { filepath: 'fixtures/sub-native.txt', old_str: 'SUB-NATIVE-CONTENT', new_str: 'CHANGED-BY-SUBAGENT' } }] }, 'REPORT: SUBAGENT-FOUND the marker at fixtures/sub-native.txt:1'],
+  subf_main: ['Delegating.\n\n' + tool('delegate', 'task:\nFind the port in the config.\n[SCENARIO:subf_child]'), 'Done with the report.'],
+  subf_child: [tool('read_file', 'filepath: fixtures/sub-fenced.txt'), 'REPORT: FENCED-SUB the port is set on line 2'],
   // Several independent looks in one reply: one request for all of them
   batch_native: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }, { name: 'read_file', args: { filepath: 'fixtures/config.txt' } }, { name: 'search_files', args: { pattern: 'port=' } }] }, 'Looked at all three.'],
   batch_fenced: ['Looking at both.\n\n' + tool('read_file', 'filepath: fixtures/notes.txt') + '\n' + tool('read_file', 'filepath: fixtures/config.txt\nstart_line: 2\nend_line: 2'), 'Looked at both.'],
@@ -148,7 +153,7 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),

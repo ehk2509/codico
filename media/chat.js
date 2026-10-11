@@ -1637,7 +1637,7 @@
     search_files: ['searched'], find_files: ['looked for', 'file', 'files'], get_diagnostics: ['checked problems'],
     run_terminal: ['ran', 'command', 'commands'], edit_file: ['edited', 'file', 'files'], write_file: ['wrote', 'file', 'files'],
     fetch_url: ['fetched', 'page', 'pages'], lsp_symbol: ['looked up', 'symbol', 'symbols'], mcp_call: ['called', 'MCP tool', 'MCP tools'],
-    update_todo: ['updated the task list']
+    update_todo: ['updated the task list'], delegate: ['delegated', 'task', 'tasks']
   };
   var _stepRunSeq = 0;
   function _stepSummary(pills) {
@@ -2803,7 +2803,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', delegate: '\uD83E\uDDED',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',
@@ -2819,7 +2819,7 @@
       '<span class="step-pill-verb pending">' + ({
         read_file: 'Reading', list_directory: 'Listing', run_terminal: 'Running',
         search_files: 'Searching', find_files: 'Finding', edit_file: 'Editing',
-        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', write_file: 'Writing',
+        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', write_file: 'Writing', delegate: 'Delegating',
         browser_navigate: 'Navigating', browser_click: 'Clicking',
         browser_type: 'Typing', browser_get_text: 'Reading', browser_screenshot: 'Capturing',
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
@@ -2916,7 +2916,7 @@
     var verbs = {
       read_file: 'Read', list_directory: 'Listed', run_terminal: 'Ran',
       search_files: 'Searched', find_files: 'Found', edit_file: 'Edited',
-      get_diagnostics: 'Analyzed', fetch_url: 'Fetched',
+      get_diagnostics: 'Analyzed', fetch_url: 'Fetched', delegate: 'Subagent reported',
       browser_navigate: 'Navigated', browser_click: 'Clicked',
       browser_type: 'Typed', browser_get_text: 'Read page',
       browser_screenshot: 'Screenshot', browser_close: 'Closed browser',
@@ -2926,7 +2926,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', delegate: '\uD83E\uDDED',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',

@@ -1186,3 +1186,20 @@ test('cancelling a plan leaves the mode on Plan', async () => {
   assert.equal(await page.locator('.mode-btn.mode-active').getAttribute('id'), 'mode-plan-btn');
 });
 
+test('a delegation shows as a step, with the subagent\'s own reads under it', async () => {
+  const { page, send, errors } = await openPanel();
+  await send({ type: 'startMessage', id: 'd1' },
+    { type: 'toolStart', id: 'd1', tool: 'delegate', label: 'Find every caller of retry()' },
+    { type: 'toolStart', id: 'd1', tool: 'search_files', label: 'retry(' }, { type: 'toolResult', id: 'd1', tool: 'search_files', label: 'retry(', success: true },
+    { type: 'toolStart', id: 'd1', tool: 'read_file', label: 'src/net.ts' }, { type: 'toolResult', id: 'd1', tool: 'read_file', label: 'src/net.ts', success: true },
+    { type: 'toolResult', id: 'd1', tool: 'delegate', label: 'Find every caller of retry() — 2 requests, 2 tool calls', success: true },
+    { type: 'appendContent', id: 'd1', text: 'There are three callers.' }, { type: 'endMessage', id: 'd1' });
+  const pills = await page.locator('#msg-d1 .step-pill').allTextContents();
+  assert.equal(pills.length, 3);
+  assert.ok(pills.some(t => /Subagent reported/.test(t) && /2 requests, 2 tool calls/.test(t)), pills.join(' | '));
+  // The fenced form of the call is a tool block, not shown as code
+  await send({ type: 'startMessage', id: 'd2' }, { type: 'appendContent', id: 'd2', text: 'Delegating.\n\n```delegate\ntask:\nFind it.\n```\n' }, { type: 'endMessage', id: 'd2' });
+  assert.equal(await page.locator('#msg-d2 .code-wrap').count(), 0);
+  assert.deepEqual(errors, []);
+});
+

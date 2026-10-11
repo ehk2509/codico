@@ -115,6 +115,14 @@ export interface UpdateTodoTool {
     items: Array<{ status: 'pending' | 'active' | 'done' | 'failed'; text: string }>;
 }
 
+/** Hands a look-around task to a subagent with its own conversation; only its report comes back. */
+export interface DelegateTool {
+    type: 'delegate';
+    task: string;
+    /** A project agent (.codico/agents) whose instructions the subagent follows. */
+    agent?: string;
+}
+
 export type ToolCall =
     | WriteFileTool
     | ReadFileTool
@@ -136,7 +144,8 @@ export type ToolCall =
     | DebugGetVariablesTool
     | DebugGetCallstackTool
     | DebugListBreakpointsTool
-    | UpdateTodoTool;
+    | UpdateTodoTool
+    | DelegateTool;
 
 /**
  * Identity of a tool call for loop detection: the tool type plus a hash of all
@@ -148,7 +157,7 @@ export function toolFingerprint(tool: ToolCall): string {
     return `${tool.type}:${hash}`;
 }
 
-const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo';
+const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate';
 const TOOL_FENCE_OPEN_RE = new RegExp('(`{3,})(' + TOOL_NAMES + ')[ \\t]*\\r?\\n', 'g');
 const FENCE_LINE_RE = /^ {0,3}(`{3,})(.*)$/;
 
@@ -313,6 +322,14 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
         case 'fetch_url': {
             const url = extractField(body, 'url');
             if (url) { tools.push({ type: 'fetch_url', url }); }
+            break;
+        }
+        case 'delegate': {
+            // The task runs to the end of the block; "agent:" is an optional first line
+            const at = body.search(/^task:/m);
+            const task = at >= 0 ? body.slice(at + 'task:'.length).trim() : '';
+            const agent = at > 0 ? extractField(body.slice(0, at), 'agent') : undefined;
+            if (task) { tools.push({ type: 'delegate', task, ...(agent ? { agent } : {}) }); }
             break;
         }
         case 'browser_navigate': {

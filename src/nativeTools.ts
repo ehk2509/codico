@@ -124,6 +124,19 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         },
     },
     {
+        name: 'delegate',
+        description: 'Hand a look-around task to a subagent that has its own conversation. It reads and searches (read-only) and returns a short report; what it read does not enter this conversation. Use it for questions that need many files read: how something works, where something is used, what a change would affect. Not for edits or commands.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                task: { type: 'string', description: 'A self-contained task: the subagent sees nothing of this conversation. Say what to find out and what to report (file paths, line numbers).' },
+                agent: { type: 'string', description: 'Optional name of a project agent (.codico/agents) whose instructions the subagent follows.' },
+            },
+            required: ['task'],
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'fetch_url',
         description: 'Fetch readable text from a public HTTP or HTTPS URL.',
         inputSchema: {
@@ -239,6 +252,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
 ];
 
 const READ_ONLY = new Set<ToolCall['type']>([
+    'delegate',
     'read_file',
     'list_directory',
     'search_files',
@@ -502,6 +516,11 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'get_diagnostics':
             return { type: 'get_diagnostics', filepath: stringArg(args, 'filepath') };
+        case 'delegate': {
+            const task = stringArg(args, 'task');
+            const agent = stringArg(args, 'agent');
+            return task ? { type: 'delegate', task, ...(agent ? { agent } : {}) } : null;
+        }
         case 'fetch_url': {
             const url = stringArg(args, 'url');
             return url ? { type: 'fetch_url', url } : null;
