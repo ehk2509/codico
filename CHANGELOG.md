@@ -2,6 +2,14 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Subagents: the agent has a `delegate` tool that hands a look-around task to a second agent with a conversation of its own. The subagent reads and searches (read-only: no edits, commands, web or further delegation) and returns a short report; what it read never enters the main conversation. It can take one of the project's agents (`.codico/agents`) as its role, shows as a step with its own reads under it, counts toward the task's tokens, and is limited to `codico.subagentMaxSteps` requests (default 15). Works with every provider, in both tool formats.
+
+### Fixed
+- Ask mode with models that are used to another tool syntax (seen with Claude through the Claude Code provider): the read-only prompt showed the tool formats without saying they are the only way to call a tool, and the model wrote XML tool calls, which Codico does not run, followed by results it made up. Both prompts now say to use the fenced formats only and never to write tool results.
+
 ## 0.3.13 - 2026-10-11
 
 ### Changed

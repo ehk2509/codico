@@ -344,6 +344,13 @@
           "default": "",
           "description": "Path to the claude command for the Claude Code provider. Empty: found on the PATH, or in the Claude Code VS Code extension"
         },
+        "codico.subagentMaxSteps": {
+          "type": "number",
+          "default": 15,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "How many requests a subagent (started by the agent's delegate tool to look something up) may make before it must write its report"
+        },
         "codico.changeReport": {
           "type": "boolean",
           "default": true,

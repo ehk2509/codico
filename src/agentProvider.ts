@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as https from 'https';
 import * as nodeCrypto from 'crypto';
-import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart } from './openRouterClient';
+import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart, StreamChunk } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
 import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
@@ -20,7 +20,8 @@ import { UndoRedoStack } from './undoRedoStack';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall } from './nativeTools';
+import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
+import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
 import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -107,6 +108,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     private readonly _fileManager = new FileManager();
     private readonly _mcp = new McpManager();
+    /** How the turn in progress reaches the model, for the subagents it starts. */
+    private _subagentHost: SubagentHost | undefined;
     /** What the current turn changed and checked, for its change report. */
     private _passport = new PassportRecorder();
     private readonly _userExtensions = new UserExtensionsLoader(extensions => this._post(userExtensionsMessage(extensions)));
@@ -1040,6 +1043,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
         const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
         try {
+            // One request to the selected provider. The main loop and its subagents share it.
+            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => isCli
+                ? streamCliModel(model, history, prefix, signal, this._thinkingEffort, override)
+                : isOllama
+                ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override)
+                : isDirect && directParsed
+                    ? streamDirect(directApiKey, history, directParsed.providerId, directParsed.modelId, prefix, signal, this._thinkingEffort, override, tools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
+                    : streamOpenRouter(apiKey, history, model, prefix, signal, this._thinkingEffort, override, tools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer);
+            // A subagent has its own conversation and system prompt; its usage counts toward this task
+            this._subagentHost = {
+                request: (history, systemPrompt, tools) => requestModel(history, undefined, systemPrompt, tools),
+                nativeTools: nativeTools.length > 0,
+                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens); this._post({ type: 'activity', text: `Subagent \u00B7 ${taskUsage.tokens.toLocaleString('en-US')} tokens this task` }); },
+            };
+
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
                 if (signal.aborted) { break; }
                 if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
@@ -1247,13 +1265,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 if (this._evaluationMode) {
                     this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                for await (const chunk of isCli
-                    ? streamCliModel(model, requestHistory, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride)
-                    : isOllama
-                    ? streamOllama(ollamaBaseUrl, requestHistory, ollamaModel, effectivePrefix, signal, systemPromptOverride)
-                    : isDirect && directParsed
-                        ? streamDirect(directApiKey, requestHistory, directParsed.providerId, directParsed.modelId, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
-                        : streamOpenRouter(apiKey, requestHistory, model, effectivePrefix, signal, this._thinkingEffort, systemPromptOverride, nativeTools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)) {
+                for await (const chunk of requestModel(requestHistory, effectivePrefix, systemPromptOverride, nativeTools)) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -1924,6 +1936,18 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'get_diagnostics': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'get_diagnostics', label: tool.filepath || 'workspace' });
                 result = await this._external._handleGetDiagnostics(tool, msgId);
+                break;
+            }
+            case 'delegate': {
+                this._post({ type: 'toolStart', id: msgId, tool: 'delegate', label: tool.task.split('\n')[0].slice(0, 80) });
+                const delegated = await runDelegate(tool, this._subagentHost, (await this._userExtensions.get()).agents, {
+                    signal, maxSteps: vscode.workspace.getConfiguration('codico').get<number>('subagentMaxSteps', SUBAGENT_DEFAULT_MAX_STEPS),
+                    // The subagent's reads run like any other, and show as steps under the delegation
+                    runTool: async nested => { await this._dispatchTool(nested, msgId, signal); const text = this._lastInlineResult ?? ''; this._lastInlineResult = undefined; return text; },
+                });
+                this._post({ type: 'activity', text: null });
+                this._post({ type: 'toolResult', id: msgId, tool: 'delegate', label: delegated.label, success: delegated.success, error: delegated.error });
+                result = delegated.text;
                 break;
             }
             case 'fetch_url': {

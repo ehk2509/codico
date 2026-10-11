@@ -27,6 +27,8 @@ export function evaluationToolTarget(tool: ToolCall): string {
             return clip(`${tool.pattern}${tool.dirpath ? ` @ ${tool.dirpath}` : ''}`);
         case 'get_diagnostics':
             return tool.filepath ?? 'workspace';
+        case 'delegate':
+            return clip(tool.task);
         case 'fetch_url':
         case 'browser_navigate':
             return clip(tool.url);
