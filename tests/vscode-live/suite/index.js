@@ -417,9 +417,12 @@ async function run() {
     const ranged = /lines 2–2 of \d+[^\n]*\n```\n2\tport=\d+\n```/.test(text);
     return { ok: !error && reqs.length === 2 && first && ranged, why: `${reqs.length} requests for two fenced reads; first file numbered from 1: ${first}; ranged read numbered from its own line: ${ranged}` };
   });
-  await scenario('numbered_edit', ({ error }) => {
+  await scenario('numbered_edit', ({ reqs, error }) => {
     const now = read('fixtures/numbered.txt');
-    return { ok: !error && now === 'alpha=1\nbeta=20\ngamma=30\n', why: `file after an edit pasted with line numbers: ${JSON.stringify(now)}` };
+    // The edit's result: numbered lines around the change
+    const result = (reqs[2] || {}).lastUser || '';
+    const numbered = /Edit applied successfully[\s\S]*numbered like read_file\):\n```\n1\talpha=1\n2\tbeta=20\n3\tgamma=30/.test(result);
+    return { ok: !error && now === 'alpha=1\nbeta=20\ngamma=30\n' && numbered, why: `file after an edit pasted with line numbers: ${JSON.stringify(now)}; edit result numbered: ${numbered}` };
   });
 
   // ── Code block actions, as the panel sends them ──

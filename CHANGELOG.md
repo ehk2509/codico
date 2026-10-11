@@ -9,6 +9,10 @@ All notable changes to Codico will be documented in this file.
 - `read_file` shows line numbers (`<number><tab><text>`, like `cat -n`). Without them the agent fetched numbered text through the shell (`cat -n`, `grep -n "" file | sed -n …`), one request per look: in one recorded task 186 of 237 terminal commands were this. The prompt now also says to read and search with the read and search tools, not the terminal.
 - An edit whose old text was copied with those line numbers is applied without them.
 - The text tool format documents `start_line` / `end_line` for `read_file` (they were accepted but not shown).
+- Less of Codico's own text in the conversation, which is resent with every request whatever the provider:
+  - The note that announces a phase (after every edit: "satisfy the acceptance contract") repeated the phase's rules and the whole task description each time, about 4,900 characters. A repeat now names the phase, points to the rules and the task already in the conversation, and adds only what is new (the edited file, the next step). After a compaction the next note is complete again. On a recorded conversation this removed 9.7% of its size.
+  - An edit's result no longer echoes a long insertion back in full (its first and last three lines are shown; the rest is in the edit itself), cuts lines over 240 characters, and numbers its lines like `read_file`.
+  - The lifecycle audit attached to edits is for code: it is no longer added to edits of Markdown, JSON, YAML, CSS, HTML and other prose or data files, where a word like "done" or "error" set it off.
 
 ## 0.3.12 - 2026-10-11
 
