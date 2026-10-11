@@ -1940,7 +1940,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'delegate': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'delegate', label: tool.task.split('\n')[0].slice(0, 80) });
-                this._post({ type: 'activity', text: 'Subagent working\u2026' });
                 const delegated = await runDelegate(tool, this._subagentHost, (await this._userExtensions.get()).agents, {
                     signal, maxSteps: vscode.workspace.getConfiguration('codico').get<number>('subagentMaxSteps', SUBAGENT_DEFAULT_MAX_STEPS),
                     // The subagent's reads run like any other, and show as steps under the delegation

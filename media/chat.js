@@ -3569,7 +3569,15 @@
   // Markdown rendering lives in media/markdown.js.
 
   // ── Message handler ─────────────────────────────────────────────────────
-  window.addEventListener('message', function (event) { handleExtMessage(event.data); });
+  // While a delegation is running the status says so, whatever the subagent's own steps set it to
+  var _subagentActive = false;
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    handleExtMessage(data);
+    if (data.type === 'toolStart' && data.tool === 'delegate') { _subagentActive = true; }
+    else if ((data.type === 'toolResult' && data.tool === 'delegate') || data.type === 'endMessage' || data.type === 'threadLoaded') { _subagentActive = false; }
+    if (_subagentActive) { sText.textContent = 'Subagent working\u2026'; sDot.className = 's-dot writing'; }
+  });
 
   // Rebuilds a stored assistant reply by replaying the events it streamed through
   // the normal handlers, so a reopened thread looks exactly like the live one.
