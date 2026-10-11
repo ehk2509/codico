@@ -4,6 +4,9 @@ All notable changes to Codico will be documented in this file.
 
 ## Unreleased
 
+### Fixed
+- While a subagent worked, the status bar showed no token usage: its requests were added to the task total but never sent to the display. Each subagent request now updates the token count (marked "subagent") and the task total as it happens, the status reads "Subagent working…", and the context meter keeps showing the main conversation.
+
 ### Changed
 - Subagents stay closer to the question. In a recorded run a subagent had its answer after 6 tool calls and made 32 more, because the task it was handed asked for definitions, tests and related code as well. Now: the agent is told to delegate exactly what it needs and no more; a subagent is told to stop as soon as it can answer; after 12 tool calls it is reminded once that it may already have the answer; and the default limit `codico.subagentMaxSteps` is 10 requests (was 15).
 

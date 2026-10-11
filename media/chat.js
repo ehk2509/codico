@@ -3633,10 +3633,11 @@
         }
         break;
       case 'tokenUsage':
-        if (data.promptTokens) { _setContextMeter(data.promptTokens); }
+        // A subagent's request is not the main conversation: it does not move the context meter
+        if (data.promptTokens && !data.subagent) { _setContextMeter(data.promptTokens); }
         if (sTokens) {
           var tokText = data.totalTokens
-            ? (_fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
+            ? ((data.subagent ? 'subagent ' : '') + _fmtTokens(data.promptTokens) + '\u2191 ' + _fmtTokens(data.completionTokens) + '\u2193')
             : '';
           // Share of the prompt the provider served from its cache (billed at a fraction of the price)
           if (data.cachedTokens && data.promptTokens) {
@@ -3652,7 +3653,7 @@
             }
           }
           sTokens.textContent = tokText;
-          sTokens.title = 'Last request: ' + data.promptTokens + ' prompt' +
+          sTokens.title = (data.subagent ? 'Last request (by a subagent, in its own conversation): ' : 'Last request: ') + data.promptTokens + ' prompt' +
             (data.cachedTokens ? ' (' + data.cachedTokens + ' from cache)' : '') +
             ' + ' + data.completionTokens + ' completion tokens' +
             (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' : '') +
