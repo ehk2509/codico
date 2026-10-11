@@ -1,3 +1,4 @@
+import { withoutLineNumbers } from './fileReadWindow';
 export type EditMatchMode = 'exact' | 'trimmed-boundary' | 'whitespace-tolerant';
 
 export interface EditMatch {
@@ -157,3 +158,15 @@ export function editFailureContext(
         .map((line, index) => `${from + index + 1}: ${line}`)
         .join('\n');
 }
+
+/**
+ * An edit whose old text carries the line numbers of a numbered read (the model copied them
+ * along): used without them when that is what matches the file. Anything else is returned as given.
+ */
+export function withoutCopiedLineNumbers(source: string, oldText: string, newText: string): { oldText: string; newText: string } {
+    if (resolveEditMatch(source, oldText).match) { return { oldText, newText }; }
+    const bareOld = withoutLineNumbers(oldText);
+    if (bareOld === null || !resolveEditMatch(source, bareOld).match) { return { oldText, newText }; }
+    return { oldText: bareOld, newText: withoutLineNumbers(newText) ?? newText };
+}
+

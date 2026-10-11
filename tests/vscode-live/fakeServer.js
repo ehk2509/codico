@@ -83,6 +83,11 @@ const SCRIPTS = (port) => ({
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_plain: ['Answered without the effort option.'],
+  // Several independent looks in one reply: one request for all of them
+  batch_native: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }, { name: 'read_file', args: { filepath: 'fixtures/config.txt' } }, { name: 'search_files', args: { pattern: 'port=' } }] }, 'Looked at all three.'],
+  batch_fenced: ['Looking at both.\n\n' + tool('read_file', 'filepath: fixtures/notes.txt') + '\n' + tool('read_file', 'filepath: fixtures/config.txt\nstart_line: 2\nend_line: 2'), 'Looked at both.'],
+  // An edit whose old text was copied with the line numbers of a read
+  numbered_edit: [tool('read_file', 'filepath: fixtures/numbered.txt'), tool('edit_file', 'filepath: fixtures/numbered.txt\nold_str:\n2\tbeta=2\n3\tgamma=3\nnew_str:\n2\tbeta=20\n3\tgamma=30'), 'Edited.'],
   // The change report: the test fails, a file is fixed and another created, the test passes
   pp_fixed: [tool('run_terminal', 'command: node --test fixtures/pp.test.js 2>&1 | tail -8'), tool('edit_file', 'filepath: fixtures/pp.txt\nold_str:\nvalue=1\nnew_str:\nvalue=2'),
     tool('write_file', 'filepath: live/pp-notes.txt\ncontent:\nfixed the value\nsecond line'), tool('run_terminal', 'command: node --test fixtures/pp.test.js 2>&1 | tail -8'), 'Fixed.'],

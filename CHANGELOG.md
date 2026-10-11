@@ -2,6 +2,14 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- Fewer requests per task. The agent was told to make one tool call per reply, so every look at the code cost a full request (around 36,000 tokens each in long tasks). It is now told to issue independent reads and searches together in one reply; the loop already ran several calls per reply.
+- `read_file` shows line numbers (`<number><tab><text>`, like `cat -n`). Without them the agent fetched numbered text through the shell (`cat -n`, `grep -n "" file | sed -n …`), one request per look: in one recorded task 186 of 237 terminal commands were this. The prompt now also says to read and search with the read and search tools, not the terminal.
+- An edit whose old text was copied with those line numbers is applied without them.
+- The text tool format documents `start_line` / `end_line` for `read_file` (they were accepted but not shown).
+
 ## 0.3.12 - 2026-10-11
 
 ### Added

@@ -402,6 +402,26 @@ async function run() {
     return { ok: !error && viaDeepSeek && setting === 'direct:deepseek/deepseek-flash',
       why: `answered through the DeepSeek key: ${viaDeepSeek}; model setting is now ${setting}${error ? '; error: ' + error : ''}` };
   });
+  // ── Fewer requests: several looks in one reply, and reads that carry line numbers ──
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
+  await scenario('batch_native', ({ reqs, error }) => {
+    const second = reqs[1];
+    const all = !!second && second.roles.filter(r => r === 'tool').length >= 3;
+    return { ok: !error && reqs.length === 2 && all, why: `${reqs.length} requests for three tool calls (2 = one reply, one follow-up); all three results in the follow-up: ${all}` };
+  });
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  await scenario('batch_fenced', ({ reqs, error }) => {
+    const text = reqs[1] ? reqs[1].lastUser : '';
+    // Numbered like cat -n, and a ranged read starts at its own line number
+    const first = /1\tNOTES-MARKER/.test(text);
+    const ranged = /lines 2–2 of \d+[^\n]*\n```\n2\tport=\d+\n```/.test(text);
+    return { ok: !error && reqs.length === 2 && first && ranged, why: `${reqs.length} requests for two fenced reads; first file numbered from 1: ${first}; ranged read numbered from its own line: ${ranged}` };
+  });
+  await scenario('numbered_edit', ({ error }) => {
+    const now = read('fixtures/numbered.txt');
+    return { ok: !error && now === 'alpha=1\nbeta=20\ngamma=30\n', why: `file after an edit pasted with line numbers: ${JSON.stringify(now)}` };
+  });
+
   // ── Code block actions, as the panel sends them ──
   {
     const t0 = Date.now(); let why = ''; let ok = false;

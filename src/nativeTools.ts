@@ -653,6 +653,6 @@ export const NATIVE_TOOL_PROMPT = `
 Provider-native function/tool calling is enabled for this request.
 Use native tool calls instead of writing fenced tool blocks whenever you need a tool.
 The fenced formats in the base prompt are compatibility fallback documentation only.
-Do not describe a tool call without issuing it. Continue autonomously after each tool result.
+Do not describe a tool call without issuing it. Issue independent reads and searches as several tool calls in the same response. Continue autonomously after the results.
 Clarifying questions are not a tool: to ask one, write the <clarify> block in your reply text and do not call any tool in that reply.
 `;

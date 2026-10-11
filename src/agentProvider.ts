@@ -31,11 +31,11 @@ import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEve
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
-import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines } from './fileReadWindow';
+import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines, numberLines } from './fileReadWindow';
 import { fileOutlineSymbols } from './fileOutline';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
-import { applyEditMatch, editFailureContext, resolveEditMatch } from './editMatcher';
+import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
@@ -2070,7 +2070,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 ? `\n… (bounded read; use start_line: ${window.endLine + 1} and end_line to continue, or search_files to target a symbol)\n`
                 : '';
             const outlineText = outline.length >= 3 ? `Outline of this ${window.totalLines}-line file (line ranges):\n${formatOutline(outline)}\n\nRead only the range you need with start_line/end_line.\n\n` : '';
-            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}]\n${outlineText}\`\`\`\n${window.text}\n\`\`\`${continuation}`;
+            // Numbered like `cat -n`: the numbers are what start_line/end_line and the next search need
+            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}; each line is shown as <number><tab><text>, and the number is not part of the file]\n${outlineText}\`\`\`\n${numberLines(window.text, window.startLine)}\n\`\`\`${continuation}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
@@ -2314,6 +2315,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             let hasCRLF = rawContent.includes('\r\n');
             let content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
 
+            // Line numbers copied along from a numbered read are not part of the file
+            const bare = withoutCopiedLineNumbers(content, tool.oldStr, tool.newStr);
+            tool = { ...tool, oldStr: bare.oldText, newStr: bare.newText };
             const resolved = resolveEditMatch(content, tool.oldStr);
             if (!resolved.match) {
                 const err = resolved.error === 'ambiguous'
