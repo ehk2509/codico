@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.14 - 2026-10-11
 
 ### Added
 - Subagents: the agent has a `delegate` tool that hands a look-around task to a second agent with a conversation of its own. The subagent reads and searches (read-only: no edits, commands, web or further delegation) and returns a short report; what it read never enters the main conversation. It can take one of the project's agents (`.codico/agents`) as its role, shows as a step with its own reads under it, counts toward the task's tokens, and is limited to `codico.subagentMaxSteps` requests (default 15). Works with every provider, in both tool formats.
