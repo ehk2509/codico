@@ -97,13 +97,46 @@ export function splitPhasePrompt(prompt: string | undefined): { systemPrompt: st
     return { systemPrompt: prompt, phaseNote: '' };
 }
 
+const CONTRACT_HEADING = '## Task acceptance contract';
+const PHASE_RULES = [ACTION_PHASE_SYSTEM_PROMPT, FOCUSED_ACTION_SYSTEM_PROMPT, POST_EDIT_VERIFICATION_PROMPT];
+
+/**
+ * A phase note without what the conversation already holds. A task re-enters the same phase
+ * many times (after every edit), and each note used to repeat the phase's rules and the whole
+ * task contract: several thousand characters that are then resent with every later request.
+ * A part is shortened only when the identical text is still in the history, so after a
+ * compaction the next note is complete again.
+ */
+export function withoutRepeats(history: ChatMessage[], phaseNote: string): string {
+    if (!phaseNote) { return phaseNote; }
+    const earlier = history
+        .filter(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('[System Phase]'))
+        .map(message => message.content as string)
+        .join('\n');
+    if (!earlier) { return phaseNote; }
+
+    const contractAt = phaseNote.indexOf(`\n\n${CONTRACT_HEADING}`);
+    let guidance = contractAt >= 0 ? phaseNote.slice(0, contractAt) : phaseNote;
+    let contract = contractAt >= 0 ? phaseNote.slice(contractAt + 2) : '';
+
+    if (contract && earlier.includes(contract)) {
+        contract = `${CONTRACT_HEADING}\n\nUnchanged: the task acceptance contract given earlier in this conversation still applies in full.`;
+    }
+    const rules = PHASE_RULES.find(known => guidance.startsWith(known) && earlier.includes(known));
+    if (rules) {
+        // The heading names the phase; what follows the rules (the edited file, the next step) is specific to this note
+        guidance = `${rules.split('\n')[0]}\n\nThe rules of this phase are the same as in the earlier note for it; they still apply in full.${guidance.slice(rules.length)}`;
+    }
+    return contract ? `${guidance}\n\n${contract}` : guidance;
+}
+
 /**
  * Records a phase change in the conversation. It joins the newest message when that is a
  * plain user message not yet sent (roles keep alternating), and is otherwise added after it.
  * Earlier messages are never changed, so the provider's cached prefix stays valid.
  */
 export function appendPhaseNote(history: ChatMessage[], phaseNote: string): void {
-    const note = `[System Phase]\n${phaseNote || 'The previous phase is complete; continue the task normally.'}`;
+    const note = `[System Phase]\n${withoutRepeats(history, phaseNote) || 'The previous phase is complete; continue the task normally.'}`;
     const last = history[history.length - 1];
     if (last?.role === 'user' && typeof last.content === 'string') {
         history[history.length - 1] = { ...last, content: `${last.content}\n\n${note}` };

@@ -58,6 +58,32 @@ export function withoutLineNumbers(text: string): string | null {
     return lines.map(line => line.replace(/^\s*\d+\t/, '')).join('\n');
 }
 
+/**
+ * What an edit returns: the lines around the change, numbered. The text the model has just
+ * written is in its own tool call already, so a long insertion is shown by its first and
+ * last lines only, and a very long line is cut: both would otherwise be carried twice in
+ * every later request.
+ * @param insertedFrom 0-based index of the first inserted line
+ */
+export function editResultSnippet(lines: string[], insertedFrom: number, insertedCount: number, context = 10, keepInserted = 3, maxLineChars = 240): { text: string; from: number; to: number } {
+    const from = Math.max(0, insertedFrom - context);
+    const to = Math.min(lines.length, insertedFrom + insertedCount + context);
+    const clip = (line: string): string => line.length > maxLineChars ? `${line.slice(0, maxLineChars)}… (+${line.length - maxLineChars} chars)` : line;
+    const out: string[] = [];
+    const elideFrom = insertedFrom + keepInserted;
+    const elideTo = insertedFrom + insertedCount - keepInserted;
+    for (let i = from; i < to; i++) {
+        // Worth it only when more is left out than the note takes
+        if (elideTo - elideFrom >= 4 && i === elideFrom) {
+            out.push(`… (${elideTo - elideFrom} more lines you wrote, lines ${elideFrom + 1}–${elideTo}, as in your edit)`);
+            i = elideTo - 1;
+            continue;
+        }
+        out.push(`${i + 1}\t${clip(lines[i])}`);
+    }
+    return { text: out.join('\n'), from: from + 1, to };
+}
+
 /** A read without a line range of a file this long returns an outline and its first lines instead. */
 export const OUTLINE_MIN_LINES = 600;
 export const OUTLINE_HEAD_LINES = 80;

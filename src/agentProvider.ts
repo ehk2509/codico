@@ -31,7 +31,7 @@ import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEve
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
-import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines, numberLines } from './fileReadWindow';
+import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines, numberLines, editResultSnippet } from './fileReadWindow';
 import { fileOutlineSymbols } from './fileOutline';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
@@ -2045,7 +2045,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._passport.recordChange(tool.filepath, beforeBytes ? beforeText : null, contentToWrite);
             this._filesWrittenThisTurn++;
             const lineCount = contentToWrite.split('\n').length;
-            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '')}`;
+            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath)}`;
         } catch (err: unknown) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
@@ -2397,17 +2397,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
             // Return a context window around the edited region so the model can
             // confirm the result without issuing a follow-up read_file call.
-            const editedLines = newContentLF.split('\n');
-            const insertedLines = effectiveNewStr.split('\n');
             const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
             // Enough around the edit for the next nearby edit without reading the file again
-            const CONTEXT = 10;
-            const from = Math.max(0, linesBefore - CONTEXT);
-            const to   = Math.min(editedLines.length, linesBefore + insertedLines.length + CONTEXT);
-            const snippet = editedLines.slice(from, to).join('\n');
-            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr);
+            const snippet = editResultSnippet(newContentLF.split('\n'), linesBefore, effectiveNewStr.split('\n').length);
+            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr, tool.filepath);
             const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
-            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${from + 1}–${to}):\n\`\`\`\n${snippet}\n\`\`\`${invariantAudit}`;
+            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${snippet.from}–${snippet.to}, numbered like read_file):\n\`\`\`\n${snippet.text}\n\`\`\`${invariantAudit}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });
