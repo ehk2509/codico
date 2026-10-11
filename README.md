@@ -323,6 +323,33 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Lifecycle Hooks
+A project can run its own checks around what the agent does. Put them in `.codico/hooks.json` (**Codico: New Hooks File** writes a starting one):
+
+```json
+{
+  "hooks": [
+    { "event": "beforeEdit", "match": "migrations/**", "name": "migration rules", "command": "node scripts/check-migration.js" },
+    { "event": "afterEdit", "match": "**/*.ts", "name": "lint", "command": "npx eslint {file}" },
+    { "event": "beforeCommand", "match": "git push*", "command": "exit 1" },
+    { "event": "afterCommand", "match": "npm test*", "command": "node scripts/coverage-floor.js", "timeoutSeconds": 120 }
+  ]
+}
+```
+
+| Event | Runs | If the hook exits with a code other than 0 |
+|---|---|---|
+| `beforeEdit` | before `write_file` / `edit_file` changes a file (and before you are asked to approve it) | the edit is refused; the agent is given the hook's output as the reason |
+| `afterEdit` | after the change is on disk | the output is added to the edit's result, so the agent sees it and can fix it |
+| `beforeCommand` | before `run_terminal` runs a command | the command is refused, with the hook's output |
+| `afterCommand` | after the command has finished | the output is added to the command's result |
+
+- **`match`** (optional) narrows a hook: for edits a glob on the file's path in the workspace (`**/*.ts`, `migrations/**`; a pattern without `/` is a file name in any folder), for commands the command line with `*` as the wildcard (`git push*`, `*npm test*`). Without it the hook runs for every edit or command.
+- **What a hook is told.** `{file}` in the command is replaced by the quoted file path. The environment has `CODICO_HOOK_EVENT`, `CODICO_HOOK_TOOL`, `CODICO_HOOK_FILE`, `CODICO_HOOK_COMMAND` and, after a command, `CODICO_HOOK_EXIT_CODE`. `CODICO_HOOK_INPUT` is the path of a JSON file with the whole call: the new content or the old and new text of an edit, or the command with its exit code and output.
+- **What the agent is told.** Whatever the hook prints, up to 4,000 characters. A hook that passes and prints nothing adds nothing to the conversation.
+- **Limits.** A hook runs in the workspace folder with the same reduced environment as the agent's commands, and is stopped after `timeoutSeconds` (default 30, at most 600); a `before` hook that is stopped refuses the call. At most 20 hooks are loaded. The file is read again when it changes, and an entry with a mistake is reported and skipped.
+- **Trust.** A hook is a command from the repository, so it never runs in a folder VS Code has not been told to trust, and Codico shows you each command and asks once before running it. Approval is for that exact command in that workspace: a hook that is changed is asked about again. A hook you do not allow is skipped, and the agent's edit or command goes ahead as it would without hooks.
+
 ### Getting Started Guide
 On first install Codico opens a short guide (provider, first task, staying in control, finding things) — reopen it with **Codico: Get Started**. Until a provider is set up, the empty chat lists the ways to do it: an OpenRouter key, your Claude Code or ChatGPT login (marked when the command is found on your machine), your own provider key, or local Ollama.
 
@@ -395,6 +422,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.gettingStarted` | Open the Get Started guide |
 | `codico.newSkill` | Create a project skill in `.codico/skills` |
 | `codico.newAgent` | Create a project agent in `.codico/agents` |
+| `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
 | `codico.toggleInlineCompletions` | Toggle ghost-text inline completions on/off |
@@ -849,6 +877,7 @@ codico/
 - **Content Security Policy** — the webview uses a strict CSP with per-session cryptographically random nonces; the extracted webview module is loaded only through a VS Code `asWebviewUri` resource
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
+- **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers (including IPv6 forms that embed such an IPv4 address, such as `[::ffff:127.0.0.1]`), pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
 - **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, subresource and WebSocket against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text

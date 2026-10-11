@@ -86,6 +86,10 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Project hooks: a refused edit, a check after an edit, a refused command
+  hook_refuse: [tool('edit_file', 'filepath: hooked/locked.txt\nold_str:\nlocked=1\nnew_str:\nlocked=2'), 'The project does not allow it.'],
+  hook_after: [tool('edit_file', 'filepath: hooked/app.cfg\nold_str:\nmode=a\nnew_str:\nmode=b'), 'The check failed.'],
+  hook_command: [tool('run_terminal', 'command: echo hook-forbidden > live/hook-ran.txt'), 'The project does not allow it.'],
   // A subagent: the main agent delegates, the child reads (and tries an edit it may not make), only the report comes back
   sub_main: [{ toolCalls: [{ name: 'delegate', args: { task: 'Find the notes marker and report its file and line.\n[SCENARIO:sub_child]' } }] }, 'The subagent found it.'],
   sub_child: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/sub-native.txt' } }, { name: 'edit_file', args: { filepath: 'fixtures/sub-native.txt', old_str: 'SUB-NATIVE-CONTENT', new_str: 'CHANGED-BY-SUBAGENT' } }] }, 'REPORT: SUBAGENT-FOUND the marker at fixtures/sub-native.txt:1'],

@@ -125,6 +125,10 @@
         "title": "Codico: New Agent"
       },
       {
+        "command": "codico.newHooks",
+        "title": "Codico: New Hooks File"
+      },
+      {
         "command": "codico.setOllamaUrl",
         "title": "Set Ollama Base URL",
         "category": "Codico"

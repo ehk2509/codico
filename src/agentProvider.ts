@@ -15,6 +15,7 @@ import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
 import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
 import { CodeSearchService } from './codeSearchService';
+import { HookRunner } from './hookRunner';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
@@ -39,7 +40,7 @@ import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
-import { filterAllowedWorkspaceUris, isIgnoredDirectoryEntry, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { filterAllowedWorkspaceUris, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
 import { planCompaction, summarizerPrompt, summaryProblem, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
@@ -48,7 +49,7 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile } from './chatFiles';
+import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile, listDirectoryTool, openSettingsMenu } from './chatFiles';
 import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
 import { ToolLoopGuard } from './toolLoopGuard';
@@ -129,6 +130,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _watchersCreated = false;
     private readonly _workspaceIndex: WorkspaceIndex;
     private readonly _codeSearch = new CodeSearchService(() => this._workspaceIndex);
+    private readonly _hooks = new HookRunner(() => this._context.workspaceState, () => this._evaluationMode);
     private _history: ChatMessage[] = [];
     private _activeThreadId: string = '';
     private _displayMessages: DisplayMessage[] = [];
@@ -201,7 +203,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._initThreadsSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
-        _context.subscriptions.push(this._userExtensions);
+        _context.subscriptions.push(this._userExtensions, this._hooks);
         // Abort in-flight requests when the extension deactivates.
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
@@ -386,16 +388,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'setApiKey':
                 await vscode.commands.executeCommand(msg.direct ? 'codico.setDirectApiKey' : 'codico.setApiKey');
                 break;
-            case 'openSettings': {
-                const choice = await vscode.window.showQuickPick([
-                    { label: '$(key) OpenRouter API Key', detail: 'Used for all OpenRouter models (free & premium)', cmd: 'codico.setApiKey' },
-                    { label: '$(key) Direct Provider API Key', detail: 'Set a key for Anthropic, OpenAI, Google, Groq, DeepSeek…', cmd: 'codico.setDirectApiKey' },
-                    { label: '$(server) Ollama Base URL', detail: 'Configure local Ollama server address', cmd: 'codico.setOllamaUrl' },
-                    { label: '$(git-pull-request) GitHub Token', detail: 'Used for /pr PR review context', cmd: 'codico.setGithubToken' },
-                ], { title: 'Codico Settings', placeHolder: 'Select a setting to configure' });
-                if (choice) { await vscode.commands.executeCommand(choice.cmd); }
+            case 'openSettings':
+                await openSettingsMenu();
                 break;
-            }
             case 'closePanel':
                 await vscode.commands.executeCommand('workbench.action.closeSidebar');
                 break;
@@ -1895,6 +1890,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
         }
 
+        // The project's own rules first: a "before" hook that fails refuses the call
+        const refused = await this._hooks.before(tool, signal);
+        if (refused) {
+            this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: 'refused by a project hook', success: false, error: 'Refused by a project hook' });
+            this._lastInlineResult = refused;
+            return;
+        }
+
         let result = '';
         switch (tool.type) {
             case 'write_file': {
@@ -1909,7 +1912,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'list_directory': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'list_directory', label: tool.dirpath });
-                result = await this._handleListDirectory(tool, msgId);
+                result = await listDirectoryTool(tool.dirpath, outcome => this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, ...outcome }));
                 break;
             }
             case 'run_terminal': {
@@ -2030,7 +2033,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
         // The agent's own edit is searchable at once, without waiting for the file watcher
         if (tool.type === 'write_file' || tool.type === 'edit_file') { this._codeSearch.changedPath(tool.filepath); }
-        this._lastInlineResult = result;
+        this._lastInlineResult = result + await this._hooks.after(tool, result, signal);
     }
 
     private async _handleWriteFile(tool: WriteFileTool, msgId: string): Promise<string> {
@@ -2111,23 +2114,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
             return `[read_file: ${tool.filepath}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleListDirectory(tool: ListDirectoryTool, msgId: string): Promise<string> {
-        try {
-            const target = await resolveWorkspaceToolPath(tool.dirpath, true);
-            const entries = (await vscode.workspace.fs.readDirectory(target.uri))
-                .filter(([name]) => !isIgnoredDirectoryEntry(target, name));
-            const lines = entries.map(([name, type]) =>
-                type === vscode.FileType.Directory ? `[dir]  ${name}/` : `[file] ${name}`
-            );
-            this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: true });
-            return `[list_directory: ${tool.dirpath}]\n${lines.join('\n')}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'list_directory', label: tool.dirpath, success: false, error: message });
-            return `[list_directory: ${tool.dirpath}] ERROR: ${message}`;
         }
     }
 
