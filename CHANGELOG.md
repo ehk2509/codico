@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- Subagents stay closer to the question. In a recorded run a subagent had its answer after 6 tool calls and made 32 more, because the task it was handed asked for definitions, tests and related code as well. Now: the agent is told to delegate exactly what it needs and no more; a subagent is told to stop as soon as it can answer; after 12 tool calls it is reminded once that it may already have the answer; and the default limit `codico.subagentMaxSteps` is 10 requests (was 15).
+
 ## 0.3.14 - 2026-10-11
 
 ### Added

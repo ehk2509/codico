@@ -183,3 +183,26 @@ test('both prompts spell out the tool call format', () => {
   }
 });
 
+test('after twelve tool calls a subagent is reminded once that it may already have the answer', async () => {
+  const { SUBAGENT_NUDGE_AFTER_CALLS, SUBAGENT_DEFAULT_MAX_STEPS } = require('../out/subagent.js');
+  assert.equal(SUBAGENT_NUDGE_AFTER_CALLS, 12);
+  assert.equal(SUBAGENT_DEFAULT_MAX_STEPS, 10);
+  // Five reads per reply: the reminder follows the third batch (15 calls), and is not repeated
+  const batch = (n) => Array.from({ length: 5 }, (_, i) => call('read_file', { filepath: `f${n}-${i}.ts` }, `c${n}-${i}`));
+  const m = model([batch(0), batch(1), batch(2), batch(3), [{ type: 'content', text: 'Report.' }]]);
+  await runSubagent('Look.', { request: m.request, nativeTools: true, signal: noAbort, runTool: async () => 'content' });
+  const reminders = (history) => history.filter(h => h.role === 'user' && /You have made 12 tool calls\. If you can answer the task now, write your report/.test(h.content)).length;
+  assert.deepEqual(m.seen.map(s => reminders(s.history)), [0, 0, 0, 1, 1]);
+  // In the text tool format it joins the results message, so roles keep alternating
+  const fenced = (n) => [{ type: 'content', text: Array.from({ length: 6 }, (_, i) => `${F}read_file\nfilepath: g${n}-${i}.ts\n${F}\n`).join('\n') }];
+  const f = model([fenced(0), fenced(1), [{ type: 'content', text: 'Report.' }]]);
+  await runSubagent('Look.', { request: f.request, nativeTools: false, signal: noAbort, runTool: async () => 'content' });
+  const last = f.seen[2].history;
+  assert.match(last[last.length - 1].content, /^\[Tool Results\][\s\S]*\n\n\[System\] You have made 12 tool calls\./);
+  assert.deepEqual(last.map(h => h.role), ['user', 'assistant', 'user', 'assistant', 'user']);
+  // The rules and the tool description say to stop, and to ask narrowly
+  assert.match(subagentSystemPrompt(), /Stop as soon as you can answer\./);
+  assert.match(getNativeToolDefinitions(false).find(t => t.name === 'delegate').inputSchema.properties.task.description, /Ask for exactly what you need and no more/);
+  assert.match(SYSTEM_PROMPT, /asks for exactly what you need, no wider than the question you are answering/);
+});
+
