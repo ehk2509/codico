@@ -1,7 +1,7 @@
 import * as cp from 'child_process';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { bestLines, CodeIndex, renderSearchResults, RenderedHit, tokenize } from './codeSearch';
+import { bestLines, CodeBoost, CodeIndex, renderSearchResults, RenderedHit, tokenize } from './codeSearch';
 import { ignoreRules } from './ignoreRules';
 import { resolveWorkspaceToolPath } from './workspaceSecurity';
 
@@ -18,9 +18,28 @@ const MAX_FILE_BYTES = 200_000;
 const MAX_TOTAL_CHARS = 30_000_000;
 const READ_CONCURRENCY = 24;
 const SKIP_DIRS = new Set(['node_modules', '.git', 'out', 'dist', '.next', '__pycache__', '.venv', 'venv', 'build', 'coverage', '.nyc_output', '.cache', '.turbo', '.svelte-kit', 'target', 'vendor']);
-const SKIP_FILE_RE = /\.(?:png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|otf|map|lock|bin|exe|dll|so|dylib|zip|tar|gz|7z|rar|pdf|docx?|xlsx?|mp[34]|avi|mov|mkv|pyc|pyo|min\.js|min\.css|snap|vsix)$|(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|(?:^|\/)\.env(?:\.[^/]*)?$|\.(?:pem|key|p12|pfx|keystore|jks)$|(?:^|\/)id_(?:rsa|dsa|ecdsa|ed25519)[^/]*$/i;
+const SKIP_FILE_RE = /\.(?:png|jpe?g|gif|webp|svg|ico|woff2?|ttf|eot|otf|map|lock|bin|exe|dll|so|dylib|zip|tar|gz|7z|rar|pdf|docx?|xlsx?|mp[34]|avi|mov|mkv|pyc|pyo|min\.js|min\.css|snap|vsix)$|(?:^|\/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$|(?:^|\/)\.(?:env(?:\.[^/]*)?|npmrc|netrc|pypirc|codicoignore|copilotignore|gitignore|gitattributes)$|\.(?:pem|key|p12|pfx|keystore|jks)$|(?:^|\/)id_(?:rsa|dsa|ecdsa|ed25519)[^/]*$/i;
+
+/** The optional embeddings index (Codico: Index Workspace), when the user has built one. */
+export interface SemanticIndex {
+    readonly status: { hasVectors: boolean };
+    search(query: string, topK?: number): Promise<Array<{ file: string; startLine: number }>>;
+}
+
+/** How long a search waits for the language servers and the embeddings index before going on without them. */
+const EVIDENCE_TIMEOUT_MS = 1500;
+
+function within<T>(work: Thenable<T>, fallback: T): Promise<T> {
+    return Promise.race([Promise.resolve(work).catch(() => fallback), new Promise<T>(resolve => setTimeout(() => resolve(fallback), EVIDENCE_TIMEOUT_MS))]);
+}
 
 export class CodeSearchService {
+    /** @param _semantic the embeddings index, asked only when it holds vectors */
+    constructor(private readonly _semantic?: () => SemanticIndex | undefined) {
+        // Another set of folders is another set of files: start again on the next search
+        vscode.workspace.onDidChangeWorkspaceFolders(() => this.reset());
+    }
+
     private _index: CodeIndex | undefined;
     private _building: Promise<CodeIndex> | undefined;
     /** Files changed or removed since they were indexed, applied before the next search. */
@@ -31,15 +50,17 @@ export class CodeSearchService {
     changed(uri: vscode.Uri): void { if (this._index) { this._pending.set(this._relative(uri), uri); } }
     /** A file the agent has just written, by its workspace-relative path. */
     changedPath(relativePath: string): void {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (this._index && root && !path.isAbsolute(relativePath)) { this._pending.set(relativePath.split(path.sep).join('/').replace(/^\.\//, ''), vscode.Uri.joinPath(root, relativePath)); }
+        if (!this._index || path.isAbsolute(relativePath)) { return; }
+        // Resolved like the file tools resolve it, so "folder/path" works when several folders are open
+        void resolveWorkspaceToolPath(relativePath).then(target => this._pending.set(this._relative(target.uri), target.uri), () => { /* not a path the agent may read */ });
     }
     /** A file was deleted. */
     removed(uri: vscode.Uri): void { if (this._index) { this._pending.set(this._relative(uri), null); } }
     /** Forget the index (the workspace folders changed): it is rebuilt on the next search. */
     reset(): void { this._index = undefined; this._building = undefined; this._pending.clear(); }
 
-    private _relative(uri: vscode.Uri): string { return vscode.workspace.asRelativePath(uri, false).split(path.sep).join('/'); }
+    /** A file's key in the index: its path in its folder, with the folder's name in front when several folders are open. */
+    private _relative(uri: vscode.Uri): string { return vscode.workspace.asRelativePath(uri, (vscode.workspace.workspaceFolders?.length ?? 0) > 1).split(path.sep).join('/'); }
 
     /** Runs the search_code tool and never throws: a failure is the tool's result. */
     async run(tool: { query: string; path?: string; maxResults?: number }, signal?: AbortSignal): Promise<{ text: string; label: string; success: boolean; error?: string }> {
@@ -54,13 +75,13 @@ export class CodeSearchService {
 
     /** The search_code tool: the best-matching chunks, with a few lines of each and who uses them. */
     async search(query: string, limit: number, pathPrefix: string, signal?: AbortSignal): Promise<{ text: string; results: number }> {
-        const root = vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (!root) { return { text: `[search_code: ${query}] ERROR: no folder is open.`, results: 0 }; }
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        if (folders.length === 0) { return { text: `[search_code: ${query}] ERROR: no folder is open.`, results: 0 }; }
         if (!query.trim()) { return { text: '[search_code] ERROR: give a query: a few words or identifiers describing what you are looking for.', results: 0 }; }
-        const index = await this._ready(root, signal);
+        const index = await this._ready(folders, signal);
         await this._applyPending(index);
         const prefix = pathPrefix.trim().replace(/^\.\//, '').replace(/^\/+/, '').replace(/\*+.*$/, '');
-        const hits = index.search(query, Math.min(20, Math.max(1, limit)), prefix);
+        const hits = index.search(query, Math.min(20, Math.max(1, limit)), prefix, await this._evidence(query, index));
         const terms = tokenize(query);
         const rendered: RenderedHit[] = [];
         for (const [position, hit] of hits.entries()) {
@@ -76,15 +97,51 @@ export class CodeSearchService {
         return { text: renderSearchResults(query, rendered, index.fileCount, this._note + (prefix ? `, under ${prefix}` : '')), results: rendered.length };
     }
 
-    private _ready(root: vscode.Uri, signal?: AbortSignal): Promise<CodeIndex> {
+    /**
+     * What sources other than the index know about the query. Language servers know every
+     * declaration exactly, where the index recognises definitions by pattern; the embeddings
+     * index, when the user has built one, matches by meaning where the index matches words.
+     * Both only lift results: a search works without either.
+     */
+    private async _evidence(query: string, index: CodeIndex): Promise<CodeBoost[]> {
+        const boosts: CodeBoost[] = [];
+        // Names worth asking a language server about: identifiers as written, else the longest words
+        const words = [...new Set(query.match(/[A-Za-z_$][\w$]{2,}/g) ?? [])];
+        const identifiers = words.filter(word => /[a-z][A-Z]|_|\d/.test(word));
+        const names = (identifiers.length > 0 ? identifiers : words.filter(word => tokenize(word).length > 0).sort((a, b) => b.length - a.length)).slice(0, 3);
+        const symbols = Promise.all(names.map(name => within(vscode.commands.executeCommand<vscode.SymbolInformation[] | undefined>('vscode.executeWorkspaceSymbolProvider', name), undefined)));
+        const semantic = this._semantic?.();
+        const meaning = semantic?.status.hasVectors ? within(semantic.search(query, 8), []) : Promise.resolve([]);
+        for (const found of await symbols) {
+            for (const symbol of (found ?? []).slice(0, 12)) {
+                const file = this._relative(symbol.location.uri);
+                if (index.has(file)) { boosts.push({ file, line: symbol.location.range.start.line + 1, weight: 0.5, symbol: symbol.name.replace(/\(.*$/, '') }); }
+            }
+        }
+        (await meaning).forEach((chunk, rank, all) => {
+            // The embeddings index cuts files into 60-line pieces: lift every chunk such a piece touches
+            const file = chunk.file.split(path.sep).join('/');
+            if (index.has(file)) { boosts.push({ file, line: chunk.startLine, toLine: chunk.startLine + 59, weight: 0.6 * (1 - rank / (all.length + 1)) }); }
+        });
+        return boosts;
+    }
+
+    private _ready(folders: readonly vscode.WorkspaceFolder[], signal?: AbortSignal): Promise<CodeIndex> {
         if (this._index) { return Promise.resolve(this._index); }
-        this._building ??= this._build(root, signal).then(index => { this._index = index; this._building = undefined; return index; }, err => { this._building = undefined; throw err; });
+        this._building ??= this._build(folders, signal).then(index => { this._index = index; this._building = undefined; return index; }, err => { this._building = undefined; throw err; });
         return this._building;
     }
 
-    private async _build(root: vscode.Uri, signal?: AbortSignal): Promise<CodeIndex> {
+    private async _build(folders: readonly vscode.WorkspaceFolder[], signal?: AbortSignal): Promise<CodeIndex> {
         const maxFiles = Math.max(100, vscode.workspace.getConfiguration('codico').get<number>('codeSearchMaxFiles', DEFAULT_MAX_FILES));
-        const listed = (await this._listFiles(root)).filter(file => !SKIP_FILE_RE.test(file) && !ignoreRules.shouldIgnore(file));
+        // Every open folder; with several, a file is known as "folder/path", which is also how the file tools address it
+        const listed: string[] = [];
+        for (const folder of folders) {
+            await ignoreRules.ensureLoaded(folder);
+            for (const file of await this._listFiles(folder.uri)) {
+                if (!SKIP_FILE_RE.test(file) && !ignoreRules.shouldIgnore(file, folder)) { listed.push(folders.length > 1 ? `${folder.name}/${file}` : file); }
+            }
+        }
         const files = listed.slice(0, maxFiles);
         const index = new CodeIndex();
         let chars = 0;

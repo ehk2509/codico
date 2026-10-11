@@ -19,6 +19,19 @@ export interface CodeSymbol {
     line: number;
 }
 
+/** Evidence from outside the index that a place in a file is relevant: a language server's symbol, an embeddings match. */
+export interface CodeBoost {
+    file: string;
+    /** 1-based line the evidence points at. */
+    line: number;
+    /** Last line, when the evidence is about a range: every chunk the range touches is lifted. */
+    toLine?: number;
+    /** Share of the best lexical score to add (0.5 lifts a chunk halfway to the top). */
+    weight: number;
+    /** A symbol known to be defined there, shown with the result. */
+    symbol?: string;
+}
+
 export interface CodeHit {
     file: string;
     /** 1-based, inclusive. */
@@ -34,8 +47,13 @@ export interface CodeHit {
 // ── Words ────────────────────────────────────────────────────────────────────
 
 /** Too common in code or in questions to tell chunks apart. */
-const STOP = new Set(('the a an and or of to in is it for on with as by at be this that from not are was if else return const let var function class def import export ' +
-    'new null true false undefined void public private static async await where what how which does do when find every place all get set use used using code file files').split(' '));
+const STOP = new Set(('the a an and or of to in is it its for on with as by at be been being this that these those from not no are was were will would can could should may might must ' +
+    'if else then than so such too very much many more most some any each every all both either neither only just also even still yet again once ' +
+    'has have had having do does did doing done am i we you they he she them us our your their my me who whom whose what which when where why how ' +
+    'into onto out up down over under about after before during while until since through between against without within across along ' +
+    'gets got get getting set make makes made take takes took put puts let lets want wants need needs use uses used using one two ' +
+    'thing things way ways there here now long big small little lot kind sort case cases place places sure ' +
+    'return const let var function class def import export new null true false undefined void public private static async await find code file files').split(' '));
 
 /** "compaction", "compacted", "compacts" and "compact" are one word for search. */
 export function stem(word: string): string {
@@ -111,14 +129,22 @@ export function extractSymbols(lines: string[], ext: string): CodeSymbol[] {
     return symbols;
 }
 
-/** The modules a file imports, as written (relative paths only are resolved, by the index). */
+/** The modules a file imports, as written. The index resolves them to files. */
 export function extractImports(text: string, ext: string): string[] {
     const kind = ext.replace(/^\./, '').toLowerCase();
     const found: string[] = [];
     if (/^(?:js|jsx|ts|tsx|mjs|cjs)$/.test(kind)) {
         for (const match of text.matchAll(/(?:\bfrom\s+|\brequire\(\s*|\bimport\(\s*|^\s*import\s+)['"]([^'"\n]+)['"]/gm)) { found.push(match[1]); }
     } else if (kind === 'py') {
-        for (const match of text.matchAll(/^\s*from\s+(\.+[\w.]*)\s+import\b/gm)) { found.push(match[1]); }
+        for (const match of text.matchAll(/^\s*from\s+(\.*[\w.]+|\.+)\s+import\b/gm)) { found.push(match[1]); }
+        for (const match of text.matchAll(/^\s*import\s+([\w.]+)/gm)) { found.push(match[1]); }
+    } else if (/^(?:java|kt|scala)$/.test(kind)) {
+        for (const match of text.matchAll(/^\s*import\s+(?:static\s+)?([\w.]+)/gm)) { found.push(match[1]); }
+    } else if (kind === 'rs') {
+        for (const match of text.matchAll(/^\s*(?:pub\s+)?use\s+((?:crate|super|self)(?:::\w+)+)/gm)) { found.push(match[1]); }
+        for (const match of text.matchAll(/^\s*(?:pub\s+)?mod\s+(\w+)\s*;/gm)) { found.push(`self::${match[1]}`); }
+    } else if (kind === 'go') {
+        for (const match of text.matchAll(/^\s*(?:import\s+)?(?:[\w.]+\s+)?"([\w./-]+\/[\w./-]+)"\s*$/gm)) { found.push(match[1]); }
     }
     return [...new Set(found)];
 }
@@ -170,6 +196,20 @@ const B = 0.75;
 const DEFINITION_WEIGHT = 4;
 /** A term in the file's path counts this many times. */
 const PATH_WEIGHT = 2;
+const DOC_WORDS = new Set(['doc', 'docs', 'document', 'documentation', 'readme', 'changelog', 'guide', 'tutorial', 'note'].map(stem));
+const TEST_WORDS = new Set(['test', 'tests', 'spec', 'fixture', 'mock', 'coverage'].map(stem));
+const DOC_FILE_RE = /\.(?:md|mdx|markdown|rst|adoc|txt)$|(?:^|\/)(?:docs?|documentation)\//i;
+const TEST_FILE_RE = /(?:^|\/)(?:tests?|__tests__|spec|specs|e2e|fixtures?|__mocks__)\/|[._-](?:test|spec)\.[a-z]+$|_test\.[a-z]+$/i;
+const DATA_FILE_RE = /\.(?:json|ya?ml|toml|ini|csv|xml|html?|css|scss|less|svg)$/i;
+
+/** How much a file's kind counts for a question: source first, then data and markup, tests, documentation. */
+function fileWeight(file: string, wantsDocs: boolean, wantsTests: boolean): number {
+    if (DOC_FILE_RE.test(file)) { return wantsDocs ? 1 : 0.35; }
+    if (TEST_FILE_RE.test(file)) { return wantsTests ? 1 : 0.6; }
+    if (DATA_FILE_RE.test(file)) { return 0.7; }
+    return 1;
+}
+
 /** A posting is chunk id × this + count; counts above it are capped (they no longer change the ranking). */
 const COUNT_RANGE = 1024;
 const IMPORT_EXTENSIONS = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '/index.ts', '/index.tsx', '/index.js', '.py', '/__init__.py'];
@@ -234,9 +274,9 @@ export class CodeIndex {
      * The chunks that best match a description or a set of identifiers, best first.
      * @param pathPrefix only files under this folder (or this file)
      */
-    search(query: string, limit = 8, pathPrefix = ''): CodeHit[] {
+    search(query: string, limit = 8, pathPrefix = '', boosts: CodeBoost[] = []): CodeHit[] {
         const terms = [...new Set(tokenize(query))];
-        if (terms.length === 0 || this._alive === 0) { return []; }
+        if ((terms.length === 0 && boosts.length === 0) || this._alive === 0) { return []; }
         const average = this._totalLength / this._alive;
         const scores = new Map<number, number>();
         const hits = new Map<number, Set<string>>();
@@ -260,8 +300,29 @@ export class CodeIndex {
             }
         }
         // A chunk that has more of the query's terms beats one that repeats a single term
-        const ranked = [...scores.entries()]
-            .map(([id, score]) => ({ id, score: score * (0.5 + 0.5 * hits.get(id)!.size / terms.length) }))
+        const lexical = new Map<number, number>();
+        for (const [id, score] of scores) { lexical.set(id, score * (0.5 + 0.5 * hits.get(id)!.size / Math.max(1, terms.length))); }
+        // Evidence from outside the index (a language server's symbols, an embeddings search) lifts the chunk
+        // it points at, in proportion to the best lexical score, and can bring in a chunk no word matched
+        const best = Math.max(1, ...lexical.values());
+        const extraSymbols = new Map<number, string[]>();
+        for (const boost of boosts) {
+            if (pathPrefix && !boost.file.startsWith(pathPrefix)) { continue; }
+            const from = boost.line - 1;
+            const to = (boost.toLine ?? boost.line) - 1;
+            for (const id of this._docsOfFile.get(boost.file) ?? []) {
+                const doc = this._docs[id];
+                if (!doc.alive || doc.start > to || doc.end <= from) { continue; }
+                lexical.set(id, (lexical.get(id) ?? 0) + boost.weight * best);
+                if (boost.symbol) { extraSymbols.set(id, [...(extraSymbols.get(id) ?? []), boost.symbol]); }
+            }
+        }
+        // A question about code is answered by code: documentation and tests repeat its words in prose and
+        // would otherwise come first. They keep their place when the question is about them.
+        const wantsDocs = terms.some(term => DOC_WORDS.has(term));
+        const wantsTests = terms.some(term => TEST_WORDS.has(term));
+        const ranked = [...lexical.entries()]
+            .map(([id, score]) => ({ id, score: score * fileWeight(this._docs[id].file, wantsDocs, wantsTests) }))
             .sort((a, b) => b.score - a.score || a.id - b.id);
         // At most three chunks of one file, so one large file cannot fill the list
         const perFile = new Map<string, number>();
@@ -271,24 +332,69 @@ export class CodeIndex {
             const taken = perFile.get(doc.file) ?? 0;
             if (taken >= 3) { continue; }
             perFile.set(doc.file, taken + 1);
-            out.push({ file: doc.file, startLine: doc.start + 1, endLine: doc.end, score, symbols: doc.symbols, matched: [...hits.get(id)!] });
+            const symbols = [...new Set([...doc.symbols, ...(extraSymbols.get(id) ?? [])])];
+            out.push({ file: doc.file, startLine: doc.start + 1, endLine: doc.end, score, symbols, matched: [...(hits.get(id) ?? [])] });
             if (out.length >= limit) { break; }
         }
         return out;
     }
 
-    /** The indexed files that import this one (relative imports of JavaScript, TypeScript and Python). */
+    /**
+     * The indexed files that import this one: relative and aliased imports of JavaScript and
+     * TypeScript, Python modules, Java and Kotlin classes, Rust modules and Go packages.
+     */
     importersOf(file: string): string[] {
         const result: string[] = [];
+        const fileDir = file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
         for (const [from, specifiers] of this._importsOfFile) {
             if (from === file) { continue; }
             const dir = from.includes('/') ? from.slice(0, from.lastIndexOf('/')) : '';
-            if (specifiers.some(specifier => this._resolve(dir, specifier) === file)) { result.push(from); }
+            const go = from.endsWith('.go');
+            if (specifiers.some(specifier => go ? goPackageIs(specifier, fileDir, dir) && file.endsWith('.go') : this._resolve(from, dir, specifier) === file)) { result.push(from); }
         }
         return result.sort();
     }
 
-    private _resolve(dir: string, specifier: string): string | undefined {
+    private _first(candidates: string[]): string | undefined {
+        for (const candidate of candidates) {
+            for (const extension of IMPORT_EXTENSIONS) { if (this._docsOfFile.has(candidate + extension)) { return candidate + extension; } }
+        }
+        return undefined;
+    }
+
+    /** A file whose path ends with the given path (any source root): how a Java class or an aliased module is found. */
+    private _bySuffix(suffix: string, extensions: string[]): string | undefined {
+        for (const extension of extensions) {
+            const wanted = suffix + extension;
+            if (this._docsOfFile.has(wanted)) { return wanted; }
+            for (const file of this._docsOfFile.keys()) { if (file.endsWith(`/${wanted}`)) { return file; } }
+        }
+        return undefined;
+    }
+
+    private _resolve(from: string, dir: string, specifier: string): string | undefined {
+        const kind = /\.([A-Za-z0-9]+)$/.exec(from)?.[1].toLowerCase() ?? '';
+        if (/^(?:java|kt|scala)$/.test(kind)) {
+            // com.acme.orders.Order → …/com/acme/orders/Order.java, under whatever source root
+            return this._bySuffix(specifier.replace(/\./g, '/'), ['.java', '.kt', '.scala']);
+        }
+        if (kind === 'rs') {
+            const parts = specifier.split('::');
+            const head = parts.shift();
+            const start = head === 'crate' ? (from.startsWith('src/') || !from.includes('/src/') ? 'src' : from.slice(0, from.indexOf('/src/') + 4))
+                : head === 'super' ? dir.split('/').slice(0, -1).join('/') : dir;
+            // The last segments may be items inside the module: try the longest module path first
+            for (let n = parts.length; n >= 1; n--) {
+                const base = [start, ...parts.slice(0, n)].filter(Boolean).join('/');
+                for (const candidate of [`${base}.rs`, `${base}/mod.rs`]) { if (this._docsOfFile.has(candidate)) { return candidate; } }
+            }
+            return undefined;
+        }
+        if (kind === 'py' && /^[A-Za-z_][\w.]*$/.test(specifier)) {
+            // An absolute module: a.b.c is a/b/c.py from the root or a source folder
+            const modulePath = specifier.replace(/\./g, '/');
+            return this._first([modulePath, `src/${modulePath}`]) ?? this._bySuffix(modulePath, ['.py', '/__init__.py']);
+        }
         let base: string;
         if (/^\.+[\w.]*$/.test(specifier) && !specifier.includes('/')) {
             // Python: ".x.y" is x/y next to the file, each extra dot one folder up
@@ -300,14 +406,20 @@ export class CodeIndex {
                 if (piece === '..') { parts.pop(); } else if (piece !== '.' && piece !== '') { parts.push(piece); }
             }
             base = parts.join('/');
+        } else if (/^(?:@|~|#)\//.test(specifier) || specifier.startsWith('src/')) {
+            // A path alias ("@/lib/x", "~/lib/x") or a root-relative import: from the root or from src
+            const rest = specifier.replace(/^(?:@|~|#)\//, '');
+            return this._first([rest, `src/${rest}`, rest.replace(/\.(?:js|jsx|mjs|cjs)$/, ''), `src/${rest.replace(/\.(?:js|jsx|mjs|cjs)$/, '')}`]);
         } else { return undefined; }
         // "./a.js" in TypeScript source means a.ts
-        const bare = base.replace(/\.(?:js|jsx|mjs|cjs)$/, '');
-        for (const candidate of [base, bare]) {
-            for (const extension of IMPORT_EXTENSIONS) { if (this._docsOfFile.has(candidate + extension)) { return candidate + extension; } }
-        }
-        return undefined;
+        return this._first([base, base.replace(/\.(?:js|jsx|mjs|cjs)$/, '')]);
     }
+}
+
+/** A Go import names a package, which is a folder: "example.com/app/internal/store" is the folder internal/store. */
+function goPackageIs(specifier: string, fileDir: string, importerDir: string): boolean {
+    if (!fileDir || fileDir === importerDir) { return false; }
+    return specifier === fileDir || specifier.endsWith(`/${fileDir}`);
 }
 
 // ── The tool's answer ────────────────────────────────────────────────────────

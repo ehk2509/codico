@@ -128,7 +128,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _mcpReady = false;
     private _watchersCreated = false;
     private readonly _workspaceIndex: WorkspaceIndex;
-    private readonly _codeSearch = new CodeSearchService();
+    private readonly _codeSearch = new CodeSearchService(() => this._workspaceIndex);
     private _history: ChatMessage[] = [];
     private _activeThreadId: string = '';
     private _displayMessages: DisplayMessage[] = [];

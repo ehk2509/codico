@@ -265,7 +265,10 @@ The agent has a ranked search of the whole repository, `search_code`. It describ
 
 - **Local and free.** The index is built on your machine the first time the tool is used. No API key, no embeddings, and nothing leaves the machine.
 - **Symbol-aware.** Files are cut at function and class boundaries, so a result is a whole definition. The chunk that defines a symbol outranks the ones that mention it. `autoCompactThreshold`, `auto_compact_threshold` and "compact threshold" all find the same code. Definitions are recognised in TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, C#, C/C++, Ruby and PHP; other files are searched as text.
-- **Knows who uses what.** For JavaScript, TypeScript and Python, the first results list the files that import them.
+- **Knows who uses what.** The first results list the files that import them: relative and aliased (`@/…`) imports in JavaScript and TypeScript, Python modules, Java and Kotlin classes, Rust modules and Go packages.
+- **Code before prose.** Source ranks above tests, and tests above documentation, unless the question asks for tests or docs. The filler words of a question ("how", "when", "too") are not searched for.
+- **Uses what else is available.** When a language server is running, its exact symbol list is asked too, so declarations the patterns miss are still found. When you have built the embeddings index (**Codico: Index Workspace**), its matches by meaning are blended in, so a question that shares no word with the code can still find it. Neither is required, and neither is waited for longer than 1.5 seconds.
+- **Every folder.** With several workspace folders open, all are searched, and a result is named `folder/path`, the same way the file tools address it.
 - **Large repositories.** Up to `codico.codeSearchMaxFiles` files (default 5,000) and about 30 MB of source; files that git ignores, generated or binary files, lock files and files over 200 KB are skipped. On a test tree of 3,365 files (39 MB) the index took 3.4 seconds to build and a query 2 ms.
 - **Current.** Changed files are re-indexed before the next search, and the agent's own edits at once.
 - **Same protections as reading.** Files excluded by `.codicoignore`, files behind a symbolic link that leads outside the workspace, `.env` files and private keys are never indexed or shown.
