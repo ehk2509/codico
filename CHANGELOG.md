@@ -7,6 +7,10 @@ All notable changes to Codico will be documented in this file.
 ### Security
 - The contents of every open editor tab (up to five, 5,000 characters each) were added to each message, including tabs of files excluded by `.codicoignore` and files outside the workspace: a `.env` left open in a tab was sent to the model. Tabs are now sent as names only, and a tab the agent could not read itself is not named.
 
+### Added
+- Duplicate a thread from the thread list (⧉, after rename). The copy has the same conversation, what the panel shows and what the model sees, under the name "<original> (copy)"; it opens straight away and is never pinned. The original is left untouched, the two are independent, and duplicating is refused while a reply is running. Written by Codico's own agent as a test task, then reviewed and ported.
+- After **Stop**, if commands of the task left background processes running (a dev server, a watcher), the reply ends with a note naming them and a **Stop them** button. Stop itself still leaves them running, as before; they were only visible as a chip in the status bar.
+
 ### Changed
 - Smaller additions to the conversation, from the review of a recorded task:
   - Open tabs are named, not included (see Security). In that task the block held `package-lock.json` and `.gitignore`, 6,500 characters resent with each of about 60 requests. Lock files and generated output are not listed.
@@ -14,10 +18,7 @@ All notable changes to Codico will be documented in this file.
   - A reminder attached to tool results while a condition holds ("a helper import is still unwired…", sent 14 times in that task) is given in full the first time and as one short line afterwards.
 - Reads no longer repeat what the model already has. In a recorded task a third of all lines read (1,312 of 3,823) were already in the conversation and unchanged, most of them slices of one long file read 15 times. `read_file` now checks the conversation for earlier text of the file: lines that are still there and still equal to the file are left out (a pointer for a fully known range, only the new lines for an overlapping one). Changed lines are always sent, and nothing is assumed after a compaction, a rewind or a thread switch, because the check reads the conversation as it is instead of remembering what was sent.
 - After an edit, the agent was told to "re-read the edited control flow". The edit result already shows the changed lines, so it is now told to check those, and to read only what the result does not show.
-
-### Added
-- Duplicate a thread from the thread list (⧉, after rename). The copy has the same conversation, what the panel shows and what the model sees, under the name "<original> (copy)"; it opens straight away and is never pinned. The original is left untouched, the two are independent, and duplicating is refused while a reply is running. Written by Codico's own agent as a test task, then reviewed and ported.
-- After **Stop**, if commands of the task left background processes running (a dev server, a watcher), the reply ends with a note naming them and a **Stop them** button. Stop itself still leaves them running, as before; they were only visible as a chip in the status bar.
+- One search instead of two. The thread bar had a button to find in the open conversation and another to search all threads, each with its own box. There is now one button and one bar (`Ctrl+F`), with a **This thread / All threads** switch that keeps what you typed. In all threads the results are listed under the bar; picking one opens that thread and switches back to its highlighted matches.
 
 ### Fixed
 - After an edit, Codico told the agent that the file "still contains an unreferenced local import" for imports that were unused before the task began. In a recorded task this sent the agent on an unrequested cleanup of the main file's imports, about eight requests. Only imports the edit itself left unused are reported now.
@@ -25,9 +26,6 @@ All notable changes to Codico will be documented in this file.
 - Stopping a task after one of its tools had finished lost that tool's result for providers that use the text tool format (Claude Code and ChatGPT logins, Ollama): the conversation kept the call but not what it returned, so on the next message the agent did not know an edit had been applied or what a command printed. The results are now kept, as they already were with native tool calls.
 - Stop waited for web fetches, browser actions, workspace searches and diagnostics to finish or time out (up to 15 seconds for a fetch, 30 for a page load) with nothing shown meanwhile. It now ends the reply at once.
 - A message queued for the agent's next step is discarded with the turn it was queued in (when it is stopped or ends), not only when the next message is sent.
-
-### Changed
-- One search instead of two. The thread bar had a button to find in the open conversation and another to search all threads, each with its own box. There is now one button and one bar (`Ctrl+F`), with a **This thread / All threads** switch that keeps what you typed. In all threads the results are listed under the bar; picking one opens that thread and switches back to its highlighted matches.
 
 ## 0.3.16 - 2026-10-12
 
