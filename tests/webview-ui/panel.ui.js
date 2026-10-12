@@ -671,7 +671,8 @@ test('the provider list has a search: typing narrows it, Enter takes the first m
   await page.locator('#provider-csel .csel-val').click();
   const search = page.locator('#provider-csel .csel-search');
   assert.equal(await search.getAttribute('placeholder'), '🔍 Search providers…');
-  assert.equal(await search.evaluate(el => el === document.activeElement), true, 'ready to type in');
+  // Focus is given just after the list opens
+  await page.waitForFunction(() => document.activeElement && document.activeElement.classList.contains('csel-search'));
   const shown = () => page.locator('#provider-csel .csel-opt:visible').allTextContents();
   const all = (await shown()).length;
   await search.fill('deep');
