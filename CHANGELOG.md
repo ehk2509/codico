@@ -4,6 +4,14 @@ All notable changes to Codico will be documented in this file.
 
 ## Unreleased
 
+### Added
+- After **Stop**, if commands of the task left background processes running (a dev server, a watcher), the reply ends with a note naming them and a **Stop them** button. Stop itself still leaves them running, as before; they were only visible as a chip in the status bar.
+
+### Fixed
+- Stopping a task after one of its tools had finished lost that tool's result for providers that use the text tool format (Claude Code and ChatGPT logins, Ollama): the conversation kept the call but not what it returned, so on the next message the agent did not know an edit had been applied or what a command printed. The results are now kept, as they already were with native tool calls.
+- Stop waited for web fetches, browser actions, workspace searches and diagnostics to finish or time out (up to 15 seconds for a fetch, 30 for a page load) with nothing shown meanwhile. It now ends the reply at once.
+- A message queued for the agent's next step is discarded with the turn it was queued in (when it is stopped or ends), not only when the next message is sent.
+
 ### Changed
 - One search instead of two. The thread bar had a button to find in the open conversation and another to search all threads, each with its own box. There is now one button and one bar (`Ctrl+F`), with a **This thread / All threads** switch that keeps what you typed. In all threads the results are listed under the bar; picking one opens that thread and switches back to its highlighted matches.
 

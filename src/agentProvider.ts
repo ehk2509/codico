@@ -21,8 +21,9 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
+import { untilStopped } from './stopRace';
 import { CommandApprovalStore } from './commandApprovalStore';
-import { MAX_STEER_CHARS, addSteer, steerNote } from './steering';
+import { MAX_STEER_CHARS, STOPPED_NOTE, addSteer, steerNote } from './steering';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
@@ -417,6 +418,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._steer = this._busy && msg.text.length <= MAX_STEER_CHARS ? msg.text : '';
                 break;
             case 'abortStream':
+                this._steer = '';
                 this._abortController?.abort();
                 // A message waiting for the previous turn to finish is cancelled too; the
                 // panel already shows it as running, so end that state explicitly.
@@ -1370,6 +1372,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     // the turn after a tool has already finished.
                     if (fullContent.trim() || inlineToolResults.length > 0) {
                         appendAssistantIteration(this._history, fullContent, nativeToolExecutions, '(interrupted)', iterationReasoning);
+                        // Text-format tools: what the finished calls returned is kept too (an applied edit, a command's output)
+                        if (fencedToolResults.length > 0) { this._history.push({ role: 'user', content: `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}` }, { role: 'assistant', content: STOPPED_NOTE }); }
                     }
                     break;
                 }
@@ -1536,6 +1540,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // The change report: what this turn changed, and what was checked afterwards
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
         if (passport) { this._post({ type: 'patchPassport', id: msgId, passport, markdown: passportMarkdown(passport) }); }
+        this._steer = '';
         this._post({ type: 'endMessage', id: msgId });
         const recording = this._recording;
         this._recording = null;
@@ -1877,6 +1882,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // The project's own rules first: a "before" hook that fails refuses the call
+        // Stop does not wait for a page load, a web request or a search to finish
+        const stopped = () => { this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: 'stopped', success: false, error: 'Stopped' }); return `[${tool.type}] Stopped by the user before it finished.`; };
         const refused = await this._hooks.before(tool, signal);
         if (refused) {
             this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: 'refused by a project hook', success: false, error: 'Refused by a project hook' });
@@ -1918,12 +1925,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // so showToolResult can find the pending pill and update it in-place.
                 const searchLabel = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
                 this._post({ type: 'toolStart', id: msgId, tool: 'search_files', label: searchLabel });
-                result = await this._handleSearchFiles(tool, msgId);
+                result = await untilStopped(this._handleSearchFiles(tool, msgId), signal, stopped);
                 break;
             }
             case 'find_files': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'find_files', label: tool.pattern });
-                result = await this._handleFindFiles(tool, msgId);
+                result = await untilStopped(this._handleFindFiles(tool, msgId), signal, stopped);
                 break;
             }
             case 'edit_file': {
@@ -1933,7 +1940,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'get_diagnostics': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'get_diagnostics', label: tool.filepath || 'workspace' });
-                result = await this._external._handleGetDiagnostics(tool, msgId);
+                result = await untilStopped(this._external._handleGetDiagnostics(tool, msgId), signal, stopped);
                 break;
             }
             case 'delegate': {
@@ -1950,32 +1957,32 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'fetch_url': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'fetch_url', label: tool.url });
-                result = await this._external._handleFetchUrl(tool, msgId);
+                result = await untilStopped(this._external._handleFetchUrl(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_navigate': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_navigate', label: tool.url });
-                result = await this._external._handleBrowserNavigate(tool, msgId);
+                result = await untilStopped(this._external._handleBrowserNavigate(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_click': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_click', label: tool.selector });
-                result = await this._external._handleBrowserClick(tool, msgId);
+                result = await untilStopped(this._external._handleBrowserClick(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_type': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_type', label: tool.selector });
-                result = await this._external._handleBrowserType(tool, msgId);
+                result = await untilStopped(this._external._handleBrowserType(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_get_text': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page' });
-                result = await this._external._handleBrowserGetText(tool, msgId);
+                result = await untilStopped(this._external._handleBrowserGetText(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_screenshot': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_screenshot', label: 'screenshot' });
-                result = await this._external._handleBrowserScreenshot(msgId);
+                result = await untilStopped(this._external._handleBrowserScreenshot(msgId), signal, stopped);
                 break;
             }
             case 'browser_close': {
@@ -1992,7 +1999,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'lsp_symbol': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'lsp_symbol', label: tool.query });
-                result = await this._external._handleLspSymbol(tool, msgId);
+                result = await untilStopped(this._external._handleLspSymbol(tool, msgId), signal, stopped);
                 break;
             }
             case 'debug_get_variables': {

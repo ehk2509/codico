@@ -169,6 +169,7 @@ When the agent runs a shell command, output streams directly into the chat panel
 - Commands get no input, so one that prompts (an `npx` install, `npm init`) fails at once instead of waiting for the timeout
 - The model sees the start and, mostly, the end of long output — where test failures and summaries are
 - A command that leaves a process running in the background (e.g. `nohup npm start &`) no longer blocks the agent. The status bar shows a **⚙ N background processes ✕** chip — hover to see the commands, click to stop them. They are also stopped when VS Code closes.
+- **Stop** ends the reply and kills the command that is running, with everything it started. Background processes left by earlier commands are not killed: you may still want the dev server. If any are running when you press Stop, the reply ends with a note naming them and a **Stop them** button.
 
 ---
 
