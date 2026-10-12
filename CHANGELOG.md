@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.17 - 2026-10-13
 
 ### Security
 - The contents of every open editor tab (up to five, 5,000 characters each) were added to each message, including tabs of files excluded by `.codicoignore` and files outside the workspace: a `.env` left open in a tab was sent to the model. Tabs are now sent as names only, and a tab the agent could not read itself is not named.
