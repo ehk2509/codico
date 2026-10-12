@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- The panel's top row at narrow widths: the logo was squeezed under the provider selector while unused space sat next to the buttons, and below about 450px the buttons were pushed off the panel. The buttons now stay at the right of the first row, and in a panel of 480px or less the provider, model and effort selectors take a row of their own beneath it. A long model name is cut short instead of pushing anything out.
+
 ## 0.3.15 - 2026-10-12
 
 ### Added

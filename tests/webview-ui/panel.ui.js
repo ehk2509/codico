@@ -614,6 +614,29 @@ test('the task list of an approved plan: numbered steps with title and details, 
   assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });
 
+test('the top row at any width: nothing overlaps or is pushed off; when narrow the buttons stay up and the selectors take a second row', async () => {
+  const { page } = await openPanel();
+  const parts = ['.h-title svg', '#provider-csel', '#model-csel', '#effort-csel', '#undo-btn', '#redo-btn', '#clear-btn', '#settings-btn', '#close-btn'];
+  for (const [provider, model] of [['DeepSeek', 'DeepSeek V4.1 Flash'], ['Claude Code (your login)', 'A model with a very long name that is cut short']]) {
+    await page.evaluate(([p, m]) => { document.querySelector('#provider-csel .csel-val').textContent = p; document.querySelector('#model-csel .csel-val').textContent = m; }, [provider, model]);
+    const rows = {};
+    for (const width of [700, 560, 481, 480, 380, 300, 220]) {
+      await page.setViewportSize({ width, height: 700 });
+      const boxes = await page.evaluate(sel => sel.map(s => { const b = document.querySelector(s).getBoundingClientRect(); return { s, left: b.left, right: b.right, top: b.top, bottom: b.bottom }; }), parts);
+      for (const b of boxes) { assert.ok(b.right - b.left > 10 && b.left >= 0 && b.right <= width + 0.5, `${b.s} is whole and inside a ${width}px panel: ${Math.round(b.left)}–${Math.round(b.right)}`); }
+      for (const a of boxes) { for (const b of boxes) { if (a.s < b.s) { assert.ok(a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5, `${a.s} and ${b.s} overlap at ${width}px`); } } }
+      const [logo, ...rest] = boxes; const selectors = rest.slice(0, 3); const buttons = rest.slice(3);
+      // The buttons are always on the first row, with the logo, and end at the right edge
+      assert.ok(buttons.every(b => b.top < logo.bottom && b.bottom > logo.top), `the buttons are on the first row at ${width}px`);
+      assert.ok(width - buttons[4].right < 12, `the buttons end at the right edge at ${width}px`);
+      assert.ok(selectors.every(b => Math.abs(b.top - selectors[0].top) < 6), `the selectors are on one line at ${width}px`);
+      rows[width] = selectors[0].top >= logo.bottom ? 2 : 1;
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    assert.deepEqual(rows, { 700: 1, 560: 1, 481: 1, 480: 2, 380: 2, 300: 2, 220: 2 });
+  }
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {
