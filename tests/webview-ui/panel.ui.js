@@ -85,7 +85,7 @@ test('a message queued during a reply is sent when the reply ends', async () => 
   await page.fill('#msg-input', 'follow-up question');
   await page.click('#send-btn');
   assert.equal((await posted('sendMessage')).length, 0, 'not sent while the reply streams');
-  assert.match(await page.evaluate(() => document.body.innerText), /Queued:\s*follow-up question/);
+  assert.match(await page.evaluate(() => document.body.innerText), /Next step:\s*follow-up question/);
   await send({ type: 'endMessage', id: 'm1' });
   await page.waitForTimeout(250);
   const sent = await posted('sendMessage');
@@ -1243,13 +1243,44 @@ test('a thread with messages can be exported from the thread list', async () => 
   assert.equal((await posted('switchThread')).length, 0, 'exporting does not open the thread');
 });
 
+test('a message typed during a task is handed to the agent for its next step, and is not sent twice', async () => {
+  const { page, send, posted } = await openPanel();
+  await send({ type: 'startMessage', id: 's1' }, { type: 'toolStart', id: 's1', tool: 'read_file', label: 'src/a.ts' });
+  await page.fill('#msg-input', 'use the v2 API instead');
+  await page.click('#send-btn');
+  assert.deepEqual(await posted('queueMessage'), [{ type: 'queueMessage', text: 'use the v2 API instead' }]);
+  assert.match(await page.locator('.queued-banner').textContent(), /Next step:use the v2 API instead/);
+  assert.match(await page.locator('.queued-banner').getAttribute('title'), /next step; sent as a new message if it finishes first/);
+  // The agent took it: the banner goes, the reply shows where, and nothing is sent when the reply ends
+  await send({ type: 'toolResult', id: 's1', tool: 'read_file', label: 'src/a.ts', success: true },
+    { type: 'appendContent', id: 's1', text: '\n\n> 💬 **You, while Codico was working:** use the v2 API instead\n\n' }, { type: 'queuedDelivered' });
+  assert.equal(await page.locator('.queued-banner').count(), 0);
+  assert.match(await page.locator('#msg-s1').textContent(), /You, while Codico was working: use the v2 API instead/);
+  await send({ type: 'appendContent', id: 's1', text: 'Switched to v2.' }, { type: 'endMessage', id: 's1' });
+  await page.waitForTimeout(250);
+  assert.equal((await posted('sendMessage')).length, 0);
+
+  // Withdrawn with × or Edit: the agent is told to forget it
+  await send({ type: 'startMessage', id: 's2' });
+  await page.fill('#msg-input', 'never mind');
+  await page.click('#send-btn');
+  await page.locator('.queued-cancel').click();
+  assert.deepEqual((await posted('queueMessage')).slice(-2), [{ type: 'queueMessage', text: 'never mind' }, { type: 'queueMessage', text: '' }]);
+  // A command cannot be taken in mid-task: it waits for the reply to end, as before
+  await page.fill('#msg-input', '/compact');
+  await page.click('#send-btn');
+  assert.deepEqual((await posted('queueMessage')).pop(), { type: 'queueMessage', text: '' });
+  assert.match(await page.locator('.queued-banner').textContent(), /Queued:\/compact/);
+  assert.equal(await page.locator('.queued-banner').getAttribute('title'), 'Sent when the current reply ends');
+});
+
 test('a queued message can be put back in the box to change it, and typing meanwhile is not lost', async () => {
   const { page, send, posted } = await openPanel();
   await send(THREADS('A'), { type: 'startMessage', id: 'q1' });
   const Q = 'then run the tests and report every failure with its file and line number';
   await page.locator('#msg-input').fill(Q);
   await page.click('#send-btn');
-  assert.match(await page.locator('.queued-banner').textContent(), /Queued:then run the tests/);
+  assert.match(await page.locator('.queued-banner').textContent(), /Next step:then run the tests/);
   // In a narrow panel the banner stays inside it: the text shortens, the buttons stay
   await page.setViewportSize({ width: 280, height: 700 });
   const banner = await page.locator('.queued-banner').evaluate(e => { const r = e.getBoundingClientRect(); const x = e.querySelector('.queued-cancel').getBoundingClientRect(); return { left: r.left, right: r.right, cancelRight: x.right }; });

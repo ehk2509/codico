@@ -96,6 +96,8 @@ export type WebviewMessage =
     | { type: 'editMessage'; turnId: string; text: string }
     | { type: 'deleteMessage'; turnId: string }
     | { type: 'rewind'; turnId: string }
+    /** A message typed while the agent works, to deliver at its next step; empty text withdraws it. */
+    | { type: 'queueMessage'; text: string }
     | { type: 'regenerate' }
     | { type: 'attachDroppedFiles'; uris: string[] }
     | { type: 'openFile'; path: string; line?: number }
@@ -146,6 +148,8 @@ export type ExtensionMessage =
     | { type: 'proposalAccepted'; filepath: string }
     | { type: 'proposalRejected'; filepath: string }
     | { type: 'allProposalsResolved' }
+    /** The queued message was given to the model mid-task: the panel no longer holds it. */
+    | { type: 'queuedDelivered' }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
     | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** After a rewind: the removed message, put back in the input box. */ draftText?: string; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }

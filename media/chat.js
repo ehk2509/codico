@@ -1348,9 +1348,13 @@
       // The message bubble is rendered by send() after the stream ends so it
       // appears in the correct position (after the completed assistant turn).
       _queuedMsg = { rawInput: rawInput, attachments: ctxAttachments.slice() };
+      // Plain text reaches the agent at its next step. A command or a message with attachments
+      // needs the full send path, so it waits for the reply to end
+      _queuedMsg.steer = ctxAttachments.length === 0 && rawInput.charAt(0) !== '/' && rawInput.length <= 8000;
+      vscode.postMessage({ type: 'queueMessage', text: _queuedMsg.steer ? rawInput : '' });
       ctxAttachments = [];
       renderChips();
-      _showQueuedBanner(rawInput);
+      _showQueuedBanner(rawInput, _queuedMsg.steer);
       input.value = '';
       input.style.height = 'auto';
       return;
@@ -1586,14 +1590,15 @@
     }
   }
 
-  function _showQueuedBanner(text) {
+  function _showQueuedBanner(text, steer) {
     _hideQueuedBanner();
     var bar = document.createElement('div');
     bar.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px 10px 5px 12px;' +
       'background:rgba(109,40,217,.12);border:1px solid rgba(109,40,217,.35);' +
       'border-radius:6px;font-size:11.5px;color:var(--vscode-descriptionForeground);margin-bottom:4px;min-width:0;max-width:100%;box-sizing:border-box;';
     var lbl = document.createElement('span');
-    lbl.textContent = '\u26a1 Queued:';
+    lbl.textContent = steer ? '\u26a1 Next step:' : '\u26a1 Queued:';
+    bar.title = steer ? 'Given to the agent with its next step; sent as a new message if it finishes first' : 'Sent when the current reply ends';
     lbl.style.cssText = 'font-weight:600;color:var(--vscode-foreground);white-space:nowrap;flex-shrink:0';
     var txt = document.createElement('span');
     txt.textContent = text.length > 80 ? text.slice(0, 80) + '\u2026' : text;
@@ -1603,7 +1608,7 @@
     btn.textContent = '\u00d7';
     btn.title = 'Cancel queued message';
     btn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:14px;line-height:1;padding:0 2px;flex-shrink:0;opacity:.6';
-    btn.addEventListener('click', function() { _queuedMsg = null; _hideQueuedBanner(); });
+    btn.addEventListener('click', function() { _queuedMsg = null; _hideQueuedBanner(); vscode.postMessage({ type: 'queueMessage', text: '' }); });
     // Edit: the message goes back into the box (with its attachments) and is no longer queued
     var edit = document.createElement('button');
     edit.textContent = 'Edit';
@@ -1614,6 +1619,7 @@
       var queued = _queuedMsg;
       _queuedMsg = null;
       _hideQueuedBanner();
+      vscode.postMessage({ type: 'queueMessage', text: '' });
       if (!queued) { return; }
       // Text typed since goes after it rather than being lost
       _setInput(queued.rawInput + (input.value.trim() ? '\n' + input.value : ''));
@@ -3767,6 +3773,11 @@
         }
         break;
       }
+      case 'queuedDelivered':
+        // The agent has it: nothing is left to send when the reply ends
+        _queuedMsg = null;
+        _hideQueuedBanner();
+        break;
       case 'stepProgress':
         if (data.id === curId) { sStep.textContent = '\u00b7 step ' + data.step; }
         break;
