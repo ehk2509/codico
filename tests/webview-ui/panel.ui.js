@@ -801,6 +801,46 @@ test('a command approval offers to always allow it: the command itself, or with 
   assert.deepEqual(errors, []);
 });
 
+test('after Stop the reply says which background processes are still running, with a button to stop them', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const running = (commands) => ({ type: 'backgroundProcesses', processes: commands.map(command => ({ command, startedAt: Date.now() })) });
+  await send({ type: 'startMessage', id: 'b1' }, { type: 'appendContent', id: 'b1', text: 'Starting the server.' }, running(['npm start', 'tsc --watch']));
+  await page.locator('#stop-btn').click();
+  assert.equal((await posted('abortStream')).length, 1);
+  assert.equal(await page.locator('.left-running').count(), 0, 'said when the reply has ended, not before');
+  await send({ type: 'endMessage', id: 'b1' });
+  const note = page.locator('#msg-b1 .left-running');
+  assert.equal(await note.locator('.left-running-text').textContent(), 'Stopped. 2 background processes are still running: npm start, tsc --watch');
+  assert.equal(await note.locator('.left-running-stop').textContent(), 'Stop them');
+  assert.equal((await posted('killBackgroundProcesses')).length, 0, 'nothing is killed until asked');
+  await note.locator('.left-running-stop').click();
+  assert.equal((await posted('killBackgroundProcesses')).length, 1);
+  // The extension reports them gone: the note says so and the button goes
+  await send(running([]));
+  assert.equal(await note.locator('.left-running-text').textContent(), 'Stopped. The background processes are no longer running.');
+  assert.equal(await note.locator('.left-running-stop').count(), 0);
+
+  // A reply that ends by itself says nothing, even with processes running
+  await send({ type: 'startMessage', id: 'b2' }, running(['npm start']), { type: 'appendContent', id: 'b2', text: 'Done.' }, { type: 'endMessage', id: 'b2' });
+  assert.equal(await page.locator('#msg-b2 .left-running').count(), 0);
+  // Stop with nothing left running says nothing either
+  await send(running([]), { type: 'startMessage', id: 'b3' });
+  await page.locator('#stop-btn').click();
+  await send({ type: 'endMessage', id: 'b3' });
+  assert.equal(await page.locator('#msg-b3 .left-running').count(), 0);
+  // One process, a long command, a narrow panel
+  await page.setViewportSize({ width: 260, height: 700 });
+  await send({ type: 'startMessage', id: 'b4' }, running(['node server.js --port 3000 --watch --inspect --verbose --config ./config/development.json']));
+  await page.locator('#stop-btn').click();
+  await send({ type: 'endMessage', id: 'b4' });
+  assert.match(await page.locator('#msg-b4 .left-running-text').textContent(), /^Stopped\. 1 background process is still running: node server\.js .{20,}…$/);
+  assert.equal(await page.locator('#msg-b4 .left-running-stop').textContent(), 'Stop it');
+  const box = await page.locator('#msg-b4 .left-running-stop').boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= 260);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.deepEqual(errors, []);
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

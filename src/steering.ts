@@ -3,6 +3,9 @@ import { ChatMessage } from './openRouterClient';
 /** Longest message taken in mid-task; a longer one waits for the reply to end, as before. */
 export const MAX_STEER_CHARS = 8000;
 
+/** Closes a turn the user stopped after its tools had run, so the conversation still alternates. */
+export const STOPPED_NOTE = '(The user stopped the task here, before I replied to these results.)';
+
 /** How a message the user sent while the agent was working is put to the model. */
 export function steerText(text: string): string {
     return '[Message from the user, sent while you were working on the task above]\n' + text.trim() +

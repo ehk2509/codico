@@ -734,6 +734,14 @@ body{
 .perm-remember-label{font-size:10.5px;color:var(--vscode-descriptionForeground);flex:0 0 auto}
 .perm-remember-btn{background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border,#555);font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .perm-remember-btn:hover{background:var(--vscode-list-hoverBackground)}
+/* After Stop: background processes the task left running */
+.left-running{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:8px 0 2px;padding:5px 9px;font-size:11.5px;border-radius:5px;
+  border:1px solid var(--vscode-editorWarning-foreground,#d4a017);color:var(--vscode-foreground);background:rgba(212,160,23,.08)}
+.left-running.done{border-color:var(--vscode-panel-border);background:transparent;color:var(--vscode-descriptionForeground)}
+.left-running-text{flex:1 1 160px;min-width:0;overflow-wrap:anywhere}
+.left-running-stop{flex-shrink:0;font:inherit;font-size:11px;padding:2px 9px;border-radius:3px;cursor:pointer;
+  border:1px solid var(--vscode-button-border,transparent);background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff)}
+.left-running-stop:disabled{opacity:.5;cursor:default}
 /* The separate changes of one proposed edit */
 .hunk-list { padding:2px 10px 8px 22px; border-bottom:1px solid var(--vscode-panel-border,#2a2a2a); display:flex; flex-direction:column; gap:6px; }
 .hunk { border:1px solid var(--vscode-panel-border,#2a2a2a); border-radius:4px; overflow:hidden; min-width:0; }

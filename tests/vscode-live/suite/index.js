@@ -421,7 +421,30 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
-  // ── Remembered commands: "always allow" answers the next ones, but not a command with another attached ──
+  // ── Stop after a tool has finished: its result stays in the conversation (text-format tools) ──
+  {
+    const before = (await getLog()).length; const t0 = Date.now();
+    const task = vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:stop_keep] please do the task');
+    // The first command has run and the second (a long sleep) is under way
+    const t = Date.now(); while (read('live/stop-first.txt') === null && Date.now() - t < 10000) { await new Promise(r => setTimeout(r, 50)); }
+    await new Promise(r => setTimeout(r, 400));
+    const stopAt = Date.now();
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'abortStream' });
+    await task;
+    const stopMs = Date.now() - stopAt;
+    const mid = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:stop_next] please do the task');
+    const next = (await getLog()).slice(mid).filter(e => e.scenario === 'stop_next' && e.stream)[0] || {};
+    const sent = (await getLog()).slice(before).filter(e => e.scenario === 'stop_keep' && e.stream).length;
+    // The stopped turn ends: tool call, its results, the stop note; then the new message. No two user turns in a row
+    const tail = Array.isArray(next.roles) ? next.roles.slice(-4).join(' ') : '';
+    const alternates = tail === 'assistant user assistant user';
+    results.push({ name: 'stop_keep', ms: Date.now() - t0, requests: sent, ok: sent === 1 && stopMs < 6000 && !!next.sawStopResult && !!next.endsStopped && alternates,
+      why: `Stop ended the running command in ${stopMs} ms with no further request (${sent}); the next request still has the first command's output: ${!!next.sawStopResult}; the stop is marked: ${!!next.endsStopped}; the conversation ends "${tail}": ${alternates}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
+  // ── Remembered commands: "always allow\" answers the next ones, but not a command with another attached ──
   {
     const before = (await getLog()).length; const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
     await vscode.commands.executeCommand('codico.__evalApprovals', 'commands');

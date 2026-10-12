@@ -1710,7 +1710,42 @@
     if (e.key === 'Escape' && streaming && !e.defaultPrevented) { e.preventDefault(); stopBtn.click(); }
   });
 
+  // ── After Stop: say which background processes the task left running, with a way to stop them ──
+  var _bgProcs = [];          // what the extension last reported
+  var _stopPressed = false;   // the reply in progress was stopped by the user
+  function _showLeftRunning(msgId) {
+    var replies = msgs.querySelectorAll('[id^="msg-"]');
+    var wrap = (msgId && document.getElementById('msg-' + msgId)) || replies[replies.length - 1];
+    if (!wrap || !_bgProcs.length) { return; }
+    var note = document.createElement('div');
+    note.className = 'left-running';
+    var text = document.createElement('span');
+    text.className = 'left-running-text';
+    var names = _bgProcs.slice(0, 3).map(function (p) { return p.command.length > 60 ? p.command.slice(0, 60) + '\u2026' : p.command; });
+    text.textContent = 'Stopped. ' + (_bgProcs.length === 1 ? '1 background process is' : _bgProcs.length + ' background processes are') + ' still running: ' +
+      names.join(', ') + (_bgProcs.length > 3 ? ' and ' + (_bgProcs.length - 3) + ' more' : '');
+    var btn = document.createElement('button');
+    btn.className = 'left-running-stop';
+    btn.textContent = _bgProcs.length === 1 ? 'Stop it' : 'Stop them';
+    btn.title = 'Stop every background process started by Codico\u2019s commands';
+    btn.addEventListener('click', function () { btn.disabled = true; vscode.postMessage({ type: 'killBackgroundProcesses' }); });
+    note.appendChild(text); note.appendChild(btn);
+    var copyBtn = msgId && document.getElementById('copy-' + msgId);
+    if (copyBtn && copyBtn.parentNode === wrap) { wrap.insertBefore(note, copyBtn); } else { wrap.appendChild(note); }
+    scrollBottom();
+  }
+  /** The processes are gone (stopped here, from the status bar, or by themselves): the notices say so. */
+  function _settleLeftRunning() {
+    document.querySelectorAll('.left-running:not(.done)').forEach(function (note) {
+      note.classList.add('done');
+      note.querySelector('.left-running-text').textContent = 'Stopped. The background processes are no longer running.';
+      var btn = note.querySelector('.left-running-stop');
+      if (btn) { btn.remove(); }
+    });
+  }
+
   stopBtn.addEventListener('click', function() {
+    _stopPressed = true;
     _queuedMsg = null;
     _hideQueuedBanner();
     vscode.postMessage({ type: 'abortStream' });
@@ -3706,7 +3741,7 @@
     switch (data.type) {
       // setStreaming: replies the extension starts itself (CodeLens, editor commands, /test…)
       // must also show Stop and a working status, not only ones sent from this panel
-      case 'startMessage':    _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); if (data.planGoal) { _planGoals[data.id] = data.planGoal; }
+      case 'startMessage':    _stopPressed = false; _allowAllWrites = false; _allowAllTerminal = false; _hideQueuedBanner(); if (data.planGoal) { _planGoals[data.id] = data.planGoal; }
         // Messages start their turns in the order they were sent: the oldest untagged bubble is this turn's
         if (data.turnId) { var ub = _oldestUntaggedUserMsg(); if (ub) { _tagUserMsg(ub, data.turnId, data.editable); if (data.planGoal) { ub.dataset.editText = data.planGoal; } } }
         startMsg(data.id); setStreaming(true); break;
@@ -3719,7 +3754,10 @@
       case 'droppedImage':    _pastedImages.push({ dataUrl: data.dataUrl }); _renderImgPreviews(); break;
       case 'appendThinking':  appendThinking(data.id, data.text); break;
       case 'appendContent':   appendContent(data.id, data.text); break;
-      case 'endMessage':      endMsg(data.id); break;
+      case 'endMessage':
+        endMsg(data.id);
+        if (_stopPressed) { _stopPressed = false; _showLeftRunning(data.id); }
+        break;
       case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent); break;
       case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note, data.rules); break;
       case 'fileWriteResult': showFileResult(data.id, data.filepath, data.granted, data.error, data.diff); break;
@@ -3904,6 +3942,8 @@
       }
       case 'backgroundProcesses': {
         var procs = data.processes || [];
+        _bgProcs = procs;
+        if (!procs.length) { _settleLeftRunning(); }
         bgBtn.disabled = false;
         bgBtn.style.display = procs.length ? 'inline-block' : 'none';
         bgBtn.textContent = '\u2699 ' + procs.length + ' background ' + (procs.length === 1 ? 'process' : 'processes') + ' \u2715';

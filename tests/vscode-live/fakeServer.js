@@ -86,6 +86,9 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Stopped after the first of two commands in one reply: what the first returned must stay in the conversation
+  stop_keep: [tool('run_terminal', 'command: echo STOP-KEPT-OUTPUT > live/stop-first.txt; cat live/stop-first.txt') + '\nNow the long one.\n\n' + tool('run_terminal', 'command: sleep 25'), 'Not reached.'],
+  stop_next: ['Continuing from what was done.'],
   // Remembered commands: allowed with any arguments after one answer, but never with a second command attached
   remember: [tool('run_terminal', 'command: git status'), tool('run_terminal', 'command: git status --short'), tool('run_terminal', 'command: git status; echo CHAINED > live/rem-chained.txt'), 'Done.'],
   // Edits mode: one proposed edit with two separate changes
@@ -171,7 +174,7 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),
