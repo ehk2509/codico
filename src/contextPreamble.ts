@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { buildSymbolContext } from './symbolProvider';
 import { buildWorkspaceDiagnosticsSummary } from './workspaceDiagnostics';
+import { isWorkspaceUriAllowed } from './workspaceSecurity';
+import { openTabsBlock } from './leanContext';
 
-/** The [Context] block sent with each message: workspace, active file and selection, problems, open tabs, symbol under the cursor. */
+/** The [Context] block sent with each message: workspace, active file and selection, problems, names of the other open tabs, symbol under the cursor. */
 export async function buildContextPreamble(): Promise<string> {
     const config = vscode.workspace.getConfiguration('codico');
     const parts: string[] = [];
@@ -34,34 +36,25 @@ export async function buildContextPreamble(): Promise<string> {
         if (diagSummary) { parts.push(diagSummary); }
     }
 
-    // Inject open tabs context if enabled
+    // The other open tabs, as names: their contents are read when the task needs them. A tab that
+    // happens to be open (a lock file, a credentials file) is not sent to the model with every message.
     if (config.get<boolean>('openTabsContext', true)) {
         const activeUri = editor?.document.uri.toString();
-        const candidateUris: vscode.Uri[] = [];
+        const tabs: Array<{ path: string; language?: string; lines?: number }> = [];
+        const seen = new Set<string>();
         for (const group of vscode.window.tabGroups.all) {
             for (const tab of group.tabs) {
-                if (candidateUris.length >= 5) { break; }
-                const input = tab.input as { uri?: vscode.Uri } | undefined;
-                if (!input?.uri) { continue; }
-                if (input.uri.toString() === activeUri) { continue; }
-                candidateUris.push(input.uri);
+                const uri = (tab.input as { uri?: vscode.Uri } | undefined)?.uri;
+                if (!uri || uri.scheme !== 'file' || uri.toString() === activeUri || seen.has(uri.toString())) { continue; }
+                seen.add(uri.toString());
+                // Not a file the agent could read itself (outside the workspace, or excluded by .codicoignore): not named either
+                if (!vscode.workspace.getWorkspaceFolder(uri) || !await isWorkspaceUriAllowed(uri)) { continue; }
+                const open = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
+                tabs.push({ path: vscode.workspace.asRelativePath(uri, false), language: open?.languageId, lines: open?.lineCount });
             }
-            if (candidateUris.length >= 5) { break; }
         }
-        // Open all candidate tabs in parallel instead of sequentially
-        const tabSnippets = (await Promise.all(
-            candidateUris.map(async (uri) => {
-                try {
-                    const doc = await vscode.workspace.openTextDocument(uri);
-                    const relPath = vscode.workspace.asRelativePath(uri);
-                    const text = doc.getText();
-                    return `// ${relPath}\n${text.slice(0, 5000)}${text.length > 5000 ? '\n… (truncated)' : ''}`;
-                } catch { return null; }
-            })
-        )).filter((s): s is string => s !== null);
-        if (tabSnippets.length > 0) {
-            parts.push(`Open tabs (${tabSnippets.length}):\n${tabSnippets.join('\n\n')}`);
-        }
+        const block = openTabsBlock(tabs);
+        if (block) { parts.push(block); }
     }
 
     // Symbol-aware context: LSP info for symbol under cursor

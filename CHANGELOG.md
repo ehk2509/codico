@@ -4,7 +4,14 @@ All notable changes to Codico will be documented in this file.
 
 ## Unreleased
 
+### Security
+- The contents of every open editor tab (up to five, 5,000 characters each) were added to each message, including tabs of files excluded by `.codicoignore` and files outside the workspace: a `.env` left open in a tab was sent to the model. Tabs are now sent as names only, and a tab the agent could not read itself is not named.
+
 ### Changed
+- Smaller additions to the conversation, from the review of a recorded task:
+  - Open tabs are named, not included (see Security). In that task the block held `package-lock.json` and `.gitignore`, 6,500 characters resent with each of about 60 requests. Lock files and generated output are not listed.
+  - `search_files` returns at most 40 matches, 6 per file and 200 characters per line, followed by the exact number left out and the files they are in, so the next search can be narrower. It used to return up to 100 matches of up to 500 characters.
+  - A reminder attached to tool results while a condition holds ("a helper import is still unwired…", sent 14 times in that task) is given in full the first time and as one short line afterwards.
 - Reads no longer repeat what the model already has. In a recorded task a third of all lines read (1,312 of 3,823) were already in the conversation and unchanged, most of them slices of one long file read 15 times. `read_file` now checks the conversation for earlier text of the file: lines that are still there and still equal to the file are left out (a pointer for a fully known range, only the new lines for an overlapping one). Changed lines are always sent, and nothing is assumed after a compaction, a rewind or a thread switch, because the check reads the conversation as it is instead of remembering what was sent.
 - After an edit, the agent was told to "re-read the edited control flow". The edit result already shows the changed lines, so it is now told to check those, and to read only what the result does not show.
 

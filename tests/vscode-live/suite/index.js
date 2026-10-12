@@ -421,6 +421,27 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Leaner context: open tabs are named, never sent; a large search result is capped with an exact count ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    // Tabs open besides the active file: an ignored file with a secret, a lock file, an ordinary file
+    fs.writeFileSync(path.join(ws, 'package-lock.json'), '{ "lockfileVersion": 3, "LOCK-CONTENT-MARKER": true }\n');
+    for (const file of ['fixtures/secret.txt', 'package-lock.json', 'fixtures/notes.txt', 'shop/shipping.ts']) {
+      await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(path.join(ws, file))), { preview: false });
+    }
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'sendMessage', text: '[SCENARIO:lean_search] please do the task' });
+    await waitFor(log => log.slice(before).filter(e => e.scenario === 'lean_search' && e.stream).length >= 2, 15000);
+    await new Promise(r => setTimeout(r, 500));
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'lean_search' && e.stream);
+    const context = (reqs[0] || {}).lastUser || ''; const found = (reqs[1] || {}).lastUser || '';
+    const named = /Other open tabs \(names only; read a file if it matters\): [^\n]*fixtures\/notes\.txt/.test(context);
+    const nothingSent = !/SECRET-TOKEN-12345|LOCK-CONTENT-MARKER|NOTES-MARKER/.test(context) && !/secret\.txt|package-lock\.json/.test(context.split('[User request]')[0].split('Other open tabs')[1] || '');
+    const capped = /fixtures\/long\.txt:6:row 6 of the long file\n… showing 6 of 60 matches in 1 file\. Not shown: fixtures\/long\.txt \(54\)\. Narrow the search/.test(found) && !/long\.txt:7:/.test(found);
+    results.push({ name: 'lean_context', ms: Date.now() - t0, requests: reqs.length, ok: named && nothingSent && capped,
+      why: `the other tabs are named: ${named}; no tab's content is sent, and the ignored file and the lock file are not even named: ${nothingSent}; 60 matches in one file are shown as 6 with the exact count left out: ${capped}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── A read does not repeat lines that are already in the conversation and unchanged ──
   {
     const t0 = Date.now(); const before = (await getLog()).length;
