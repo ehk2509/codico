@@ -21,6 +21,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
+import { CommandApprovalStore } from './commandApprovalStore';
 import { MAX_STEER_CHARS, addSteer, steerNote } from './steering';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
@@ -166,6 +167,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
     private _allowAllWrites = false;
     private _allowAllTerminal = false;
+    /** Commands the user always allows in this workspace. */
+    public readonly approvedCommands = new CommandApprovalStore(() => this._context.workspaceState);
     /** Auto-commit: when true, stage+commit all changes after each agent turn */
     private _autoCommit = false;
     /** Count of files actually written/edited during the current agent turn */
@@ -182,6 +185,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private readonly _evaluationMode: boolean;
     /** Test-only: ask for write approval as a user would see it. */
     private _evalRequireApproval = false;
+    private _evalAskCommands = false;
     private _evalSteps = 0;
     private _evalToolCalls = 0;
     private _evalPromptTokens = 0;
@@ -360,10 +364,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     /** Test-only: whether writes wait for approval, and the approval prompts now open. */
-    public evaluationApprovals(require?: boolean): string[] {
+    public evaluationApprovals(require?: boolean | 'commands'): string[] {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
-        if (require !== undefined) { this._evalRequireApproval = require; }
-        return [...this._pendingWritePermissions.keys()];
+        if (require !== undefined) { this._evalRequireApproval = require === true; this._evalAskCommands = require === 'commands'; }
+        return [...this._pendingWritePermissions.keys(), ...this._pendingTerminalPermissions.keys()];
     }
 
     /** Test-only: delivers a message as if the panel had sent it. */
@@ -436,6 +440,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'terminalPermissionResponse': {
                 const resolve = this._pendingTerminalPermissions.get(msg.permId);
+                await this.approvedCommands.answered(msg.permId, msg.granted ? msg.remember : undefined);
                 if (resolve) {
                     this._pendingTerminalPermissions.delete(msg.permId);
                     resolve(msg.granted);
@@ -827,7 +832,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // Reset per-response allow-all flags at the start of every new user turn
         this._allowAllWrites  = this._evaluationMode && !this._evalRequireApproval;
-        this._allowAllTerminal = this._evaluationMode;
+        this._allowAllTerminal = this._evaluationMode && !this._evalAskCommands;
         this._external.resetTurnPermissions();
 
         // ── /pr slash command: inject PR context then re-prompt as a review ──
@@ -2106,14 +2111,16 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // After the agent has read external content this turn, Allow All no longer covers
         // commands: a prompt-injected page must not be able to run them unattended.
         const askAgain = this._allowAllTerminal && !this._evaluationMode && this._external.untrustedContentSeen;
+        // A remembered command is not asked about, with the same exception
+        const remembered = this._external.untrustedContentSeen ? undefined : this.approvedCommands.allows(tool.command);
         let granted: boolean;
-        if (this._allowAllTerminal && !askAgain) {
+        if ((this._allowAllTerminal && !askAgain) || remembered) {
             granted = true;
         } else {
             const permId = nodeCrypto.randomBytes(8).toString('hex');
             granted = await new Promise<boolean>((resolve) => {
                 this._pendingTerminalPermissions.set(permId, resolve);
-                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command,
+                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command, rules: askAgain ? [] : this.approvedCommands.offer(permId, tool.command),
                     note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined });
             });
         }

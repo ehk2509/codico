@@ -86,6 +86,8 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Remembered commands: allowed with any arguments after one answer, but never with a second command attached
+  remember: [tool('run_terminal', 'command: git status'), tool('run_terminal', 'command: git status --short'), tool('run_terminal', 'command: git status; echo CHAINED > live/rem-chained.txt'), 'Done.'],
   // Edits mode: one proposed edit with two separate changes
   hunk_edit: [tool('write_file', 'filepath: fixtures/hunks.txt\ncontent:\nl1\nL2-CHANGED\nl3\nl4\nl5\nl6\nl7\nL8-CHANGED\nl9'), 'Proposed.'],
   // A message sent while a command runs reaches the model with that command's result

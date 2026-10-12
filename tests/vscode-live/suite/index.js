@@ -421,6 +421,28 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Remembered commands: "always allow" answers the next ones, but not a command with another attached ──
+  {
+    const before = (await getLog()).length; const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
+    await vscode.commands.executeCommand('codico.__evalApprovals', 'commands');
+    const task = vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:remember] please do the task');
+    const first = await pollApproval();
+    if (first) { await msg({ type: 'terminalPermissionResponse', permId: first, granted: true, remember: 'git status *' }); }
+    // The second command (same tool, other arguments) must not ask; the next request to wait is the chained one
+    const second = await pollApproval();
+    const reqsSoFar = (await getLog()).slice(before).filter(e => e.scenario === 'remember' && e.stream);
+    if (second) { await msg({ type: 'terminalPermissionResponse', permId: second, granted: false }); }
+    await task;
+    await vscode.commands.executeCommand('codico.__evalApprovals', false);
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'remember' && e.stream);
+    const text = all(reqs);
+    const ranUnasked = reqsSoFar.length === 3 && /\[run_terminal: git status --short\]/.test(text);
+    const chainedAsked = !!second && second !== first && /\[run_terminal\] Denied by user:\ngit status; echo CHAINED/.test(text) && read('live/rem-chained.txt') === null;
+    results.push({ name: 'remember', ms: Date.now() - t0, requests: reqs.length, ok: !!first && ranUnasked && chainedAsked,
+      why: `the first command asked: ${!!first}; after "always allow git status *" the next one ran without asking: ${ranUnasked}; the same command with a second one attached still asked, and denied it did not run: ${chainedAsked}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Edits mode: a proposed edit is accepted and rejected one change at a time ──
   {
     const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);

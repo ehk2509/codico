@@ -323,6 +323,15 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Remembered Commands
+The approval card of a terminal command has a second row, **Always allow in this workspace**, with the command itself and, for well-known build and test tools, the command with any arguments:
+
+- `npm test -- --watch=false` offers `npm test -- --watch=false` and `npm test *`; `git status` offers `git status` and `git status *`; `pytest tests/unit` offers `pytest *`.
+- Anything else (`rm -rf build`, `node -e "…"`, `python manage.py migrate`, a command with `&&` or a pipe) is offered only as written, and then allowed only when it is exactly that.
+- A rule with `*` covers further arguments to that one program and nothing else: `npm test; rm -rf ~`, `npm test && …`, `npm test | …`, `npm test > file` and `npm test $(…)` still ask.
+- **Codico: Remembered Commands** lists the rules; untick one to be asked again.
+- The rules are per workspace, are not read from any file in the repository, and do not apply once the agent has read web or MCP content in the current turn (the same exception as "Allow all commands this task").
+
 ### Lifecycle Hooks
 A project can run its own checks around what the agent does. Put them in `.codico/hooks.json` (**Codico: New Hooks File** writes a starting one):
 
@@ -424,6 +433,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newSkill` | Create a project skill in `.codico/skills` |
 | `codico.newAgent` | Create a project agent in `.codico/agents` |
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
+| `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
 | `codico.toggleInlineCompletions` | Toggle ghost-text inline completions on/off |
@@ -873,6 +883,7 @@ codico/
 
 - **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics; paths that lead outside the workspace through a symbolic link (or a dangling one) are refused
 - **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
+- **Remembered commands** — a terminal command runs without asking only if you chose "Always allow" for it on its approval card. A rule is either one whole command, matched exactly, or a build/test command with any arguments (`npm test *`), which never matches a command that chains, pipes, redirects or substitutes (`npm test; …`, `&&`, `|`, `>`, `$( )`, backticks). Rules live in the workspace's private state, not in a settings file a repository could ship, do not apply in an untrusted folder, and are set aside for the rest of a turn once the agent has read web or MCP content
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Terminal secret scrubbing** — approved shell commands inherit only an execution/toolchain allowlist (PATH, HOME, Java/Go/Python/Node toolchain roots, temp/system paths, locale), not arbitrary VS Code process secrets
 - **Secret storage** — all API keys (OpenRouter, direct providers, GitHub token) are stored in VS Code's encrypted `SecretStorage`, never in plain `settings.json`

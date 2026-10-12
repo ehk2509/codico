@@ -129,6 +129,10 @@
         "title": "Codico: New Hooks File"
       },
       {
+        "command": "codico.rememberedCommands",
+        "title": "Codico: Remembered Commands"
+      },
+      {
         "command": "codico.setOllamaUrl",
         "title": "Set Ollama Base URL",
         "category": "Codico"

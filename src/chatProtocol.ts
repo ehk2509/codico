@@ -87,7 +87,7 @@ export type WebviewMessage =
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }
     | { type: 'writePermissionResponse'; permId: string; granted: boolean }
-    | { type: 'terminalPermissionResponse'; permId: string; granted: boolean }
+    | { type: 'terminalPermissionResponse'; permId: string; granted: boolean; /** One of the rules offered on the card: allow it from now on in this workspace. */ remember?: string }
     | { type: 'allowAllWrites'; permId: string }
     | { type: 'allowAllTerminal'; permId: string }
     | { type: 'writePermissionEdit'; permId: string; content: string }
@@ -159,7 +159,7 @@ export type ExtensionMessage =
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
     | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string }
-    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Set when the request must be shown even under Allow All. */ note?: string }
+    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Rules the user can choose to always allow (the command itself, and for known tools with any arguments). */ rules?: string[]; /** Set when the request must be shown even under Allow All. */ note?: string }
     | { type: 'terminalChunk'; id: string; text: string }
     | { type: 'stepProgress'; id: string; step: number }
     | { type: 'activity'; text: string | null }

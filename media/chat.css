@@ -739,6 +739,10 @@ body{
 .prop-accept:hover { opacity:.8; }
 .prop-reject { background:rgba(248,113,113,.15); color:#f87171; border-color:rgba(248,113,113,.3); }
 .prop-reject:hover { opacity:.8; }
+.perm-remember{flex-wrap:wrap;row-gap:4px;border-top:1px dashed var(--vscode-panel-border,#2a2a2a);padding-top:6px;margin-top:2px}
+.perm-remember-label{font-size:10.5px;color:var(--vscode-descriptionForeground);flex:0 0 auto}
+.perm-remember-btn{background:transparent;color:var(--vscode-foreground);border:1px solid var(--vscode-panel-border,#555);font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.perm-remember-btn:hover{background:var(--vscode-list-hoverBackground)}
 /* The separate changes of one proposed edit */
 .hunk-list { padding:2px 10px 8px 22px; border-bottom:1px solid var(--vscode-panel-border,#2a2a2a); display:flex; flex-direction:column; gap:6px; }
 .hunk { border:1px solid var(--vscode-panel-border,#2a2a2a); border-radius:4px; overflow:hidden; min-width:0; }
