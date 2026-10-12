@@ -143,7 +143,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         inputSchema: {
             type: 'object',
             properties: {
-                task: { type: 'string', description: 'A self-contained task: the subagent sees nothing of this conversation. Say what to find out and what to report (file paths, line numbers).' },
+                task: { type: 'string', description: 'A self-contained task: the subagent sees nothing of this conversation. Say what to find out and what to report (file paths, line numbers). Ask for exactly what you need and no more: every extra question (definitions, tests, related code) makes the subagent read more.' },
                 agent: { type: 'string', description: 'Optional name of a project agent (.codico/agents) whose instructions the subagent follows.' },
             },
             required: ['task'],

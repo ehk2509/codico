@@ -16,7 +16,10 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 /** What a subagent may use. No edits, no commands, no web, and no `delegate`. */
 export const SUBAGENT_TOOLS: ReadonlySet<ToolCall['type']> = new Set(['read_file', 'list_directory', 'search_files', 'search_code', 'find_files', 'get_diagnostics', 'lsp_symbol']);
 
-export const SUBAGENT_DEFAULT_MAX_STEPS = 15;
+export const SUBAGENT_DEFAULT_MAX_STEPS = 10;
+/** After this many tool calls a subagent is reminded, once, that it may already be able to answer. */
+export const SUBAGENT_NUDGE_AFTER_CALLS = 12;
+const NUDGE = `[System] You have made ${SUBAGENT_NUDGE_AFTER_CALLS} tool calls. If you can answer the task now, write your report in this response instead of looking further; keep going only for something the task asked for that you still do not know.`;
 /** A report longer than this is cut: the point of a subagent is a short answer. */
 export const SUBAGENT_MAX_REPORT_CHARS = 8000;
 
@@ -27,6 +30,7 @@ Another agent has delegated one task to you. It will not see anything you read: 
 - Do the task you were given and nothing else. You cannot ask questions; if the task is ambiguous, say what you assumed.
 - You are read-only: you cannot change files or run commands, and nothing you write is applied.
 - Look only as far as the task needs. Issue independent reads and searches together in one response.
+- Stop as soon as you can answer. Once a search has shown where something is, do not confirm it again by other routes, and do not go on to related topics, tests or documentation the task did not ask about. One targeted search that answers the question is a complete job.
 - Finish with the report: the answer first, then the evidence as file paths with line numbers, quoting only the lines that matter. Say plainly what you could not find or did not check.
 - Keep the report short (well under 800 words). Do not paste whole files.`;
 
@@ -74,6 +78,9 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
     let toolCalls = 0;
     let lastText = '';
     let corrections = 0;
+    let nudged = false;
+    /** True once, when the call count first reaches the reminder point. */
+    const nudgeDue = (): boolean => { if (nudged || toolCalls < SUBAGENT_NUDGE_AFTER_CALLS) { return false; } nudged = true; return true; };
 
     const finish = (outcome: SubagentResult['outcome'], report: string): SubagentResult => {
         const text = report.trim();
@@ -119,6 +126,7 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
                     if (deps.signal.aborted) { break; }
                 }
                 appendAssistantIteration(history, content, executions, '', reasoning);
+                if (nudgeDue()) { history.push({ role: 'user', content: NUDGE }); }
                 continue;
             }
 
@@ -142,7 +150,7 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
                 if (deps.signal.aborted) { break; }
             }
             appendAssistantIteration(history, content, [], '', reasoning);
-            history.push({ role: 'user', content: `[Tool Results]\n\n${results.join('\n\n---\n\n')}` });
+            history.push({ role: 'user', content: `[Tool Results]\n\n${results.join('\n\n---\n\n')}${nudgeDue() ? `\n\n${NUDGE}` : ''}` });
         }
     } catch (err) {
         return finish('failed', `The subagent failed: ${err instanceof Error ? err.message : String(err)}${lastText ? `\n\nBefore that it had written:\n${lastText}` : ''}`);

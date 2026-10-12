@@ -281,7 +281,7 @@ For a question that needs a lot of reading before anything can be done — how a
 - **Read-only.** A subagent can read, search, list and check diagnostics. It cannot edit, run commands, browse or delegate further; such a call is refused and it carries on.
 - **Roles.** With project agents defined (`.codico/agents`), the agent can delegate to one by name — for example a review to your `reviewer` — and the subagent follows that agent's instructions.
 - **Visible.** A delegation shows as a step, with the subagent's own reads under it and its requests and tool calls counted. Its tokens count toward the task.
-- **Bounded.** A subagent gets `codico.subagentMaxSteps` requests (default 15); out of steps, it is asked once more, without tools, for its report. Stop ends it with the task.
+- **Bounded.** A subagent gets `codico.subagentMaxSteps` requests (default 10); out of steps, it is asked once more, without tools, for its report. Stop ends it with the task.
 - The agent decides when delegating is worth it; you can also ask for it ("use a subagent to find…"). Works with every provider, in both tool formats.
 
 ### Change Report
@@ -773,7 +773,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.autoCompactThreshold` | `number` | `60000` | Token count that triggers auto-compaction (when enabled) |
 | `codico.claudeCodePath` | `string` | `""` | Path to the `claude` command for the Claude Code provider (empty: PATH, then the Claude Code VS Code extension) |
 | `codico.codeSearchMaxFiles` | `number` | `5000` | Files indexed by the local code search (`search_code`) |
-| `codico.subagentMaxSteps` | `number` | `15` | Requests a subagent may make before it must write its report |
+| `codico.subagentMaxSteps` | `number` | `10` | Requests a subagent may make before it must write its report |
 | `codico.changeReport` | `boolean` | `true` | Show a change report after a reply that changed files |
 | `codico.notifications` | `string` | `"whenAway"` | Notify when Codico finishes or needs you while you are not looking at the chat (`off` to disable) |
 | `codico.codexPath` | `string` | `""` | Path to the `codex` command for the ChatGPT provider (empty: PATH, then OpenAI's VS Code extension) |
