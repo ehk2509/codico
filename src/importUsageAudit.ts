@@ -4,7 +4,7 @@
  * These findings are not proof of correctness: they are specific missing
  * wiring evidence for the agent to resolve before claiming success.
  */
-export function buildImportUsageAudit(source: string): string {
+function unusedLocalImports(source: string): string[] {
     const imports = /\bimport\s+(?!type\b)\{([^}]+)\}\s+from\s+['"](\.[^'"]+)['"]\s*;?/g;
     const unused: string[] = [];
     let match: RegExpExecArray | null;
@@ -20,6 +20,16 @@ export function buildImportUsageAudit(source: string): string {
             if (!used) { unused.push(name + ' from ' + match[2]); }
         }
     }
+    return unused;
+}
+
+/**
+ * @param before the file before the edit. An import that was already unused then was not
+ *               left unwired by this edit, and cleaning it up is not part of the task.
+ */
+export function buildImportUsageAudit(source: string, before = ''): string {
+    const already = new Set(before ? unusedLocalImports(before) : []);
+    const unused = unusedLocalImports(source).filter(item => !already.has(item));
     if (!unused.length) { return ''; }
     return '\n\n[Post-edit integration audit]\n' +
         'These local imports are not referenced outside their import statement:\n' +

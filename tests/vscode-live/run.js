@@ -48,6 +48,7 @@ async function main() {
   fs.writeFileSync(path.join(ws, '.codico/agents/pirate.md'), '---\ndescription: Talks like a pirate\n---\n\nAGENT-BODY-MARKER: talk like a pirate.\n');
   fs.writeFileSync(path.join(ws, 'fixtures/approve-edit.txt'), 'alpha=1\nbeta=2\n');
   fs.writeFileSync(path.join(ws, 'fixtures/rewind.txt'), 'v1\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/long.txt'), Array.from({ length: 60 }, (_, i) => `row ${i + 1} of the long file`).join('\n'));
   fs.writeFileSync(path.join(ws, 'fixtures/hunks.txt'), 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9');
   fs.writeFileSync(path.join(ws, 'fixtures/rewind-kept.txt'), 'k1\n');
   // Project hooks, each for one narrow target so no other scenario meets them

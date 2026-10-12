@@ -86,6 +86,12 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Reading again what is already in the conversation
+  rr_first: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), 'Read.'],
+  rr_again: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), tool('read_file', 'filepath: ./fixtures/long.txt\nstart_line: 21\nend_line: 60'), 'Read.'],
+  rr_changed: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 2\nend_line: 40'), 'Read.'],
+  rr_declined: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
+  rr_insist: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
   // Duplicating a thread: refused while a reply runs, then an independent copy
   dup_slow: [tool('run_terminal', 'command: sleep 2; echo dup-slow-done'), 'Done.'],
   dup_after: ['Said in the copy only.'],
