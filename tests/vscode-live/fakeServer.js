@@ -86,6 +86,11 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Rewind: three turns of changes, then back to before the second
+  rw_first: [tool('edit_file', 'filepath: fixtures/rewind-kept.txt\nold_str:\nk1\nnew_str:\nk2'), 'Done.'],
+  rw_second: [tool('edit_file', 'filepath: fixtures/rewind.txt\nold_str:\nv1\nnew_str:\nv2'), tool('write_file', 'filepath: live/rw-new.txt\ncontent:\nmade in the second turn'), 'Done.'],
+  rw_third: [tool('edit_file', 'filepath: fixtures/rewind.txt\nold_str:\nv2\nnew_str:\nv3'), 'Done.'],
+  rw_after: ['Starting again from before.'],
   // Project hooks: a refused edit, a check after an edit, a refused command
   hook_refuse: [tool('edit_file', 'filepath: hooked/locked.txt\nold_str:\nlocked=1\nnew_str:\nlocked=2'), 'The project does not allow it.'],
   hook_after: [tool('edit_file', 'filepath: hooked/app.cfg\nold_str:\nmode=a\nnew_str:\nmode=b'), 'The check failed.'],

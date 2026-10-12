@@ -349,6 +349,30 @@ test('a sent message gets its turn when the reply starts; edit and delete post t
   assert.deepEqual(errors, []);
 });
 
+test('rewind: the button is on every message that has a turn, posts that turn, and the removed text comes back to the input', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const thread = (messages, extra) => ({ type: 'threadLoaded', id: 'T', name: 'Thread', displayMessages: messages, ...extra });
+  await send(thread([{ role: 'user', text: 'add a settings page', id: 'turn-1', at: Date.now() }, { role: 'assistant', text: 'Added.' },
+    { role: 'user', text: 'now make it dark', id: 'turn-2', at: Date.now() }, { role: 'assistant', text: 'Done.' }]));
+  await page.mouse.move(5, 895);
+  const first = page.locator('.msg.user').first();
+  // Not hidden until hovered: this is the way back from a bad turn
+  assert.equal(await first.locator('.msg-rewind').isVisible(), true);
+  assert.match(await first.locator('.msg-rewind').getAttribute('title'), /^Rewind to here: remove this message and what followed, and put back the files/);
+  await first.locator('.msg-rewind').click();
+  assert.deepEqual(await posted('rewind'), [{ type: 'rewind', turnId: 'turn-1' }]);
+  // Nothing is removed until the extension has asked and done it
+  assert.equal(await page.locator('.msg.user').count(), 2);
+  await send(thread([], { draftText: 'add a settings page' }));
+  assert.equal(await page.locator('.msg.user').count(), 0);
+  assert.equal(await page.inputValue('#msg-input'), 'add a settings page');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'msg-input');
+  // While a reply streams there is nothing to rewind to yet
+  await send(thread([{ role: 'user', text: 'again', id: 'turn-3', at: Date.now() }]), { type: 'startMessage', id: 'r9' });
+  assert.equal(await page.locator('.msg-rewind').first().isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
 test('a message that started no turn, or an approval, gets no edit; actions hide while streaming', async () => {
   const { page, send } = await openPanel();
   await page.fill('#msg-input', 'no api key yet');

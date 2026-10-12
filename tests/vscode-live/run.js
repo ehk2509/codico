@@ -47,6 +47,8 @@ async function main() {
   fs.writeFileSync(path.join(ws, '.codico/skills/Bad Name/SKILL.md'), 'BAD-SKILL-MARKER\n');
   fs.writeFileSync(path.join(ws, '.codico/agents/pirate.md'), '---\ndescription: Talks like a pirate\n---\n\nAGENT-BODY-MARKER: talk like a pirate.\n');
   fs.writeFileSync(path.join(ws, 'fixtures/approve-edit.txt'), 'alpha=1\nbeta=2\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/rewind.txt'), 'v1\n');
+  fs.writeFileSync(path.join(ws, 'fixtures/rewind-kept.txt'), 'k1\n');
   // Project hooks, each for one narrow target so no other scenario meets them
   fs.mkdirSync(path.join(ws, 'hooked'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'hooked/locked.txt'), 'locked=1\n');

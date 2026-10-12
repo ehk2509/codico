@@ -5,12 +5,14 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Rewind: every message of yours has a ↺ button that takes the conversation back to just before it and puts back the files Codico changed since, across any number of turns. A dialog lists the files first and offers the conversation alone; a file you edited by hand since is asked about and kept unless you say otherwise; a file Codico created is deleted again. The removed message returns to the input box, and Redo reapplies the rewound changes one at a time. Not restored: what terminal commands changed, and changes made before VS Code was last restarted.
 - Search in the provider list, as in the model list: type to narrow it, Enter takes the first match, Escape closes.
 
 ### Fixed
 - The panel's top row at narrow widths: the logo was squeezed under the provider selector while unused space sat next to the buttons, and below about 450px the buttons were pushed off the panel. The buttons now stay at the right of the first row, and in a panel of 480px or less the provider, model and effort selectors take a row of their own beneath it. A long model name is cut short instead of pushing anything out.
 - The provider list could not be scrolled: in a panel shorter than the list its last entries (the local providers) were cut off and out of reach. Every dropdown now fits the room it has, above or below its button, and scrolls the rest.
 - The actions of a thread in the thread list (pin, rename, export, delete) were invisible until the pointer was on the row. They are now always shown, dimmed, and at full strength on hover or keyboard focus.
+- The actions on your own messages (rewind, edit, delete) are likewise shown without hovering.
 
 ## 0.3.15 - 2026-10-12
 

@@ -1547,9 +1547,11 @@ body { overflow-x: hidden; }
 
 /* ── Message times and actions (edit, delete, regenerate) ── */
 .msg-time{margin-left:6px;opacity:.75;text-transform:none;letter-spacing:0;font-weight:400}
-.msg-actions{display:none;margin-left:6px;gap:2px;vertical-align:middle}
+.msg-actions{display:none;margin-left:6px;gap:2px;vertical-align:middle;opacity:.5;transition:opacity .12s}
+/* Shown on every message that can be changed, quieter until it is pointed at */
+.msg.user[data-turn]:not([data-turn="none"]) .msg-actions{display:inline-flex}
 .msg.user[data-turn]:not([data-turn="none"]):hover .msg-actions,
-.msg.user[data-turn]:not([data-turn="none"]):focus-within .msg-actions{display:inline-flex}
+.msg.user[data-turn]:not([data-turn="none"]):focus-within .msg-actions{opacity:1}
 .msg.user[data-editable="0"] .msg-edit{display:none}
 body.is-streaming .msg-actions,body.is-streaming .regen-btn,body.is-streaming .msg-confirm{display:none!important}
 .msg-act{

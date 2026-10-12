@@ -95,6 +95,7 @@ export type WebviewMessage =
     | { type: 'toggleChatMode'; chatMode: boolean }
     | { type: 'editMessage'; turnId: string; text: string }
     | { type: 'deleteMessage'; turnId: string }
+    | { type: 'rewind'; turnId: string }
     | { type: 'regenerate' }
     | { type: 'attachDroppedFiles'; uris: string[] }
     | { type: 'openFile'; path: string; line?: number }
@@ -147,7 +148,7 @@ export type ExtensionMessage =
     | { type: 'allProposalsResolved' }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
-    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }
+    | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** After a rewind: the removed message, put back in the input box. */ draftText?: string; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }
     | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }

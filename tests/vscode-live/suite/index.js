@@ -421,6 +421,34 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Rewind: the conversation and the files go back to before a message ──
+  {
+    const t0 = Date.now(); const run = (name) => vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`);
+    const firstOf = async (name, from) => (await getLog()).slice(from).filter(e => e.scenario === name && e.stream)[0];
+    await run('rw_first');
+    const mark = (await getLog()).length;
+    await run('rw_second');
+    const secondTurn = (await vscode.commands.executeCommand('codico.__evalTurns')).at(-1);
+    await run('rw_third');
+    const changed = read('fixtures/rewind.txt') === 'v3\n' && read('live/rw-new.txt') !== null && read('fixtures/rewind-kept.txt') === 'k2\n';
+    const turnsBefore = (await vscode.commands.executeCommand('codico.__evalTurns')).length;
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'rewind', turnId: secondTurn });
+    // Both later turns' changes are gone, the file the second turn created too; the first turn's change stays
+    const restored = read('fixtures/rewind.txt') === 'v1\n' && read('live/rw-new.txt') === null && read('fixtures/rewind-kept.txt') === 'k2\n';
+    const turnsAfter = (await vscode.commands.executeCommand('codico.__evalTurns')).length;
+    const mid = (await getLog()).length;
+    await run('rw_after');
+    // The next request is sent from where the second turn started: same conversation length, none of the later turns in it
+    const second = await firstOf('rw_second', mark); const after = await firstOf('rw_after', mid);
+    const cut = !!second && !!after && after.roles.length === second.roles.length && turnsBefore - turnsAfter === 2;
+    // Redo brings the rewound changes back, oldest first
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'redo' });
+    const redone = read('fixtures/rewind.txt') === 'v2\n';
+    results.push({ name: 'rewind', ms: Date.now() - t0, requests: 0, ok: changed && restored && cut && redone,
+      why: `three turns changed the files: ${changed}; after rewinding to the second, its and the third's changes are undone and the first's kept: ${restored}; two turns left the conversation and the next request starts from there: ${cut}; redo reapplies the first rewound change: ${redone}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Project hooks from .codico/hooks.json ──
   await scenario('hook_refuse', ({ read, reqs, text }) => {
     const told = /\[edit_file\] Refused by the project's beforeEdit hook "locked files": it exited with code 1, so hooked\/locked\.txt was not changed\.\nThe hook said:\nHOOK-SAYS this file is locked/.test(text);
