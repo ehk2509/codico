@@ -637,6 +637,60 @@ test('the top row at any width: nothing overlaps or is pushed off; when narrow t
   }
 });
 
+test('a dropdown longer than the panel is tall stays inside it and scrolls to its last option', async () => {
+  const { page } = await openPanel();
+  for (const [height, selector] of [[330, '#provider-csel'], [330, '#model-csel']]) {
+    await page.setViewportSize({ width: 380, height });
+    await page.locator('body').click({ position: { x: 5, y: height - 5 } });
+    await page.locator(selector + ' .csel-val').click();
+    const state = () => page.evaluate(sel => {
+      const drop = document.querySelector(sel + ' .csel-drop').getBoundingClientRect(); const list = document.querySelector(sel + ' .csel-list');
+      const options = list.querySelectorAll('.csel-opt'); const last = options[options.length - 1].getBoundingClientRect(); const box = list.getBoundingClientRect();
+      return { top: drop.top, bottom: drop.bottom, scrolls: list.scrollHeight > list.clientHeight + 1, lastInView: last.top >= box.top - 1 && last.bottom <= box.bottom + 1, count: options.length };
+    }, selector);
+    const opened = await state();
+    assert.ok(opened.top >= 0 && opened.bottom <= height, `${selector} is inside a panel ${height}px tall: ${Math.round(opened.top)}–${Math.round(opened.bottom)}`);
+    assert.ok(opened.scrolls && !opened.lastInView, `${selector} has more options (${opened.count}) than fit`);
+    // The wheel reaches the end of the list
+    await page.locator(selector + ' .csel-list').hover();
+    await page.mouse.wheel(0, 5000);
+    await page.waitForTimeout(80);
+    assert.equal((await state()).lastInView, true, `${selector}: the last option can be scrolled to`);
+    await page.locator(selector + ' .csel-opt').last().click();
+    assert.equal(await page.locator(selector).evaluate(el => el.classList.contains('open')), false);
+  }
+  // A short list in a panel with no room for it is still inside the panel
+  await page.setViewportSize({ width: 380, height: 110 });
+  await page.locator('#effort-csel .csel-val').click();
+  const effort = await page.locator('#effort-csel .csel-drop').boundingBox();
+  assert.ok(effort.y >= 0 && effort.y + effort.height <= 110, `${effort.y}–${effort.y + effort.height}`);
+});
+
+test('the provider list has a search: typing narrows it, Enter takes the first match', async () => {
+  const { page } = await openPanel();
+  await page.locator('#provider-csel .csel-val').click();
+  const search = page.locator('#provider-csel .csel-search');
+  assert.equal(await search.getAttribute('placeholder'), '🔍 Search providers…');
+  assert.equal(await search.evaluate(el => el === document.activeElement), true, 'ready to type in');
+  const shown = () => page.locator('#provider-csel .csel-opt:visible').allTextContents();
+  const all = (await shown()).length;
+  await search.fill('deep');
+  assert.deepEqual((await shown()).map(t => t.replace(/ · no key$/, '')), ['DeepSeek']);
+  // Group titles with nothing under them are hidden too
+  assert.equal(await page.locator('#provider-csel .csel-group:visible').count(), 1);
+  await search.fill('zzz');
+  assert.deepEqual(await shown(), []);
+  await search.fill('deep');
+  await search.press('Enter');
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'direct:deepseek');
+  assert.equal(await page.locator('#provider-csel').evaluate(el => el.classList.contains('open')), false);
+  // Opening again starts from the whole list
+  await page.locator('#provider-csel .csel-val').click();
+  assert.equal((await shown()).length, all);
+  await search.press('Escape');
+  assert.equal(await page.locator('#provider-csel').evaluate(el => el.classList.contains('open')), false);
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

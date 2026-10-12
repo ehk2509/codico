@@ -886,7 +886,7 @@ body{
 }
 .csel-search:focus{border-color:var(--vscode-focusBorder,#007fd4);}
 .csel-search::placeholder{color:var(--vscode-input-placeholderForeground,#888);}
-.csel-list{overflow-y:auto;flex:1;padding:4px 0;}
+.csel-list{overflow-y:auto;flex:1;min-height:0;padding:4px 0;}
 .csel-group{padding:5px 8px 2px;font-size:9px;font-weight:700;letter-spacing:.08em;
   color:var(--vscode-descriptionForeground);text-transform:uppercase;pointer-events:none}
 .csel-opt{padding:5px 12px;cursor:pointer;font-size:11px;

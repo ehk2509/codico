@@ -34,12 +34,15 @@
       searchInput = document.createElement('input');
       searchInput.type = 'text';
       searchInput.className = 'csel-search';
-      searchInput.placeholder = '🔍 Search models…';
+      searchInput.placeholder = typeof searchable === 'string' ? searchable : '🔍 Search models…';
       searchWrap.appendChild(searchInput);
       dropEl.appendChild(searchWrap);
-      listEl = document.createElement('div');
-      listEl.className = 'csel-list';
-      dropEl.appendChild(listEl);
+    }
+    // The options are always in a list of their own: it is the part that scrolls
+    listEl = document.createElement('div');
+    listEl.className = 'csel-list';
+    dropEl.appendChild(listEl);
+    if (searchInput) {
       searchInput.addEventListener('input', function () {
         var q = searchInput.value.toLowerCase().trim();
         listEl.querySelectorAll('.csel-opt,.csel-group').forEach(function (node) {
@@ -62,6 +65,14 @@
         });
       });
       searchInput.addEventListener('click', function (e) { e.stopPropagation(); });
+      // Enter takes the first match, Escape closes
+      searchInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); _closeDrop(); return; }
+        if (e.key !== 'Enter') { return; }
+        e.preventDefault();
+        var opts = listEl.querySelectorAll('.csel-opt');
+        for (var i = 0; i < opts.length; i++) { if (opts[i].style.display !== 'none') { opts[i].click(); return; } }
+      });
     }
 
     el.addEventListener('click', function (e) {
@@ -69,20 +80,25 @@
       if (_openDrop === el) { _closeDrop(); return; }
       _closeDrop();
       var r = el.getBoundingClientRect();
+      dropEl.style.maxHeight = '';
       dropEl.style.top = (r.bottom + 2) + 'px';
       dropEl.style.left = r.left + 'px';
       el.classList.add('open');
       _openDrop = el;
-      // Clamp dropdown to viewport so it never overflows right or bottom
-      setTimeout(function () {
-        var dr = dropEl.getBoundingClientRect();
-        if (dr.right > window.innerWidth - 4) {
-          dropEl.style.left = Math.max(4, window.innerWidth - dr.width - 4) + 'px';
-        }
-        if (dr.bottom > window.innerHeight - 8) {
-          dropEl.style.top = Math.max(4, r.top - dr.height - 2) + 'px';
-        }
-      }, 0);
+      // Keep the dropdown inside the panel: never taller than the room it has, the rest scrolls
+      var dr = dropEl.getBoundingClientRect();
+      if (dr.right > window.innerWidth - 4) {
+        dropEl.style.left = Math.max(4, window.innerWidth - dr.width - 4) + 'px';
+      }
+      var below = window.innerHeight - r.bottom - 10, above = r.top - 6;
+      if (dr.height > below && above > below) {
+        dropEl.style.maxHeight = Math.min(dr.height, above) + 'px';
+        dropEl.style.top = Math.max(4, r.top - Math.min(dr.height, above) - 2) + 'px';
+      } else if (dr.height > below) {
+        dropEl.style.maxHeight = Math.max(40, below) + 'px';
+      }
+      var chosen = listEl.querySelector('.csel-opt.selected');
+      if (chosen) { chosen.scrollIntoView({ block: 'nearest' }); }
       if (searchInput) {
         searchInput.value = '';
         searchInput.dispatchEvent(new Event('input'));
@@ -163,7 +179,7 @@
     if (pick) { _currentModel = pick; vscode.postMessage({ type: 'changeModel', model: pick }); }
     _renderSetup();
   }
-  var providerDrop = _makeDrop(document.getElementById('provider-csel'), _chooseProvider);
+  var providerDrop = _makeDrop(document.getElementById('provider-csel'), _chooseProvider, '🔍 Search providers…');
   function _fillProviders(selected) {
     providerDrop.clear();
     var noKey = function (id) { return _providerKeys[id] === false ? ' · no key' : ''; };

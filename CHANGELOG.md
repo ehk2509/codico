@@ -4,8 +4,12 @@ All notable changes to Codico will be documented in this file.
 
 ## Unreleased
 
+### Added
+- Search in the provider list, as in the model list: type to narrow it, Enter takes the first match, Escape closes.
+
 ### Fixed
 - The panel's top row at narrow widths: the logo was squeezed under the provider selector while unused space sat next to the buttons, and below about 450px the buttons were pushed off the panel. The buttons now stay at the right of the first row, and in a panel of 480px or less the provider, model and effort selectors take a row of their own beneath it. A long model name is cut short instead of pushing anything out.
+- The provider list could not be scrolled: in a panel shorter than the list its last entries (the local providers) were cut off and out of reach. Every dropdown now fits the room it has, above or below its button, and scrolls the rest.
 
 ## 0.3.15 - 2026-10-12
 
