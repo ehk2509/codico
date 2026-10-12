@@ -986,8 +986,9 @@ test('find keeps up with a reply that is streaming, and opens what hides a match
 test('a result of the search across threads opens that thread with its matches highlighted', async () => {
   const { page, send, posted } = await openPanel();
   await send({ type: 'threadList', threads: [{ id: 'cur', name: 'Current', updatedAt: Date.now(), preview: '', messageCount: 1, active: true }, { id: 'old', name: 'Old one', updatedAt: Date.now() - 1e6, preview: '', messageCount: 2, active: false }] });
-  await page.locator('#search-threads-btn').click();
-  await page.locator('#thread-search-input').fill('websocket');
+  await page.locator('#find-btn').click();
+  await page.locator('#find-scope-all').click();
+  await page.locator('#find-input').fill('websocket');
   await send({ type: 'threadSearchResults', query: 'websocket', results: [{ threadId: 'old', threadName: 'Old one', snippets: [{ role: 'assistant', snippet: 'the websocket closes early' }] }] });
   await page.locator('.ts-result').click();
   assert.deepEqual((await posted('switchThread')).pop(), { type: 'switchThread', id: 'old' });
@@ -996,6 +997,72 @@ test('a result of the search across threads opens that thread with its matches h
   await page.waitForFunction(() => document.getElementById('find-count').textContent === '1 of 2', null, { timeout: 5000 });
   assert.equal(await page.locator('#find-input').inputValue(), 'websocket');
   assert.equal(await page.locator('#find-count').textContent(), '1 of 2');
+  // Back in "This thread": the list of threads is gone and the conversation is in view
+  assert.equal(await page.locator('#find-scope-this').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('#thread-search-overlay').isVisible(), false);
+});
+
+test('one search: a switch on the bar chooses this conversation or all threads, and keeps what was typed', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  await send({ type: 'threadList', threads: [{ id: 'cur', name: 'Current', updatedAt: Date.now(), preview: '', messageCount: 1, active: true }] },
+    { type: 'threadLoaded', id: 'cur', name: 'Current', displayMessages: [{ role: 'user', text: 'retry the request', id: 'u' }, { role: 'assistant', text: 'A retry with backoff. The retry count is 3.' }] });
+  // One button in the thread bar, not two
+  assert.equal(await page.locator('#search-threads-btn').count(), 0);
+  assert.match(await page.locator('#find-btn').getAttribute('title'), /^Search this conversation or all threads \(Ctrl\+F\)/);
+  await page.keyboard.press('Control+f');
+  assert.deepEqual(await page.locator('#find-scope button').allTextContents(), ['This thread', 'All threads']);
+  assert.equal(await page.locator('#find-scope-this').getAttribute('aria-pressed'), 'true');
+  await page.locator('#find-input').fill('retry');
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 3');
+  assert.equal((await posted('searchThreads')).length, 0, 'searching here asks the extension nothing');
+
+  // All threads: the same text is searched there; the counter and next/previous give way to a list
+  await page.locator('#find-scope-all').click();
+  assert.equal(await page.locator('#find-input').inputValue(), 'retry');
+  assert.equal(await page.locator('#find-input').getAttribute('placeholder'), 'Search all threads');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'find-input');
+  for (const hidden of ['#find-count', '#find-prev', '#find-next']) { assert.equal(await page.locator(hidden).isVisible(), false, hidden); }
+  assert.equal(await page.evaluate(() => CSS.highlights.has('codico-find')), false, 'no highlights left behind the list');
+  await page.waitForFunction(() => window.__posted.some(m => m.type === 'searchThreads'));
+  assert.deepEqual(await posted('searchThreads'), [{ type: 'searchThreads', query: 'retry' }]);
+  // The list starts right under the bar and does not cover it
+  const layout = await page.evaluate(() => { const bar = document.getElementById('find-bar').getBoundingClientRect(); const list = document.getElementById('thread-search-overlay').getBoundingClientRect(); return { barBottom: bar.bottom, listTop: list.top, listHeight: list.height }; });
+  assert.ok(Math.abs(layout.listTop - layout.barBottom) <= 1 && layout.listHeight > 100, JSON.stringify(layout));
+  // An answer for text that is no longer in the box is not shown
+  await send({ type: 'threadSearchResults', query: 'retr', results: [{ threadId: 'x', threadName: 'Stale', snippets: [] }] });
+  assert.equal(await page.locator('.ts-result').count(), 0);
+  await send({ type: 'threadSearchResults', query: 'retry', results: [{ threadId: 'cur', threadName: 'Current', snippets: [{ role: 'assistant', snippet: 'A retry with backoff' }] }, { threadId: 'b', threadName: 'Billing retry', snippets: [] }] });
+  assert.equal(await page.locator('.ts-result').count(), 2);
+  // Keyboard: Enter or ↓ goes into the list, ↑ comes back to the box
+  await page.locator('#find-input').press('Enter');
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.tid), 'cur');
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'find-input');
+  // A result in the open thread: straight back to its matches
+  await page.locator('.ts-result').first().click();
+  assert.equal(await page.locator('#thread-search-overlay').isVisible(), false);
+  assert.equal(await page.locator('#find-count').textContent(), '1 of 3');
+  assert.equal((await posted('switchThread')).length, 0);
+
+  // Back and forth keeps the text; Escape closes everything and the next Ctrl+F starts in this thread
+  await page.locator('#find-scope-all').click();
+  await page.locator('#find-input').fill('billing');
+  await page.locator('#find-scope-this').click();
+  assert.equal(await page.locator('#find-input').inputValue(), 'billing');
+  assert.equal(await page.locator('#find-count').textContent(), 'No results');
+  await page.locator('#find-scope-all').click();
+  await page.locator('#find-input').press('Escape');
+  assert.equal(await page.locator('#find-bar').isVisible(), false);
+  assert.equal(await page.locator('#thread-search-overlay').isVisible(), false);
+  await page.keyboard.press('Control+f');
+  assert.equal(await page.locator('#find-scope-this').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('#thread-search-overlay').isVisible(), false);
+  // A narrow panel: the bar wraps, nothing is cut or pushed out
+  await page.setViewportSize({ width: 240, height: 700 });
+  const boxes = await page.evaluate(() => ['find-scope', 'find-input', 'find-close'].map(id => { const b = document.getElementById(id).getBoundingClientRect(); return { id, left: b.left, right: b.right, width: b.width }; }));
+  for (const b of boxes) { assert.ok(b.left >= 0 && b.right <= 240 && b.width > 12, JSON.stringify(b)); }
+  assert.ok(boxes[1].width >= 80, 'the box stays wide enough to type in');
+  assert.deepEqual(errors, []);
 });
 
 test('first run: with no way to reach a model, the empty panel offers the ways to set one up', async () => {

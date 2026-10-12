@@ -666,53 +666,21 @@
     vscode.postMessage({ type: 'createThread' });
   });
 
-  // ── Thread search ──────────────────────────────────────────────────────────
+  // ── Search in all threads: the results under the search bar (the bar itself is the find bar below) ──
   var _searchOverlay = document.getElementById('thread-search-overlay');
-  var _searchInput = document.getElementById('thread-search-input');
   var _searchResults = document.getElementById('thread-search-results');
-  var _searchBtn = document.getElementById('search-threads-btn');
   var _searchDebounce = null;
   var _currentThreadIdForSearch = null; // set when threadList arrives
+  var SEARCH_HINT = '<div class="ts-empty">Type to search across all conversations</div>';
 
-  function _openSearch() {
-    _searchOverlay.classList.add('open');
-    _searchBtn.classList.add('active');
-    _searchInput.value = '';
-    _searchResults.innerHTML = '<div class="ts-empty">Type to search across all conversations</div>';
-    setTimeout(function() { _searchInput.focus(); }, 30);
-  }
-  function _closeSearch() {
-    _searchOverlay.classList.remove('open');
-    _searchBtn.classList.remove('active');
-  }
-
-  _searchBtn.addEventListener('click', function() {
-    if (_searchOverlay.classList.contains('open')) { _closeSearch(); }
-    else { _openSearch(); }
-  });
-  document.getElementById('thread-search-close').addEventListener('click', _closeSearch);
-
-  _searchInput.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      var first = _searchResults.querySelector('.ts-result');
-      if (first) { first.focus(); }
-    }
-  });
-
-  _searchInput.addEventListener('input', function() {
-    var q = _searchInput.value.trim();
+  /** Asks the extension for the threads that contain the text, a moment after typing stops. */
+  function _searchThreadsFor(text) {
+    var q = text.trim();
     clearTimeout(_searchDebounce);
-    if (!q) {
-      _searchResults.innerHTML = '<div class="ts-empty">Type to search across all conversations</div>';
-      return;
-    }
-    _searchResults.innerHTML = '<div class="ts-empty">Searching…</div>';
-    _searchDebounce = setTimeout(function() {
-      vscode.postMessage({ type: 'searchThreads', query: q });
-    }, 220);
-  });
+    if (!q) { _searchResults.innerHTML = SEARCH_HINT; return; }
+    _searchResults.innerHTML = '<div class="ts-empty">Searching\u2026</div>';
+    _searchDebounce = setTimeout(function() { vscode.postMessage({ type: 'searchThreads', query: q }); }, 220);
+  }
 
   function _highlightMatch(text, query) {
     var q = query.trim();
@@ -757,11 +725,10 @@
       (function(el) {
         el.addEventListener('click', function() {
           var tid = el.dataset.tid;
-          var query = _searchInput.value.trim();
-          _closeSearch();
+          var query = _findInput.value.trim();
           // Carry the search into the conversation: its matches are highlighted there
           if (tid === _currentThreadIdForSearch) { _openFind(query); }
-          else { _pendingFind = query; vscode.postMessage({ type: 'switchThread', id: tid }); }
+          else { _setFindScope('this', true); _pendingFind = query; vscode.postMessage({ type: 'switchThread', id: tid }); }
         });
         el.addEventListener('keydown', function(e) {
           if (e.key === 'Enter') { el.click(); }
@@ -770,9 +737,9 @@
             e.preventDefault();
             var p = el.previousElementSibling;
             if (p && p.classList.contains('ts-result')) { p.focus(); }
-            else { _searchInput.focus(); }
+            else { _findInput.focus(); }
           }
-          if (e.key === 'Escape') { e.preventDefault(); _closeSearch(); }
+          if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeFind(); }
         });
       })(items[k]);
     }
@@ -895,8 +862,8 @@
   document.getElementById('mcp-catalog-close').addEventListener('click', _closeMcpCatalog);
   _mcpOverlay.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeMcpCatalog(); } });
 
-  // ── Find in this conversation (Ctrl+F) ───────────────────────────────────
-  // Matches are painted with the CSS Custom Highlight API: the message DOM is not touched,
+  // ── Search (Ctrl+F): one bar, for this conversation or for all threads ──────
+  // In this conversation, matches are painted with the CSS Custom Highlight API: the message DOM is not touched,
   // so a reply that is still streaming keeps rendering normally while the bar is open.
   var _findBar = document.getElementById('find-bar');
   var _findInput = document.getElementById('find-input');
@@ -907,6 +874,9 @@
   var _findTimer = null;
   var _findObserver = null;
   var _pendingFind = null;   // a search to open once the thread being switched to has loaded
+  var _findScope = 'this';   // 'this' conversation, or 'all' threads
+  var _scopeThisBtn = document.getElementById('find-scope-this');
+  var _scopeAllBtn = document.getElementById('find-scope-all');
   var _canHighlight = typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight === 'function';
 
   /** Every match of the query in the conversation, as ranges. A match may span styled pieces of text (highlighted code). */
@@ -955,8 +925,9 @@
       }
     }
     var has = _findRanges.length > 0;
-    _findCount.textContent = !_findInput.value ? '' : has ? (_findIndex + 1) + ' of ' + _findRanges.length : 'No results';
-    _findBar.classList.toggle('none', !!_findInput.value && !has);
+    var here = _findScope === 'this';
+    _findCount.textContent = !here || !_findInput.value ? '' : has ? (_findIndex + 1) + ' of ' + _findRanges.length : 'No results';
+    _findBar.classList.toggle('none', here && !!_findInput.value && !has);
     document.getElementById('find-prev').disabled = !has;
     document.getElementById('find-next').disabled = !has;
   }
@@ -1002,15 +973,40 @@
     if (jump || keep < 0) { _findGo(0); }
     else { _findIndex = Math.min(keep, _findRanges.length - 1); _findPaint(); }
   }
-  function _openFind(query) {
+  /** Where the bar searches. The text typed so far is kept and searched in the new place. */
+  function _setFindScope(scope, quiet) {
+    _findScope = scope;
+    var all = scope === 'all';
+    _findBar.classList.toggle('all', all);
+    _scopeThisBtn.classList.toggle('active', !all); _scopeThisBtn.setAttribute('aria-pressed', String(!all));
+    _scopeAllBtn.classList.toggle('active', all); _scopeAllBtn.setAttribute('aria-pressed', String(all));
+    _findInput.placeholder = all ? 'Search all threads' : 'Find in this conversation';
+    _searchOverlay.classList.toggle('open', all && _findBar.classList.contains('open'));
+    clearTimeout(_searchDebounce);
+    if (all) {
+      // The results sit right under the bar, wherever the bar is
+      _searchOverlay.style.top = (_findBar.offsetTop + _findBar.offsetHeight) + 'px';
+      _findRanges = []; _findIndex = -1; _findPaint();
+      if (!quiet) { _searchThreadsFor(_findInput.value); }
+    } else if (!quiet && _findBar.classList.contains('open')) {
+      _findIndex = -1; _findRun(true);
+    }
+  }
+  _scopeThisBtn.addEventListener('click', function () { _setFindScope('this'); _findInput.focus(); });
+  _scopeAllBtn.addEventListener('click', function () { _setFindScope('all'); _findInput.focus(); });
+  window.addEventListener('resize', function () { if (_findScope === 'all') { _searchOverlay.style.top = (_findBar.offsetTop + _findBar.offsetHeight) + 'px'; } });
+
+  function _openFind(query, scope) {
     _findBar.classList.add('open');
     _findBtn.classList.add('active');
     if (typeof query === 'string') { _findInput.value = query; }
+    _setFindScope(scope || 'this', true);
     _findInput.focus(); _findInput.select();
+    if (_findScope === 'all') { _searchThreadsFor(_findInput.value); return; }
     if (!_findObserver) {
       _findObserver = new MutationObserver(function () {
         clearTimeout(_findTimer);
-        _findTimer = setTimeout(function () { if (_findBar.classList.contains('open')) { _findRun(false); } }, 150);
+        _findTimer = setTimeout(function () { if (_findBar.classList.contains('open') && _findScope === 'this') { _findRun(false); } }, 150);
       });
       _findObserver.observe(msgs, { childList: true, subtree: true, characterData: true });
     }
@@ -1019,6 +1015,7 @@
   }
   function _closeFind() {
     _findBar.classList.remove('open', 'none');
+    _setFindScope('this', true);
     _findBtn.classList.remove('active');
     if (_findObserver) { _findObserver.disconnect(); _findObserver = null; }
     clearTimeout(_findTimer);
@@ -1030,8 +1027,17 @@
   document.getElementById('find-close').addEventListener('click', _closeFind);
   document.getElementById('find-next').addEventListener('click', function () { _findGo(_findIndex + 1); });
   document.getElementById('find-prev').addEventListener('click', function () { _findGo(_findIndex - 1); });
-  _findInput.addEventListener('input', function () { _findIndex = -1; _findRun(true); });
+  _findInput.addEventListener('input', function () {
+    if (_findScope === 'all') { _searchThreadsFor(_findInput.value); return; }
+    _findIndex = -1; _findRun(true);
+  });
   _findInput.addEventListener('keydown', function (e) {
+    if (_findScope === 'all' && (e.key === 'Enter' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      var first = _searchResults.querySelector('.ts-result');
+      if (first) { first.focus(); }
+      return;
+    }
     if (e.key === 'Enter') { e.preventDefault(); _findGo(_findIndex + (e.shiftKey ? -1 : 1)); }
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _closeFind(); }
   });
@@ -4025,7 +4031,8 @@
         (data.threads || []).forEach(function (t) { if (t.active) { _enterThread(t.id); } });
         break;
       case 'threadSearchResults':
-        _renderSearchResults(data.query, data.results);
+        // Only for what is being searched now: an answer to an earlier text, or after the bar moved on, is dropped
+        if (_findScope === 'all' && data.query === _findInput.value.trim()) { _renderSearchResults(data.query, data.results); }
         break;
       case 'todoUpdate': {
         var msgWrap = document.getElementById('msg-' + data.id);
