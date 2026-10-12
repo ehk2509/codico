@@ -691,6 +691,25 @@ test('the provider list has a search: typing narrows it, Enter takes the first m
   assert.equal(await page.locator('#provider-csel').evaluate(el => el.classList.contains('open')), false);
 });
 
+test('a thread row shows its actions without the pointer on it, and keeps them whole in a narrow panel', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'threadList', threads: [{ id: 'cur', name: 'Current', updatedAt: Date.now(), preview: '', messageCount: 1, active: true },
+    { id: 'old', name: 'Plan: a thread with a long name that has to be cut short somewhere', updatedAt: Date.now() - 9e7, preview: 'use a subagent to find every place the compaction threshold is read', messageCount: 2, active: false }] });
+  await page.locator('#sessions-toggle-btn').click();
+  await page.mouse.move(5, 895);
+  const row = page.locator('.session-card', { hasText: 'Plan: a thread' });
+  assert.ok(Number(await row.locator('.session-card-actions').evaluate(el => getComputedStyle(el).opacity)) >= 0.5, 'visible without hovering');
+  for (const width of [560, 380, 300, 220]) {
+    await page.setViewportSize({ width, height: 900 });
+    const boxes = await row.evaluate(el => [el.querySelector('.session-card-name'), el.querySelector('.session-card-time'), ...el.querySelectorAll('.session-action-btn')].map(n => { const b = n.getBoundingClientRect(); return { left: b.left, right: b.right, width: b.width }; }));
+    assert.ok(boxes.length >= 4, 'the row has its action buttons');
+    for (let i = 1; i < boxes.length; i++) { assert.ok(boxes[i].left >= boxes[i - 1].right - 0.5, `nothing overlaps at ${width}px`); }
+    assert.ok(boxes[boxes.length - 1].right <= width && boxes.slice(1).every(b => b.width > 8), `the time and every button are whole and inside a ${width}px panel`);
+    assert.ok(boxes[0].width >= 40, `the name keeps some room at ${width}px: ${Math.round(boxes[0].width)}`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  }
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

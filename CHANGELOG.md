@@ -10,6 +10,7 @@ All notable changes to Codico will be documented in this file.
 ### Fixed
 - The panel's top row at narrow widths: the logo was squeezed under the provider selector while unused space sat next to the buttons, and below about 450px the buttons were pushed off the panel. The buttons now stay at the right of the first row, and in a panel of 480px or less the provider, model and effort selectors take a row of their own beneath it. A long model name is cut short instead of pushing anything out.
 - The provider list could not be scrolled: in a panel shorter than the list its last entries (the local providers) were cut off and out of reach. Every dropdown now fits the room it has, above or below its button, and scrolls the rest.
+- The actions of a thread in the thread list (pin, rename, export, delete) were invisible until the pointer was on the row. They are now always shown, dimmed, and at full strength on hover or keyboard focus.
 
 ## 0.3.15 - 2026-10-12
 

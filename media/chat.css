@@ -193,10 +193,11 @@ body{
   font-size:10.5px; color:var(--vscode-descriptionForeground);
   white-space:nowrap; min-width:24px; text-align:right;
 }
+/* Always there, quieter until the row is pointed at or one of them has the keyboard focus */
 .session-card-actions {
-  display:flex; gap:2px; opacity:0; transition:opacity .12s;
+  display:flex; gap:2px; opacity:.55; transition:opacity .12s;
 }
-.session-card:hover .session-card-actions { opacity:1; }
+.session-card:hover .session-card-actions, .session-card-actions:focus-within { opacity:1; }
 .session-action-btn {
   border:none; background:transparent; cursor:pointer;
   color:var(--vscode-descriptionForeground); padding:2px 4px;
