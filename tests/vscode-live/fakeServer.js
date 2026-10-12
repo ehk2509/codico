@@ -86,6 +86,8 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // A search with many matches in one file, and the context block of a message sent with a secret file open in a tab
+  lean_search: [tool('search_files', 'pattern: of the long file\nglob: fixtures/**'), 'Searched.'],
   // Reading again what is already in the conversation
   rr_first: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), 'Read.'],
   rr_again: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), tool('read_file', 'filepath: ./fixtures/long.txt\nstart_line: 21\nend_line: 60'), 'Read.'],

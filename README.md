@@ -115,6 +115,7 @@ Long agent tasks resend the conversation with every step, so Codico keeps what i
 - **Prompt caching** — requests to Claude models (direct and through OpenRouter) ask the provider to cache the conversation; OpenAI, DeepSeek, Gemini, Grok and Moonshot cache automatically. The system prompt and tool list stay identical for the whole task (phase guidance is added to the conversation instead), so cached reads keep matching. Replaying a recorded 63-request task, this cut billed input by an estimated 85% at Claude cache pricing.
 - **Plan approval** — approving a plan drops the planning turn's file reads from the context; the plan itself stays and the agent re-reads what it needs.
 - **Trimmed history** — older large tool results are shortened, and a result repeated unchanged (a file read twice) is sent only once.
+- **Lean additions** — the context block names the other open tabs instead of including their contents; a search returns at most 40 matches, 6 per file, with an exact count of what was left out and in which files; and a reminder Codico attaches to tool results is given in full once, then as one short line while it still applies.
 - **No repeated reads** — a `read_file` does not send lines the model already has. Codico looks in the conversation itself for earlier text of that file (reads, and the snippets edits return): a range that is all there and unchanged gets a one-line pointer instead of the text, and an overlapping range gets only its new lines. A line that changed, by the agent, by a command or by you, is always sent; so is everything after a compaction or a rewind, since the earlier text is then gone. Asking a second time for exactly the lines that were declined returns them.
 - **Compaction** — see *Context Compaction* below.
 
@@ -768,7 +769,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
-| `codico.openTabsContext` | `boolean` | `true` | Include open editor tabs as additional context |
+| `codico.openTabsContext` | `boolean` | `true` | Tell the agent which other files are open in tabs (their names; contents are read only when the task needs them) |
 | `codico.globalHistory` | `boolean` | `false` | Persist threads across all workspaces |
 | `codico.autoInjectDiagnostics` | `boolean` | `true` | Auto-inject Problems panel errors/warnings |
 | `codico.completionNotificationsEnabled` | `boolean` | `true` | Notify when agent finishes while window is unfocused |
@@ -883,6 +884,7 @@ codico/
 ## Security
 
 - **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics; paths that lead outside the workspace through a symbolic link (or a dangling one) are refused
+- **Open tabs** — only the names of other open tabs are sent with a message, never their contents, and a tab outside the workspace or excluded by `.codicoignore` is not named
 - **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
 - **Remembered commands** — a terminal command runs without asking only if you chose "Always allow" for it on its approval card. A rule is either one whole command, matched exactly, or a build/test command with any arguments (`npm test *`), which never matches a command that chains, pipes, redirects or substitutes (`npm test; …`, `&&`, `|`, `>`, `$( )`, backticks). Rules live in the workspace's private state, not in a settings file a repository could ship, do not apply in an untrusted folder, and are set aside for the rest of a turn once the agent has read web or MCP content
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems

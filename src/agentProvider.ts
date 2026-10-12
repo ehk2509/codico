@@ -58,6 +58,7 @@ import { duplicateStoredThread } from './threadDuplication';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile, listDirectoryTool, openSettingsMenu } from './chatFiles';
 import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
+import { ReminderLog, renderSearchMatches } from './leanContext';
 import { ToolLoopGuard } from './toolLoopGuard';
 import { promptForMissingKey, providerStatusMessage, usableModel } from './modelFallback';
 import { cliModelCompletion, isCliModel, streamCliModel } from './cliProviders';
@@ -1032,6 +1033,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const loopGuard = new ToolLoopGuard();
         // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
         const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
+        const reminders = new ReminderLog();
         try {
             // One request to the selected provider. The main loop and its subagents share it.
             const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => isCli
@@ -1137,7 +1139,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         loopGuard.ran(tool);
                         let result = this._lastInlineResult ?? `[${tool.type}] completed`;
                         this._lastInlineResult = undefined;
-                        if (explorationCheck.guidance) { result += `\n\n${explorationCheck.guidance}`; }
+                        if (explorationCheck.guidance) { result += `\n\n${reminders.say(explorationCheck.guidance)}`; }
                         inlineToolResults.push(result);
                         return { keepGoing: true, result };
                     }
@@ -1171,7 +1173,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._lastInlineResult = undefined;
                     const followThrough = exploration.after(tool, result);
                     if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
-                    if (followThrough) { result += `\n\n${followThrough}`; }
+                    if (followThrough) { result += `\n\n${reminders.say(followThrough)}`; }
                     inlineToolResults.push(result);
                     return { keepGoing: true, result };
                 };
@@ -2236,7 +2238,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const scan = async (test: (line: string) => boolean): Promise<string[]> => {
             const found: string[] = [];
             for (const uri of uris) {
-                if (found.length >= 100) { break; }
+                if (found.length >= 1000) { break; }
                 try {
                     const bytes = await vscode.workspace.fs.readFile(uri);
                     if (bytes.byteLength > 1_000_000) { continue; }
@@ -2244,8 +2246,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     if (text.includes('\x00')) { continue; }
                     const rel = vscode.workspace.asRelativePath(uri);
                     const lines = text.split('\n');
-                    for (let i = 0; i < lines.length && found.length < 100; i++) {
-                        if (test(lines[i])) { found.push(`${rel}:${i + 1}:${lines[i].slice(0, 500)}`); }
+                    for (let i = 0; i < lines.length && found.length < 1000; i++) {
+                        if (test(lines[i])) { found.push(`${rel}:${i + 1}:${lines[i].slice(0, 300)}`); }
                     }
                 } catch {
                     // Skip unreadable files; continue searching the rest of the workspace.
@@ -2265,7 +2267,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
         this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
         return matches.length > 0
-            ? `[search_files: ${label}]${note}\n${matches.join('\n')}${matches.length >= 100 ? '\n… (truncated at 100 matches)' : ''}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
+            ? `[search_files: ${label}]${note}\n${renderSearchMatches(matches, matches.length < 1000)}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
             : `[search_files: ${label}] No matches found${note}`;
     }
 

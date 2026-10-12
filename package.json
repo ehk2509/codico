@@ -434,7 +434,7 @@
         "codico.openTabsContext": {
           "type": "boolean",
           "default": true,
-          "description": "Include open editor tabs as additional context when sending messages"
+          "description": "Tell the agent which other files are open in editor tabs. Only their names are sent; a file's contents are read when the task needs them. Lock files, generated output and files excluded by .codicoignore are left out."
         },
         "codico.globalHistory": {
           "type": "boolean",
