@@ -56,22 +56,11 @@
 <div id="thread-bar">
   <button id="sessions-toggle-btn" title="Toggle sessions list">&#9776;</button>
   <span id="sessions-active-name">New Chat</span>
-  <button id="find-btn" title="Find in this conversation (Ctrl+F)">&#8981;</button>
-  <button id="search-threads-btn" title="Search across all threads">&#128269;</button>
+  <button id="find-btn" title="Search this conversation or all threads (Ctrl+F)">&#128269;</button>
   <button id="new-thread-btn" title="New session">+</button>
 </div>
 
 <div id="sessions-list"></div>
-
-<div id="thread-search-overlay">
-  <div id="thread-search-header">
-    <input id="thread-search-input" type="text" placeholder="Search messages across all threads…" autocomplete="off" spellcheck="false">
-    <button id="thread-search-close" title="Close search">&#10005;</button>
-  </div>
-  <div id="thread-search-results">
-    <div class="ts-empty">Type to search across all conversations</div>
-  </div>
-</div>
 
 <div id="mcp-catalog-overlay">
   <div id="mcp-catalog-header">
@@ -84,11 +73,22 @@
 </div>
 
 <div id="find-bar">
+  <div id="find-scope" role="group" aria-label="Where to search">
+    <button id="find-scope-this" class="active" aria-pressed="true" title="Search the conversation that is open">This thread</button>
+    <button id="find-scope-all" aria-pressed="false" title="Search the messages of every thread">All threads</button>
+  </div>
   <input id="find-input" type="text" placeholder="Find in this conversation" autocomplete="off" spellcheck="false">
   <span id="find-count"></span>
   <button id="find-prev" title="Previous match (Shift+Enter)">&#8593;</button>
   <button id="find-next" title="Next match (Enter)">&#8595;</button>
   <button id="find-close" title="Close (Escape)">&#10005;</button>
+</div>
+
+<!-- Results of a search in all threads: shown under the search bar, over the conversation -->
+<div id="thread-search-overlay">
+  <div id="thread-search-results">
+    <div class="ts-empty">Type to search across all conversations</div>
+  </div>
 </div>
 
 <div id="messages">

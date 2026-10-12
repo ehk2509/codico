@@ -230,14 +230,6 @@ The tools fail gracefully with a clear message when no debug session is running.
 
 ---
 
-### Chat History Search
-Click the **🔍** button in the thread tab bar to search across all threads:
-
-- Debounced live search as you type — matches both thread names and message content
-- Results show thread name, role indicator (▶ user / ◀ assistant), and highlighted snippets around each match
-- Click any result to open that thread with its matches highlighted (the find bar opens with your search)
-- Keyboard navigation: `↑`/`↓` to move between results, `Enter` to open, `Esc` to close
-
 ### Everyday Conveniences
 - **Drafts and reading position** — each thread keeps its own unsent message and remembers where you were reading. Both survive switching threads, hiding the panel and reloading the window. (Attached files and images are not kept with a draft.)
 - **Context meter** — next to the token count: how close the conversation is to being compacted, as a bar and a percentage of the auto-compact threshold (green, then yellow from 70%, red from 90%). With auto-compact off it shows the size of the last request instead.
@@ -245,13 +237,19 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 - **Export a thread** — the ⤓ button on a thread in the list saves the conversation as a Markdown file or copies it: your messages, the replies, the steps taken (folded) and each change report. Reasoning and raw terminal output are left out.
 - **Message while the agent works** — a message sent during a task is given to the agent at its next step, with the result of the step in progress, so you can correct or add to a task without stopping it; the reply shows where it was taken in. Until then it waits in a banner (and is sent as a normal follow-up if the task finishes first). Commands and messages with attachments wait for the reply to end. **Edit** puts it back in the box to change it, × cancels it, and anything you type while it waits stays in the box after it is sent.
 
-### Find in a Conversation
-Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **⌕** in the thread bar:
+### Search
+One search for the conversation that is open and for all of them. Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **🔍** in the thread bar; the switch at the left of the bar chooses **This thread** or **All threads**, and what you typed is kept when you switch.
 
+**This thread**
 - Every match is highlighted, in your messages, replies, code blocks and reasoning; the count shows "3 of 17"
 - `Enter` / `Shift+Enter` (or ↓ ↑) step through the matches; a match inside a collapsed code block, a folded run of steps or a closed reasoning trace opens it
 - Works while a reply is streaming: new matches are counted as the text arrives
 - With text selected, `Ctrl+F` searches for the selection
+
+**All threads**
+- Live search as you type, in thread names and message content; results show the thread, who wrote the message (▶ you / ◀ Codico) and the text around each match
+- Click a result, or `Enter` / `↓` then `Enter`, to open that thread: the bar switches back to **This thread** with its matches highlighted
+- `Esc` closes the search
 
 ### Notifications
 When a reply finishes, or Codico waits for your approval (a file change, a command, a "continue?" pause), and you are not looking at the chat:

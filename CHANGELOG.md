@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- One search instead of two. The thread bar had a button to find in the open conversation and another to search all threads, each with its own box. There is now one button and one bar (`Ctrl+F`), with a **This thread / All threads** switch that keeps what you typed. In all threads the results are listed under the bar; picking one opens that thread and switches back to its highlighted matches.
+
 ## 0.3.16 - 2026-10-12
 
 ### Added
