@@ -115,6 +115,7 @@ Long agent tasks resend the conversation with every step, so Codico keeps what i
 - **Prompt caching** — requests to Claude models (direct and through OpenRouter) ask the provider to cache the conversation; OpenAI, DeepSeek, Gemini, Grok and Moonshot cache automatically. The system prompt and tool list stay identical for the whole task (phase guidance is added to the conversation instead), so cached reads keep matching. Replaying a recorded 63-request task, this cut billed input by an estimated 85% at Claude cache pricing.
 - **Plan approval** — approving a plan drops the planning turn's file reads from the context; the plan itself stays and the agent re-reads what it needs.
 - **Trimmed history** — older large tool results are shortened, and a result repeated unchanged (a file read twice) is sent only once.
+- **No repeated reads** — a `read_file` does not send lines the model already has. Codico looks in the conversation itself for earlier text of that file (reads, and the snippets edits return): a range that is all there and unchanged gets a one-line pointer instead of the text, and an overlapping range gets only its new lines. A line that changed, by the agent, by a command or by you, is always sent; so is everything after a compaction or a rewind, since the earlier text is then gone. Asking a second time for exactly the lines that were declined returns them.
 - **Compaction** — see *Context Compaction* below.
 
 ---

@@ -26,9 +26,10 @@ function renderCandidates(title: string, items: AuditCandidate[]): string {
 /** Files that hold prose, data or markup: words like "done" or "error" in them are not lifecycle logic. */
 const NOT_CODE_RE = /\.(?:md|mdx|markdown|txt|rst|adoc|json|jsonc|ya?ml|toml|ini|cfg|conf|lock|csv|tsv|xml|svg|html?|css|scss|less|env)$/i;
 
-export function buildLocalInvariantAudit(source: string, changedText: string, filepath = ''): string {
+/** @param before the file as it was: an import that was already unused then is not this edit's doing */
+export function buildLocalInvariantAudit(source: string, changedText: string, filepath = '', before = ''): string {
     if (NOT_CODE_RE.test(filepath)) { return ''; }
-    const importAudit = buildImportUsageAudit(source);
+    const importAudit = buildImportUsageAudit(source, before);
     const callableReminder = CALLABLE_DECL_RE.test(changedText)
         ? '\n\n[Post-edit behavior integration reminder]\n' +
             'This edit introduces or rewrites a callable abstraction. If the task requests an observable runtime behavior change, ' +

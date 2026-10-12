@@ -421,6 +421,29 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── A read does not repeat lines that are already in the conversation and unchanged ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    const run = async (name) => { const from = (await getLog()).length; await vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`); return (await getLog()).slice(from).filter(e => e.scenario === name && e.stream).map(r => r.lastUser || '').join('\n=====\n'); };
+    const first = await run('rr_first');
+    const full = /\[read_file: fixtures\/long\.txt lines 1–40 of 60; [^\]]*\]\n```\n1\trow 1 of the long file\n/.test(first) && /40\trow 40 of the long file/.test(first);
+    const again = await run('rr_again');
+    // The same lines again: a pointer, no text. An overlapping range (the path written another way): only its new lines
+    const declined = /\[read_file: fixtures\/long\.txt lines 1–40 of 60\] Not repeated: these lines are already in this conversation/.test(again) && !/\n5\trow 5 of the long file/.test(again);
+    const partial = /lines 21–40 are left out because they are already in this conversation, unchanged\]\n```\n… lines 21–40 not repeated: already shown above, unchanged …\n41\trow 41 of the long file\n/.test(again) && /60\trow 60 of the long file/.test(again);
+    // Changed outside Codico: the changed line is sent, the rest still is not
+    const lines = read('fixtures/long.txt').split('\n'); lines[9] = 'row 10 CHANGED-BY-HAND'; fs.writeFileSync(path.join(ws, 'fixtures/long.txt'), lines.join('\n'));
+    const changed = await run('rr_changed');
+    const seesChange = /… lines 2–9 not repeated: already shown above, unchanged …\n10\trow 10 CHANGED-BY-HAND\n… lines 11–40 not repeated/.test(changed);
+    // Declined once, asked for exactly the same lines again: the text is given
+    const declinedOnce = /\[read_file: fixtures\/long\.txt lines 41–60 of 60\] Not repeated/.test(await run('rr_declined'));
+    const insisted = /\[read_file: fixtures\/long\.txt lines 41–60 of 60; [^\]]*\]\n```\n41\trow 41 of the long file\n/.test(await run('rr_insist'));
+    const reqs = (await getLog()).slice(before).filter(e => /^rr_/.test(e.scenario) && e.stream).length;
+    results.push({ name: 'no_repeat', ms: Date.now() - t0, requests: reqs, ok: full && declined && partial && seesChange && declinedOnce && insisted,
+      why: `first read is whole: ${full}; the same lines again are not repeated: ${declined}; an overlapping read returns only its new lines: ${partial}; a line changed by hand is sent, the unchanged ones are not: ${seesChange}; asking a second time for declined lines returns them: ${declinedOnce && insisted}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Duplicate thread: refused while a reply runs; the copy has the conversation and is independent ──
   {
     const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);

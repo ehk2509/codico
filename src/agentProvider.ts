@@ -5,7 +5,7 @@ import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart, StreamChunk } from './openRouterClient';
 import { streamOllama, ollamaChatCompletion } from './ollamaClient';
 import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
-import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ReadFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
+import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
@@ -39,8 +39,8 @@ import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEve
 import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
-import { formatOutline, OUTLINE_HEAD_LINES, OUTLINE_MIN_LINES, sliceFileByLines, numberLines, editResultSnippet } from './fileReadWindow';
-import { fileOutlineSymbols } from './fileOutline';
+import { editResultSnippet } from './fileReadWindow';
+import { readFileTool } from './readFileTool';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
@@ -148,6 +148,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _abortController: AbortController | null = null;
     private _followUpAbortController: AbortController | null = null;
     private _busy = false;
+    private _delegating = false;
     /** A message sent while the agent works: given to the model with its next request. */
     private _steer = '';
     // Medium by default: high effort costs noticeably more reasoning tokens on every step
@@ -1906,7 +1907,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'read_file': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'read_file', label: tool.filepath });
-                result = await this._handleReadFile(tool, msgId);
+                result = await readFileTool(tool, this._delegating ? null : projectHistoryForModel(this._history).history, outcome => this._post({ type: 'toolResult', id: msgId, tool: 'read_file', ...outcome }));
                 break;
             }
             case 'list_directory': {
@@ -1951,11 +1952,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'delegate': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'delegate', label: tool.task.split('\n')[0].slice(0, 80) });
+                this._delegating = true; // a subagent has a conversation of its own: what this one has read says nothing about it
                 const delegated = await runDelegate(tool, this._subagentHost, (await this._userExtensions.get()).agents, {
                     signal, maxSteps: vscode.workspace.getConfiguration('codico').get<number>('subagentMaxSteps', SUBAGENT_DEFAULT_MAX_STEPS),
                     // The subagent's reads run like any other, and show as steps under the delegation
                     runTool: async nested => { await this._dispatchTool(nested, msgId, signal); const text = this._lastInlineResult ?? ''; this._lastInlineResult = undefined; return text; },
-                });
+                }).finally(() => { this._delegating = false; });
                 this._post({ type: 'activity', text: null });
                 this._post({ type: 'toolResult', id: msgId, tool: 'delegate', label: delegated.label, success: delegated.success, error: delegated.error });
                 result = delegated.text;
@@ -2082,37 +2084,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._passport.recordChange(tool.filepath, beforeBytes ? beforeText : null, contentToWrite);
             this._filesWrittenThisTurn++;
             const lineCount = contentToWrite.split('\n').length;
-            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath)}`;
+            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath, beforeText)}`;
         } catch (err: unknown) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
             return `[write_file: ${tool.filepath}] Error: ${errorMsg}`;
-        }
-    }
-
-    private async _handleReadFile(tool: ReadFileTool, msgId: string): Promise<string> {
-        try {
-            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
-            // Unsaved editor changes included: that is the file the user sees
-            const content = await readCurrentText(fileUri);
-            // A large file read without a range: an outline and its first lines, not page after page
-            const unranged = tool.startLine === undefined && tool.endLine === undefined;
-            const outline = unranged && content.split('\n').length > OUTLINE_MIN_LINES ? await fileOutlineSymbols(fileUri) : [];
-            const window = outline.length >= 3 ? sliceFileByLines(content, 1, OUTLINE_HEAD_LINES) : sliceFileByLines(content, tool.startLine, tool.endLine);
-            const label = window.truncated
-                ? `${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}`
-                : tool.filepath;
-            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label, success: true });
-            const continuation = window.endLine < window.totalLines
-                ? `\n… (bounded read; use start_line: ${window.endLine + 1} and end_line to continue, or search_files to target a symbol)\n`
-                : '';
-            const outlineText = outline.length >= 3 ? `Outline of this ${window.totalLines}-line file (line ranges):\n${formatOutline(outline)}\n\nRead only the range you need with start_line/end_line.\n\n` : '';
-            // Numbered like `cat -n`: the numbers are what start_line/end_line and the next search need
-            return `[read_file: ${tool.filepath} lines ${window.startLine}–${window.endLine} of ${window.totalLines}; each line is shown as <number><tab><text>, and the number is not part of the file]\n${outlineText}\`\`\`\n${numberLines(window.text, window.startLine)}\n\`\`\`${continuation}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'read_file', label: tool.filepath, success: false, error: message });
-            return `[read_file: ${tool.filepath}] ERROR: ${message}`;
         }
     }
 
@@ -2422,7 +2398,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
             // Enough around the edit for the next nearby edit without reading the file again
             const snippet = editResultSnippet(newContentLF.split('\n'), linesBefore, effectiveNewStr.split('\n').length);
-            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr, tool.filepath);
+            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr, tool.filepath, content);
             const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
             return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${snippet.from}–${snippet.to}, numbered like read_file):\n\`\`\`\n${snippet.text}\n\`\`\`${invariantAudit}`;
         } catch (err: unknown) {

@@ -234,7 +234,7 @@ export class ExplorationController {
 
             return '[System Follow-through] Code changed. Do not declare success yet. Verify the full task acceptance contract. ' +
                 (this._verificationAuditSeen
-                    ? 'This is a lifecycle/state edit: re-read the edited control flow once, reconcile the Local invariant audit, then run a behavior-level test. '
+                    ? 'This is a lifecycle/state edit: check the changed lines shown in the edit result against the Local invariant audit (read further lines of the file only for a path the result does not show), then run a behavior-level test. '
                     : 'Start with the edited component, then follow dependencies only if correctness requires it. ') +
                 'Do not broaden mutations until this edit is locally verified.';
         }
@@ -250,7 +250,7 @@ export class ExplorationController {
             }
 
             if (this._verificationAuditSeen && this._verificationAuditReads === 0) {
-                return '[System Verification] The command passed, but the lifecycle/state edit has not been re-read after mutation. Audit the edited control flow and its normal terminal paths before accepting this result.';
+                return '[System Verification] The command passed, but the lifecycle/state edit has not been checked against its surroundings after the change. Read the lines around the edit that its result did not show (lines already shown are not repeated), and check the normal terminal paths before accepting this result.';
             }
 
             if (this._verificationAuditSeen && !isBehavioralVerificationCommand(tool.command)) {
