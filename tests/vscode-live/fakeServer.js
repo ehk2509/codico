@@ -83,6 +83,9 @@ const SCRIPTS = (port) => ({
   ds_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_tools: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   oa_plain: ['Answered without the effort option.'],
+  // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
+  cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
+  cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
   // A subagent: the main agent delegates, the child reads (and tries an edit it may not make), only the report comes back
   sub_main: [{ toolCalls: [{ name: 'delegate', args: { task: 'Find the notes marker and report its file and line.\n[SCENARIO:sub_child]' } }] }, 'The subagent found it.'],
   sub_child: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/sub-native.txt' } }, { name: 'edit_file', args: { filepath: 'fixtures/sub-native.txt', old_str: 'SUB-NATIVE-CONTENT', new_str: 'CHANGED-BY-SUBAGENT' } }] }, 'REPORT: SUBAGENT-FOUND the marker at fixtures/sub-native.txt:1'],
@@ -160,7 +163,7 @@ function start(port0) {
         deepseek, openai, maxTokens: json.max_tokens, maxCompletionTokens: json.max_completion_tokens, model: json.model, thinking: json.thinking, effort: json.reasoning_effort, reasoningBack: assistants.map(m => m.reasoning_content),
         // A summary in the transcript's own format: only a bad summary produces that
         copiedSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\][\s\S]*### TOOL RESULT/.test(textOf(m.content))),
-        native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
+        native: Array.isArray(json.tools) && json.tools.length > 0, toolNames: (json.tools || []).map(t => t.function && t.function.name), toolResults: messages.slice(messages.map(m => m.role).lastIndexOf('assistant') + 1).filter(m => m.role === 'tool').map(m => textOf(m.content).slice(0, 3000)), lastRole: last.role, lastText: textOf(last.content).slice(0, 6000) };
       log.push(rec);
       fs.appendFileSync(LOG_FILE, JSON.stringify({ ...rec, lastUser: rec.lastUser.slice(0, 300) }) + '\n');
       // With tools, DeepSeek rejects an assistant message sent back without its reasoning_content
