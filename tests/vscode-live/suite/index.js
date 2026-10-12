@@ -421,6 +421,28 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Edits mode: a proposed edit is accepted and rejected one change at a time ──
+  {
+    const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
+    const ORIGINAL = 'l1\nl2\nl3\nl4\nl5\nl6\nl7\nl8\nl9';
+    await msg({ type: 'toggleEditsMode', enabled: true });
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:hunk_edit] please do the task');
+    const proposedOnly = read('fixtures/hunks.txt') === ORIGINAL;
+    await msg({ type: 'acceptHunk', filepath: 'fixtures/hunks.txt', index: 1 });
+    const second = read('fixtures/hunks.txt');
+    await msg({ type: 'rejectHunk', filepath: 'fixtures/hunks.txt', index: 0 });
+    // Nothing is left to accept: the first change was dropped
+    await msg({ type: 'acceptAllEdits' });
+    const after = read('fixtures/hunks.txt');
+    await msg({ type: 'undo' });
+    const undone = read('fixtures/hunks.txt') === ORIGINAL;
+    await msg({ type: 'toggleEditsMode', enabled: false });
+    const one = second === ORIGINAL.replace('l8', 'L8-CHANGED') && after === second;
+    results.push({ name: 'hunk_review', ms: Date.now() - t0, requests: 0, ok: proposedOnly && one && undone,
+      why: `the edit was proposed, not written: ${proposedOnly}; accepting the second change wrote only it, and the rejected first one never reached the file: ${one}; undo takes the accepted change back: ${undone}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── A message sent while the agent works is delivered with its next step ──
   {
     const before = (await getLog()).length; const t0 = Date.now();

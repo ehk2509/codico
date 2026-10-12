@@ -734,6 +734,45 @@ test('a thread row shows its actions without the pointer on it, and keeps them w
   }
 });
 
+test('a proposed edit lists its separate changes, each with its own accept and reject', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const hunk = (index, line, removed, added) => ({ index, line, removed, added, removedCount: removed.length, addedCount: added.length });
+  const proposals = (hunks) => ({ type: 'proposalsReady', proposals: [{ filepath: 'src/app.ts', label: 'edit src/app.ts', isNew: false, lines: 40, hunks },
+    { filepath: 'src/one.ts', label: 'edit src/one.ts', isNew: false, lines: 9, hunks: [hunk(0, 3, ['a'], ['b'])] }, { filepath: 'src/new.ts', label: 'write src/new.ts', isNew: true, lines: 5, hunks: [] }] });
+  await send(proposals([hunk(0, 2, [], ['import c']), hunk(1, 14, ['  return 1;'], ['  return 100;']), { index: 2, line: 30, removed: ['x'], added: ['<b>y</b>'], removedCount: 20, addedCount: 1 }]));
+  // Only an edit with more than one change is split; a single change and a new file are decided whole
+  assert.equal(await page.locator('.hunk-list').count(), 1);
+  const hunks = page.locator('.hunk-list[data-hunks-for="src/app.ts"] .hunk');
+  assert.equal(await hunks.count(), 3);
+  assert.equal(await hunks.nth(1).locator('.hunk-where').textContent(), 'Change 2 of 3 · line 14 · +1 −1');
+  assert.deepEqual(await hunks.nth(1).locator('.hunk-line').allTextContents(), ['-   return 1;', '+   return 100;']);
+  assert.equal(await hunks.nth(0).locator('.hunk-where').textContent(), 'Change 1 of 3 · line 2 · +1');
+  // More lines than shown are counted, and the file's text is never read as HTML
+  assert.deepEqual(await hunks.nth(2).locator('.hunk-line').allTextContents(), ['- x', '  … 19 more removed', '+ <b>y</b>']);
+  assert.equal(await hunks.nth(2).locator('b').count(), 0);
+  await hunks.nth(1).locator('.hunk-accept').click();
+  await hunks.nth(2).locator('.hunk-reject').click();
+  assert.deepEqual(await posted('acceptHunk'), [{ type: 'acceptHunk', filepath: 'src/app.ts', index: 1 }]);
+  assert.deepEqual(await posted('rejectHunk'), [{ type: 'rejectHunk', filepath: 'src/app.ts', index: 2 }]);
+  // The extension answers with what is left: two changes, renumbered
+  await send(proposals([hunk(0, 2, [], ['import c']), hunk(1, 30, ['x'], ['y'])]));
+  assert.deepEqual(await hunks.locator('.hunk-where').allTextContents(), ['Change 1 of 2 · line 2 · +1', 'Change 2 of 2 · line 30 · +1 −1']);
+  await send(proposals([hunk(0, 2, [], ['import c']), { index: 1, line: 40, removed: [], added: [], removedCount: 0, addedCount: 0, note: 'Removes the newline at the end of the file' }]));
+  assert.equal(await hunks.nth(1).locator('.hunk-where').textContent(), 'Change 2 of 2 · line 40');
+  assert.deepEqual(await hunks.nth(1).locator('.hunk-line').allTextContents(), ['Removes the newline at the end of the file']);
+  // The file decided whole takes its list of changes with it
+  await send({ type: 'proposalAccepted', filepath: 'src/app.ts' });
+  assert.equal(await page.locator('.hunk-list').count(), 0);
+  assert.equal(await page.locator('.proposal-item').count(), 2);
+  // In a narrow panel a long line scrolls inside its change; the panel itself does not
+  await send(proposals([hunk(0, 2, [], ['const veryLong = ' + 'x'.repeat(400)]), hunk(1, 9, ['a'], ['b'])]));
+  await page.setViewportSize({ width: 280, height: 700 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const box = await hunks.nth(0).locator('.hunk-reject').boundingBox();
+  assert.ok(box.x + box.width <= 280, 'the buttons stay in view');
+  assert.deepEqual(errors, []);
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
+import { HunkPreview, computeHunks, hunkPreviews, withHunks } from './hunks';
+
+/** Keeps a byte-order mark, so a file written back in part is the same file. */
+const decode = (bytes: Uint8Array) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(bytes);
 
 export interface FileEditProposal {
     /** Path as the model wrote it; identifies the proposal in the panel. */
@@ -164,6 +168,40 @@ export class EditProposalManager {
         return applied;
     }
 
+    /**
+     * Apply one change of a proposal and leave the others proposed. The file then holds that
+     * change, and the proposal is what remains to decide.
+     */
+    async applyHunk(filepath: string, index: number, undoPush: UndoPush, confirm: (message: string) => Promise<boolean>): Promise<boolean> {
+        const proposal = this._byPath(filepath);
+        if (!proposal || proposal.originalContent === null) { return false; }
+        const original = decode(proposal.originalContent);
+        if (!computeHunks(original, proposal.proposedContent).some(h => h.index === index)) { return false; }
+        if (!sameBytes(await readCurrentBytes(proposal.uri), proposal.originalContent) &&
+            !await confirm(`${filepath} has changed since Codico proposed this edit. Apply this change anyway and lose those changes?`)) {
+            return false;
+        }
+        const text = withHunks(original, proposal.proposedContent, i => i === index);
+        const encoded = new TextEncoder().encode(text);
+        await writeCurrentBytes(proposal.uri, encoded);
+        undoPush(proposal.originalContent, encoded, filepath, proposal.label, proposal.uri);
+        if (text === proposal.proposedContent) { this.rejectOne(filepath); }
+        else { proposal.originalContent = encoded; }
+        return true;
+    }
+
+    /** Drop one change from a proposal; the file is not touched. */
+    rejectHunk(filepath: string, index: number): boolean {
+        const proposal = this._byPath(filepath);
+        if (!proposal || proposal.originalContent === null) { return false; }
+        const original = decode(proposal.originalContent);
+        if (!computeHunks(original, proposal.proposedContent).some(h => h.index === index)) { return false; }
+        proposal.proposedContent = withHunks(original, proposal.proposedContent, i => i !== index);
+        if (proposal.proposedContent === original) { this.rejectOne(filepath); }
+        else { this._provider.set(proposal.filepath, proposal.proposedContent); }
+        return true;
+    }
+
     rejectOne(filepath: string): void {
         const proposal = this._byPath(filepath);
         if (proposal) { this._proposals.delete(proposal.uri.toString()); }
@@ -176,12 +214,14 @@ export class EditProposalManager {
     }
 
     /** Serialised state sent to the webview. */
-    get webviewState(): Array<{ filepath: string; label: string; isNew: boolean; lines: number }> {
+    get webviewState(): Array<{ filepath: string; label: string; isNew: boolean; lines: number; hunks: HunkPreview[] }> {
         return this.proposals.map(p => ({
             filepath: p.filepath,
             label: p.label,
             isNew: p.originalContent === null,
             lines: p.proposedContent.split('\n').length,
+            // The separate changes of an edit, to accept or reject one at a time
+            hunks: p.originalContent === null ? [] : hunkPreviews(decode(p.originalContent), p.proposedContent),
         }));
     }
 }

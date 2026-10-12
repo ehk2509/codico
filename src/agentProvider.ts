@@ -20,6 +20,7 @@ import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom } from './rewind';
+import { handleProposalMessage } from './editProposalMessages';
 import { MAX_STEER_CHARS, addSteer, steerNote } from './steering';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
@@ -531,43 +532,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'toggleAutoCommit':
                 this._autoCommit = msg.enabled;
                 break;
-            case 'previewEditDiff':
-                await this._editProposals.openDiff(msg.filepath);
-                break;
-            case 'acceptEdit': {
-                const applied = await this._editProposals.applyOne(msg.filepath, (before, after, fp, label, uri) => {
-                    this._undoRedo.push({ filepath: fp, uri, before, after, label });
-                }, message => this._confirmOverwrite(message));
-                // Not applied: the file changed meanwhile and the user kept it; the proposal stays
-                if (!applied) { break; }
-                this._post({ type: 'proposalAccepted', filepath: msg.filepath });
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                if (!this._editProposals.hasProposals) {
-                    this._post({ type: 'allProposalsResolved' });
-                }
-                break;
-            }
-            case 'rejectEdit':
-                this._editProposals.rejectOne(msg.filepath);
-                this._post({ type: 'proposalRejected', filepath: msg.filepath });
-                if (!this._editProposals.hasProposals) {
-                    this._post({ type: 'allProposalsResolved' });
-                }
-                break;
-            case 'acceptAllEdits': {
-                await this._editProposals.applyAll((before, after, fp, label, uri) => {
-                    this._undoRedo.push({ filepath: fp, uri, before, after, label });
-                }, message => this._confirmOverwrite(message));
-                this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-                // Proposals for files the user chose to keep stay open for review
-                this._post(this._editProposals.hasProposals
-                    ? { type: 'proposalsReady', proposals: this._editProposals.webviewState }
-                    : { type: 'allProposalsResolved' });
-                break;
-            }
-            case 'rejectAllEdits':
-                this._editProposals.rejectAll();
-                this._post({ type: 'allProposalsResolved' });
+            case 'previewEditDiff': case 'acceptEdit': case 'rejectEdit': case 'acceptAllEdits': case 'rejectAllEdits': case 'acceptHunk': case 'rejectHunk':
+                await handleProposalMessage(msg, this._editProposals, this._undoRedo, message => this._post(message), message => this._confirmOverwrite(message));
                 break;
             case 'sendFollowUp':
                 await this._handleUserMessage(msg.text);

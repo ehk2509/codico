@@ -74,6 +74,8 @@ export type WebviewMessage =
     | { type: 'rejectEdit'; filepath: string }
     | { type: 'acceptAllEdits' }
     | { type: 'rejectAllEdits' }
+    | { type: 'acceptHunk'; filepath: string; index: number }
+    | { type: 'rejectHunk'; filepath: string; index: number }
     | { type: 'sendFollowUp'; text: string }
     | { type: 'generateTestsFromCoverage' }
     | { type: 'runAndFixTests' }
@@ -144,7 +146,7 @@ export type ExtensionMessage =
     | { type: 'mcpStatus'; servers: Array<{ name: string; connected: boolean; toolCount: number; error?: string }> }
     | { type: 'undoRedoState'; canUndo: boolean; canRedo: boolean; undoLabel?: string; redoLabel?: string }
     | { type: 'proposalQueued'; filepath: string }
-    | { type: 'proposalsReady'; proposals: Array<{ filepath: string; label: string; isNew: boolean; lines: number }> }
+    | { type: 'proposalsReady'; proposals: Array<{ filepath: string; label: string; isNew: boolean; lines: number; hunks: Array<{ index: number; line: number; removed: string[]; added: string[]; removedCount: number; addedCount: number; note?: string }> }> }
     | { type: 'proposalAccepted'; filepath: string }
     | { type: 'proposalRejected'; filepath: string }
     | { type: 'allProposalsResolved' }
