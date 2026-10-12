@@ -773,6 +773,33 @@ test('a proposed edit lists its separate changes, each with its own accept and r
   assert.deepEqual(errors, []);
 });
 
+test('a command approval offers to always allow it: the command itself, or with any arguments when the extension says so', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  await send({ type: 'startMessage', id: 'c1' }, { type: 'terminalPermissionRequest', id: 'c1', permId: 'p1', command: 'npm test -- --watch=false', rules: ['npm test -- --watch=false', 'npm test *'] });
+  const card = page.locator('#perm-p1');
+  assert.equal(await card.locator('.perm-remember-label').textContent(), 'Always allow in this workspace:');
+  assert.deepEqual(await card.locator('.perm-remember-btn').allTextContents(), ['npm test -- --watch=false', 'npm test *']);
+  assert.match(await card.locator('.perm-remember-btn').nth(1).getAttribute('title'), /^Run "npm test" with any arguments without asking, in this workspace\. Review the list with "Codico: Remembered Commands"\./);
+  assert.match(await card.locator('.perm-remember-btn').nth(0).getAttribute('title'), /^Run exactly this command without asking/);
+  await card.locator('.perm-remember-btn').nth(1).click();
+  assert.deepEqual(await posted('terminalPermissionResponse'), [{ type: 'terminalPermissionResponse', permId: 'p1', granted: true, remember: 'npm test *' }]);
+  assert.match(await card.textContent(), /Allowed, and from now on in this workspace: npm test \*/);
+  // Plain Allow remembers nothing; no rules offered (the agent read web content this turn): no such buttons
+  await send({ type: 'terminalPermissionRequest', id: 'c1', permId: 'p2', command: 'git status', rules: ['git status', 'git status *'] });
+  await page.locator('#perm-p2 .write-perm-btn.allow').click();
+  assert.deepEqual((await posted('terminalPermissionResponse')).pop(), { type: 'terminalPermissionResponse', permId: 'p2', granted: true });
+  await send({ type: 'terminalPermissionRequest', id: 'c1', permId: 'p3', command: 'curl example.com', rules: [], note: 'Asking again: the agent read web or MCP content in this turn.' });
+  assert.equal(await page.locator('#perm-p3 .perm-remember').count(), 0);
+  // A long command stays inside a narrow panel
+  await page.setViewportSize({ width: 280, height: 700 });
+  const long = 'npm run build && npm test && node scripts/check-everything.js --strict --all';
+  await send({ type: 'terminalPermissionRequest', id: 'c1', permId: 'p4', command: long, rules: [long] });
+  const box = await page.locator('#perm-p4 .perm-remember-btn').boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= 280, `${box.x}–${box.x + box.width}`);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.deepEqual(errors, []);
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

@@ -73,7 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
             vscode.commands.registerCommand('codico.__evalPassport', () => provider.evaluationPassport()),
             vscode.commands.registerCommand('codico.__evalTurns', () => provider.evaluationTurns()),
-            vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean) => provider.evaluationApprovals(require)),
+            vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean | 'commands') => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );
     }
@@ -136,6 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('codico.newSkill', () => createUserExtension('skill')),
         vscode.commands.registerCommand('codico.newAgent', () => createUserExtension('agent')),
         vscode.commands.registerCommand('codico.newHooks', () => createHooksFile()),
+        vscode.commands.registerCommand('codico.rememberedCommands', () => provider.approvedCommands.manage()),
         vscode.commands.registerCommand('codico.openChat', () => {
             vscode.commands.executeCommand(
                 'workbench.view.extension.codico-container'

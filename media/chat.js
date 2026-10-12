@@ -2699,7 +2699,7 @@
     scrollBottom();
   }
 
-  function showTerminalPermCard(msgId, permId, command, note) {
+  function showTerminalPermCard(msgId, permId, command, note, rules) {
     // If the user already clicked "Allow All" this turn, auto-grant silently, unless
     // the extension asks again (the agent read external content this turn)
     if (_allowAllTerminal && !note) {
@@ -2735,12 +2735,13 @@
     var actions = document.createElement('div');
     actions.className = 'write-perm-actions';
 
-    function resolveCard(granted) {
+    function resolveCard(granted, remember) {
       card.innerHTML = '<div class="write-perm-resolved">' +
-        (granted ? '\u2705 Allowed: <strong>' + esc(command.slice(0, 80)) + (command.length > 80 ? '\u2026' : '') + '</strong>'
+        (granted ? '\u2705 Allowed' + (remember ? ', and from now on in this workspace' : '') + ': <strong>' + esc((remember || command).slice(0, 80)) + ((remember || command).length > 80 ? '\u2026' : '') + '</strong>'
                  : '\u274C Denied terminal command') +
         '</div>';
-      vscode.postMessage({ type: 'terminalPermissionResponse', permId: permId, granted: granted });
+      vscode.postMessage(remember ? { type: 'terminalPermissionResponse', permId: permId, granted: granted, remember: remember }
+        : { type: 'terminalPermissionResponse', permId: permId, granted: granted });
     }
 
     var denyBtn = document.createElement('button');
@@ -2767,6 +2768,25 @@
     actions.appendChild(allowAllBtn);
     actions.appendChild(denyBtn);
     card.appendChild(actions);
+    // Always allow: this command, or for a known tool the command with any arguments
+    if (rules && rules.length) {
+      var always = document.createElement('div');
+      always.className = 'write-perm-actions perm-remember';
+      var label = document.createElement('span');
+      label.className = 'perm-remember-label';
+      label.textContent = 'Always allow in this workspace:';
+      always.appendChild(label);
+      rules.forEach(function (rule) {
+        var b = document.createElement('button');
+        b.className = 'write-perm-btn perm-remember-btn';
+        b.textContent = rule.length > 48 ? rule.slice(0, 48) + '\u2026' : rule;
+        b.title = (/ \*$/.test(rule) ? 'Run "' + rule.slice(0, -2) + '" with any arguments' : 'Run exactly this command') +
+          ' without asking, in this workspace. Review the list with "Codico: Remembered Commands".';
+        b.addEventListener('click', function () { resolveCard(true, rule); });
+        always.appendChild(b);
+      });
+      card.appendChild(always);
+    }
     var copyBtn = document.getElementById('copy-' + msgId);
     if (copyBtn) { wrap.insertBefore(card, copyBtn); } else { wrap.appendChild(card); }
     scrollBottom();
@@ -3695,7 +3715,7 @@
       case 'appendContent':   appendContent(data.id, data.text); break;
       case 'endMessage':      endMsg(data.id); break;
       case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent); break;
-      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note); break;
+      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note, data.rules); break;
       case 'fileWriteResult': showFileResult(data.id, data.filepath, data.granted, data.error, data.diff); break;
       case 'toolStart':      showToolPending(data.id, data.tool, data.label); break;
       case 'toolResult':      showToolResult(data.id, data.tool, data.label, data.success, data.error, data.diff); break;
