@@ -739,6 +739,16 @@ body{
 .prop-accept:hover { opacity:.8; }
 .prop-reject { background:rgba(248,113,113,.15); color:#f87171; border-color:rgba(248,113,113,.3); }
 .prop-reject:hover { opacity:.8; }
+/* The separate changes of one proposed edit */
+.hunk-list { padding:2px 10px 8px 22px; border-bottom:1px solid var(--vscode-panel-border,#2a2a2a); display:flex; flex-direction:column; gap:6px; }
+.hunk { border:1px solid var(--vscode-panel-border,#2a2a2a); border-radius:4px; overflow:hidden; min-width:0; }
+.hunk-head { display:flex; align-items:center; gap:6px; padding:3px 6px; font-size:10.5px; background:var(--vscode-sideBarSectionHeader-background,rgba(128,128,128,.08)); }
+.hunk-where { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--vscode-descriptionForeground); }
+.hunk-body { font-family:var(--vscode-editor-font-family,monospace); font-size:11px; line-height:1.45; overflow-x:auto; max-height:180px; overflow-y:auto; }
+.hunk-line { white-space:pre; padding:0 6px; }
+.hunk-add { background:var(--vscode-diffEditor-insertedLineBackground,rgba(74,222,128,.14)); }
+.hunk-del { background:var(--vscode-diffEditor-removedLineBackground,rgba(248,113,113,.14)); }
+.hunk-more { color:var(--vscode-descriptionForeground); font-style:italic; }
 #img-preview-wrap{
   width:100%;display:flex;flex-wrap:wrap;gap:6px;
 }

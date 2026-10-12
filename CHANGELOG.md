@@ -5,6 +5,7 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Per-change review in Edits mode: a proposed edit with several separate changes lists each one under the file with its lines, and each can be accepted or rejected by itself. Accepting one writes only that change (and is its own undo step); the rest stays proposed. Until now a file's proposal could only be taken or left whole.
 - A message typed while the agent works reaches it at its next step. It used to wait until the whole reply had ended, so correcting a task meant pressing Stop. It is now given to the model together with the result of the step in progress, the reply shows where it was taken in, and the task carries on. If the task finishes first, the message is sent as a normal follow-up, as before. Commands (`/…`) and messages with attachments still wait for the reply to end.
 - Rewind: every message of yours has a ↺ button that takes the conversation back to just before it and puts back the files Codico changed since, across any number of turns. A dialog lists the files first and offers the conversation alone; a file you edited by hand since is asked about and kept unless you say otherwise; a file Codico created is deleted again. The removed message returns to the input box, and Redo reapplies the rewound changes one at a time. Not restored: what terminal commands changed, and changes made before VS Code was last restarted.
 - Search in the provider list, as in the model list: type to narrow it, Enter takes the first match, Escape closes.

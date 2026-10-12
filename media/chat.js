@@ -1196,6 +1196,8 @@
       row.appendChild(acceptBtn);
       row.appendChild(rejectBtn);
       proposalsList.appendChild(row);
+      // An edit with several separate changes: each can be taken or left by itself
+      if (p.hunks && p.hunks.length > 1) { proposalsList.appendChild(_hunkList(p)); }
     });
 
     var titleText = document.getElementById('proposals-title-text');
@@ -1203,9 +1205,66 @@
     proposalsPanel.style.display = 'flex';
   }
 
+  function _hunkList(p) {
+    var list = document.createElement('div');
+    list.className = 'hunk-list';
+    list.dataset.hunksFor = p.filepath;
+    var lines = function (parent, sign, shown, count) {
+      shown.forEach(function (text) {
+        var line = document.createElement('div');
+        line.className = 'hunk-line ' + (sign === '+' ? 'hunk-add' : 'hunk-del');
+        line.textContent = sign + ' ' + text;
+        parent.appendChild(line);
+      });
+      if (count > shown.length) {
+        var more = document.createElement('div');
+        more.className = 'hunk-line hunk-more';
+        more.textContent = '  \u2026 ' + (count - shown.length) + ' more ' + (sign === '+' ? 'added' : 'removed');
+        parent.appendChild(more);
+      }
+    };
+    p.hunks.forEach(function (h, n) {
+      var hunk = document.createElement('div');
+      hunk.className = 'hunk';
+      var head = document.createElement('div');
+      head.className = 'hunk-head';
+      var where = document.createElement('span');
+      where.className = 'hunk-where';
+      where.textContent = 'Change ' + (n + 1) + ' of ' + p.hunks.length + ' \u00B7 line ' + h.line + (h.note ? '' : ' \u00B7 ' +
+        (h.addedCount ? '+' + h.addedCount : '') + (h.addedCount && h.removedCount ? ' ' : '') + (h.removedCount ? '\u2212' + h.removedCount : ''));
+      var button = function (cls, text, title, type) {
+        var b = document.createElement('button');
+        b.className = 'prop-btn ' + cls;
+        b.textContent = text;
+        b.title = title;
+        b.addEventListener('click', function () { vscode.postMessage({ type: type, filepath: p.filepath, index: h.index }); });
+        return b;
+      };
+      head.appendChild(where);
+      head.appendChild(button('prop-accept hunk-accept', '\u2713', 'Apply this change to the file; the others stay proposed', 'acceptHunk'));
+      head.appendChild(button('prop-reject hunk-reject', '\u2717', 'Drop this change; the others stay proposed', 'rejectHunk'));
+      var body = document.createElement('div');
+      body.className = 'hunk-body';
+      if (h.note) {
+        var note = document.createElement('div');
+        note.className = 'hunk-line hunk-more';
+        note.textContent = h.note;
+        body.appendChild(note);
+      }
+      lines(body, '-', h.removed, h.removedCount);
+      lines(body, '+', h.added, h.addedCount);
+      hunk.appendChild(head);
+      hunk.appendChild(body);
+      list.appendChild(hunk);
+    });
+    return list;
+  }
+
   function _removeProposalRow(filepath) {
     var row = proposalsList.querySelector('[data-filepath="' + CSS.escape(filepath) + '"]');
     if (row) { row.remove(); }
+    var hunks = proposalsList.querySelector('[data-hunks-for="' + CSS.escape(filepath) + '"]');
+    if (hunks) { hunks.remove(); }
     var remaining = proposalsList.querySelectorAll('.proposal-item').length;
     if (remaining === 0) {
       proposalsPanel.style.display = 'none';

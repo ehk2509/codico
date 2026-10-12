@@ -544,6 +544,7 @@ Click the **✏ Edits** toggle in the header to enter Edits Mode:
 
 - The agent queues all file changes as proposals rather than writing them immediately
 - Each proposal appears as a diff card with **Accept** and **Reject** buttons
+- An edit with several separate changes lists them under the file ("Change 2 of 3 · line 14 · +1 −1" with the removed and added lines), each with its own **✓** and **✗**: accepting one writes only that change to the file and leaves the others to decide; rejecting one drops it and touches nothing. A new file is accepted or rejected whole
 - Use **Accept All** / **Reject All** for bulk operations
 - **Undo / Redo** (↩ ↪) let you reverse any accepted AI change
 
