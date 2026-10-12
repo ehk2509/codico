@@ -614,6 +614,103 @@ test('the task list of an approved plan: numbered steps with title and details, 
   assert.equal(await tracker.locator('.tt-current').textContent(), 'Persist bookmarks', 'the header names the task in progress');
 });
 
+test('the top row at any width: nothing overlaps or is pushed off; when narrow the buttons stay up and the selectors take a second row', async () => {
+  const { page } = await openPanel();
+  const parts = ['.h-title svg', '#provider-csel', '#model-csel', '#effort-csel', '#undo-btn', '#redo-btn', '#clear-btn', '#settings-btn', '#close-btn'];
+  for (const [provider, model] of [['DeepSeek', 'DeepSeek V4.1 Flash'], ['Claude Code (your login)', 'A model with a very long name that is cut short']]) {
+    await page.evaluate(([p, m]) => { document.querySelector('#provider-csel .csel-val').textContent = p; document.querySelector('#model-csel .csel-val').textContent = m; }, [provider, model]);
+    const rows = {};
+    for (const width of [700, 560, 481, 480, 380, 300, 220]) {
+      await page.setViewportSize({ width, height: 700 });
+      const boxes = await page.evaluate(sel => sel.map(s => { const b = document.querySelector(s).getBoundingClientRect(); return { s, left: b.left, right: b.right, top: b.top, bottom: b.bottom }; }), parts);
+      for (const b of boxes) { assert.ok(b.right - b.left > 10 && b.left >= 0 && b.right <= width + 0.5, `${b.s} is whole and inside a ${width}px panel: ${Math.round(b.left)}–${Math.round(b.right)}`); }
+      for (const a of boxes) { for (const b of boxes) { if (a.s < b.s) { assert.ok(a.right <= b.left + 0.5 || b.right <= a.left + 0.5 || a.bottom <= b.top + 0.5 || b.bottom <= a.top + 0.5, `${a.s} and ${b.s} overlap at ${width}px`); } } }
+      const [logo, ...rest] = boxes; const selectors = rest.slice(0, 3); const buttons = rest.slice(3);
+      // The buttons are always on the first row, with the logo, and end at the right edge
+      assert.ok(buttons.every(b => b.top < logo.bottom && b.bottom > logo.top), `the buttons are on the first row at ${width}px`);
+      assert.ok(width - buttons[4].right < 12, `the buttons end at the right edge at ${width}px`);
+      assert.ok(selectors.every(b => Math.abs(b.top - selectors[0].top) < 6), `the selectors are on one line at ${width}px`);
+      rows[width] = selectors[0].top >= logo.bottom ? 2 : 1;
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    }
+    assert.deepEqual(rows, { 700: 1, 560: 1, 481: 1, 480: 2, 380: 2, 300: 2, 220: 2 });
+  }
+});
+
+test('a dropdown longer than the panel is tall stays inside it and scrolls to its last option', async () => {
+  const { page } = await openPanel();
+  for (const [height, selector] of [[330, '#provider-csel'], [330, '#model-csel']]) {
+    await page.setViewportSize({ width: 380, height });
+    await page.locator('body').click({ position: { x: 5, y: height - 5 } });
+    await page.locator(selector + ' .csel-val').click();
+    const state = () => page.evaluate(sel => {
+      const drop = document.querySelector(sel + ' .csel-drop').getBoundingClientRect(); const list = document.querySelector(sel + ' .csel-list');
+      const options = list.querySelectorAll('.csel-opt'); const last = options[options.length - 1].getBoundingClientRect(); const box = list.getBoundingClientRect();
+      return { top: drop.top, bottom: drop.bottom, scrolls: list.scrollHeight > list.clientHeight + 1, lastInView: last.top >= box.top - 1 && last.bottom <= box.bottom + 1, count: options.length };
+    }, selector);
+    const opened = await state();
+    assert.ok(opened.top >= 0 && opened.bottom <= height, `${selector} is inside a panel ${height}px tall: ${Math.round(opened.top)}–${Math.round(opened.bottom)}`);
+    assert.ok(opened.scrolls && !opened.lastInView, `${selector} has more options (${opened.count}) than fit`);
+    // The wheel reaches the end of the list
+    await page.locator(selector + ' .csel-list').hover();
+    await page.mouse.wheel(0, 5000);
+    await page.waitForTimeout(80);
+    assert.equal((await state()).lastInView, true, `${selector}: the last option can be scrolled to`);
+    await page.locator(selector + ' .csel-opt').last().click();
+    assert.equal(await page.locator(selector).evaluate(el => el.classList.contains('open')), false);
+  }
+  // A short list in a panel with no room for it is still inside the panel
+  await page.setViewportSize({ width: 380, height: 110 });
+  await page.locator('#effort-csel .csel-val').click();
+  const effort = await page.locator('#effort-csel .csel-drop').boundingBox();
+  assert.ok(effort.y >= 0 && effort.y + effort.height <= 110, `${effort.y}–${effort.y + effort.height}`);
+});
+
+test('the provider list has a search: typing narrows it, Enter takes the first match', async () => {
+  const { page } = await openPanel();
+  await page.locator('#provider-csel .csel-val').click();
+  const search = page.locator('#provider-csel .csel-search');
+  assert.equal(await search.getAttribute('placeholder'), '🔍 Search providers…');
+  // Focus is given just after the list opens
+  await page.waitForFunction(() => document.activeElement && document.activeElement.classList.contains('csel-search'));
+  const shown = () => page.locator('#provider-csel .csel-opt:visible').allTextContents();
+  const all = (await shown()).length;
+  await search.fill('deep');
+  assert.deepEqual((await shown()).map(t => t.replace(/ · no key$/, '')), ['DeepSeek']);
+  // Group titles with nothing under them are hidden too
+  assert.equal(await page.locator('#provider-csel .csel-group:visible').count(), 1);
+  await search.fill('zzz');
+  assert.deepEqual(await shown(), []);
+  await search.fill('deep');
+  await search.press('Enter');
+  assert.equal(await page.locator('#provider-csel').getAttribute('data-value'), 'direct:deepseek');
+  assert.equal(await page.locator('#provider-csel').evaluate(el => el.classList.contains('open')), false);
+  // Opening again starts from the whole list
+  await page.locator('#provider-csel .csel-val').click();
+  assert.equal((await shown()).length, all);
+  await search.press('Escape');
+  assert.equal(await page.locator('#provider-csel').evaluate(el => el.classList.contains('open')), false);
+});
+
+test('a thread row shows its actions without the pointer on it, and keeps them whole in a narrow panel', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'threadList', threads: [{ id: 'cur', name: 'Current', updatedAt: Date.now(), preview: '', messageCount: 1, active: true },
+    { id: 'old', name: 'Plan: a thread with a long name that has to be cut short somewhere', updatedAt: Date.now() - 9e7, preview: 'use a subagent to find every place the compaction threshold is read', messageCount: 2, active: false }] });
+  await page.locator('#sessions-toggle-btn').click();
+  await page.mouse.move(5, 895);
+  const row = page.locator('.session-card', { hasText: 'Plan: a thread' });
+  assert.ok(Number(await row.locator('.session-card-actions').evaluate(el => getComputedStyle(el).opacity)) >= 0.5, 'visible without hovering');
+  for (const width of [560, 380, 300, 220]) {
+    await page.setViewportSize({ width, height: 900 });
+    const boxes = await row.evaluate(el => [el.querySelector('.session-card-name'), el.querySelector('.session-card-time'), ...el.querySelectorAll('.session-action-btn')].map(n => { const b = n.getBoundingClientRect(); return { left: b.left, right: b.right, width: b.width }; }));
+    assert.ok(boxes.length >= 4, 'the row has its action buttons');
+    for (let i = 1; i < boxes.length; i++) { assert.ok(boxes[i].left >= boxes[i - 1].right - 0.5, `nothing overlaps at ${width}px`); }
+    assert.ok(boxes[boxes.length - 1].right <= width && boxes.slice(1).every(b => b.width > 8), `the time and every button are whole and inside a ${width}px panel`);
+    assert.ok(boxes[0].width >= 40, `the name keeps some room at ${width}px: ${Math.round(boxes[0].width)}`);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  }
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {
