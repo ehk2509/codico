@@ -5,9 +5,11 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Duplicate a thread from the thread list (⧉, after rename). The copy has the same conversation, what the panel shows and what the model sees, under the name "<original> (copy)"; it opens straight away and is never pinned. The original is left untouched, the two are independent, and duplicating is refused while a reply is running. Written by Codico's own agent as a test task, then reviewed and ported.
 - After **Stop**, if commands of the task left background processes running (a dev server, a watcher), the reply ends with a note naming them and a **Stop them** button. Stop itself still leaves them running, as before; they were only visible as a chip in the status bar.
 
 ### Fixed
+- The change report counted almost every line of a long file as changed when a task edited it in two places far apart (a 2,865-line file with 26 lines added and 1 removed was reported as +2819 −2794). Line counts are now exact unless the file was rewritten almost entirely. The same correction makes such an edit two separate changes in Edits mode's per-change review, and a short diff on the approval card, where it used to be one block of the whole region.
 - Stopping a task after one of its tools had finished lost that tool's result for providers that use the text tool format (Claude Code and ChatGPT logins, Ollama): the conversation kept the call but not what it returned, so on the next message the agent did not know an edit had been applied or what a command printed. The results are now kept, as they already were with native tool calls.
 - Stop waited for web fetches, browser actions, workspace searches and diagnostics to finish or time out (up to 15 seconds for a fetch, 30 for a page load) with nothing shown meanwhile. It now ends the reply at once.
 - A message queued for the agent's next step is discarded with the turn it was queued in (when it is stopped or ends), not only when the next message is sent.

@@ -2,6 +2,8 @@
  * The separate changes ("hunks") between two versions of a file, so that a proposed
  * edit can be accepted or rejected one change at a time.
  */
+import { matchLines } from './lineMatch';
+
 const MAX_LCS_CELLS = 250_000;
 /** Lines of a change shown in the panel; the rest is counted. */
 export const HUNK_PREVIEW_LINES = 12;
@@ -18,7 +20,8 @@ export interface Hunk {
 
 function commonLines(a: string[], b: string[]): Array<[number, number]> {
     const n = a.length, m = b.length;
-    if (n * m > MAX_LCS_CELLS) { return []; } // too large to align: one change
+    // Too large for the table: still aligned when the edits are few; a near-total rewrite is one change
+    if (n * m > MAX_LCS_CELLS) { return matchLines(a, b) ?? []; }
     const dp: Uint32Array[] = Array.from({ length: n + 1 }, () => new Uint32Array(m + 1));
     for (let i = n - 1; i >= 0; i--) {
         for (let j = m - 1; j >= 0; j--) {

@@ -366,7 +366,8 @@ On first install Codico opens a short guide (provider, first task, staying in co
 ### Named Chat Threads
 Manage multiple independent conversations per project:
 
-- A **thread list** groups sessions into Pinned / Today / Yesterday / This week / Older, with a preview line, pin (📌), rename (✏) and delete (🗑) buttons, and each thread's total tokens and cost on hover
+- A **thread list** groups sessions into Pinned / Today / Yesterday / This week / Older, with a preview line, pin (📌), rename (✏), duplicate (⧉) and delete (🗑) buttons, and each thread's total tokens and cost on hover
+- **Duplicate (⧉)** copies a thread's whole conversation — as the panel shows it and as the model sees it — into a new unpinned thread named "<name> (copy)" and opens it. The original is untouched and the two are fully independent; duplicating is refused while a reply is running
 - Click **+** to create a new thread; click 🔍 to search across all threads
 - The first message in a new thread auto-names it immediately
 - Reopening a thread — or reloading the window — restores the full conversation exactly as it streamed: text, reasoning, tool steps, diffs and terminal output (about 400k characters per reply are stored; threads saved by older versions show short summaries)

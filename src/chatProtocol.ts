@@ -83,6 +83,7 @@ export type WebviewMessage =
     | { type: 'switchThread'; id: string }
     | { type: 'renameThread'; id: string; name: string }
     | { type: 'deleteThread'; id: string }
+    | { type: 'duplicateThread'; id: string }
     | { type: 'threadContextMenu'; id: string }
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }

@@ -86,6 +86,9 @@ const SCRIPTS = (port) => ({
   // Local code search: ranked results, nothing from ignored files, and the agent's own new file found at once
   cs_native: [{ toolCalls: [{ name: 'search_code', args: { query: 'compute the shipping cost for an order' } }, { name: 'search_code', args: { query: 'secret token' } }] }, 'Searched.'],
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
+  // Duplicating a thread: refused while a reply runs, then an independent copy
+  dup_slow: [tool('run_terminal', 'command: sleep 2; echo dup-slow-done'), 'Done.'],
+  dup_after: ['Said in the copy only.'],
   // Stopped after the first of two commands in one reply: what the first returned must stay in the conversation
   stop_keep: [tool('run_terminal', 'command: echo STOP-KEPT-OUTPUT > live/stop-first.txt; cat live/stop-first.txt') + '\nNow the long one.\n\n' + tool('run_terminal', 'command: sleep 25'), 'Not reached.'],
   stop_next: ['Continuing from what was done.'],

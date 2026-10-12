@@ -421,6 +421,39 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Duplicate thread: refused while a reply runs; the copy has the conversation and is independent ──
+  {
+    const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
+    const active = async () => (await vscode.commands.executeCommand('codico.__evalTurns', true))[0];
+    const turns = () => vscode.commands.executeCommand('codico.__evalTurns');
+    const original = await active();
+    const before = (await getLog()).length;
+    const task = vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:dup_slow] please do the task');
+    await waitFor(log => log.slice(before).some(e => e.scenario === 'dup_slow' && e.stream), 8000);
+    await msg({ type: 'duplicateThread', id: original });
+    const refused = await active() === original;
+    await task;
+    const turnsBefore = await turns();
+    await msg({ type: 'duplicateThread', id: original });
+    const copy = await active();
+    const sameConversation = copy !== original && JSON.stringify(await turns()) === JSON.stringify(turnsBefore);
+    // What the model sees in the copy is the original conversation plus the new message
+    const mid = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:dup_after] please do the task');
+    const slow = (await getLog()).slice(before).filter(e => e.scenario === 'dup_slow' && e.stream);
+    const after = (await getLog()).slice(mid).filter(e => e.scenario === 'dup_after' && e.stream)[0] || {};
+    const historyCopied = slow.length === 2 && Array.isArray(after.roles) && after.roles.length === slow[1].roles.length + 2;
+    const copyGrew = (await turns()).length === turnsBefore.length + 1;
+    // Back in the original: it has not gained the copy's message
+    await msg({ type: 'switchThread', id: original });
+    const independent = await active() === original && JSON.stringify(await turns()) === JSON.stringify(turnsBefore);
+    await msg({ type: 'deleteThread', id: copy });
+    const cleaned = await active() === original;
+    results.push({ name: 'duplicate_thread', ms: Date.now() - t0, requests: 0, ok: refused && sameConversation && historyCopied && copyGrew && independent && cleaned,
+      why: `refused while a reply was running: ${refused}; the copy opened with the same messages: ${sameConversation}; the model in the copy sees the original conversation: ${historyCopied}; a message in the copy stays in the copy: ${copyGrew && independent}; original active again after deleting the copy: ${cleaned}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Stop after a tool has finished: its result stays in the conversation (text-format tools) ──
   {
     const before = (await getLog()).length; const t0 = Date.now();

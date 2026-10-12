@@ -1674,6 +1674,12 @@ body.is-streaming .msg-actions,body.is-streaming .regen-btn,body.is-streaming .m
 .session-card-text{min-width:0;flex:1 1 auto}
 .session-card-preview{font-size:11px;opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-action-btn.pinned{opacity:1}
+/* Narrow panels: the row actions must stay whole, so drop the relative time
+   (the date group above the row still says when) before the row can overflow at ~220px. */
+@media (max-width:240px){
+  .session-card-time{display:none}
+  .session-action-btn{padding:2px 3px}
+}
 
 /* ── Welcome suggestions ── */
 .wlc-starters{display:flex;flex-direction:column;gap:6px;margin:14px 0 10px;width:100%;max-width:320px}
