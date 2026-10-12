@@ -346,7 +346,7 @@
         },
         "codico.subagentMaxSteps": {
           "type": "number",
-          "default": 15,
+          "default": 10,
           "minimum": 1,
           "maximum": 60,
           "description": "How many requests a subagent (started by the agent's delegate tool to look something up) may make before it must write its report"
