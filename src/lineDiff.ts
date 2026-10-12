@@ -5,6 +5,8 @@
  * on the changed middle; if that middle is too large for it, the removed and
  * added lines are shown as one block instead.
  */
+import { matchLines } from './lineMatch';
+
 const CONTEXT = 3;
 const MAX_LCS_CELLS = 250_000; // e.g. 500 × 500 changed lines
 
@@ -28,6 +30,20 @@ function lcsOps(a: string[], b: string[]): Op[] {
     return ops.reverse();
 }
 
+/** A middle too large for the table: aligned when the edits are few, else shown as one block. */
+function sparseOps(a: string[], b: string[]): Op[] {
+    const kept = matchLines(a, b);
+    if (!kept) { return [...a.map((l): Op => ['-', l]), ...b.map((l): Op => ['+', l])]; }
+    const ops: Op[] = [];
+    let i = 0, j = 0;
+    for (const [x, y] of [...kept, [a.length, b.length] as [number, number]]) {
+        while (i < x) { ops.push(['-', a[i++]]); }
+        while (j < y) { ops.push(['+', b[j++]]); }
+        if (x < a.length) { ops.push([' ', a[x]]); i++; j++; }
+    }
+    return ops;
+}
+
 export function computeLineDiff(before: string, after: string, maxOutputLines = 200): string {
     const a = before.split('\n');
     const b = after.split('\n');
@@ -43,7 +59,7 @@ export function computeLineDiff(before: string, after: string, maxOutputLines = 
 
     const middle: Op[] = midA.length * midB.length <= MAX_LCS_CELLS
         ? lcsOps(midA, midB)
-        : [...midA.map((l): Op => ['-', l]), ...midB.map((l): Op => ['+', l])];
+        : sparseOps(midA, midB);
 
     const before3 = a.slice(Math.max(0, prefix - CONTEXT), prefix).map((l): Op => [' ', l]);
     const after3 = a.slice(a.length - suffix, Math.min(a.length, a.length - suffix + CONTEXT)).map((l): Op => [' ', l]);

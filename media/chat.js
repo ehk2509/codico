@@ -3412,8 +3412,18 @@
         e.stopPropagation();
         vscode.postMessage({ type: 'pinThread', id: t.id });
       });
+
+      var dupBtn = document.createElement('button');
+      dupBtn.className = 'session-action-btn';
+      dupBtn.title = 'Duplicate thread';
+      dupBtn.textContent = '\u29C9';
+      dupBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        vscode.postMessage({ type: 'duplicateThread', id: t.id });
+      });
       actionsEl.appendChild(pinBtn);
       actionsEl.appendChild(editBtn);
+      actionsEl.appendChild(dupBtn);
       if (t.messageCount > 0) {
         var exportBtn = document.createElement('button');
         exportBtn.className = 'session-action-btn export';

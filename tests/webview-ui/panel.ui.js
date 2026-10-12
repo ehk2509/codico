@@ -726,8 +726,10 @@ test('a thread row shows its actions without the pointer on it, and keeps them w
   assert.ok(Number(await row.locator('.session-card-actions').evaluate(el => getComputedStyle(el).opacity)) >= 0.5, 'visible without hovering');
   for (const width of [560, 380, 300, 220]) {
     await page.setViewportSize({ width, height: 900 });
-    const boxes = await row.evaluate(el => [el.querySelector('.session-card-name'), el.querySelector('.session-card-time'), ...el.querySelectorAll('.session-action-btn')].map(n => { const b = n.getBoundingClientRect(); return { left: b.left, right: b.right, width: b.width }; }));
-    assert.ok(boxes.length >= 4, 'the row has its action buttons');
+    // Below 240px the relative time gives its place to the buttons (the date group above still says when)
+    const boxes = await row.evaluate(el => [el.querySelector('.session-card-name'), el.querySelector('.session-card-time'), ...el.querySelectorAll('.session-action-btn')].filter(n => getComputedStyle(n).display !== 'none').map(n => { const b = n.getBoundingClientRect(); return { left: b.left, right: b.right, width: b.width }; }));
+    assert.equal(await row.locator('.session-card-time').isVisible(), width > 240);
+    assert.ok(boxes.length >= 5, 'the row has its action buttons');
     for (let i = 1; i < boxes.length; i++) { assert.ok(boxes[i].left >= boxes[i - 1].right - 0.5, `nothing overlaps at ${width}px`); }
     assert.ok(boxes[boxes.length - 1].right <= width && boxes.slice(1).every(b => b.width > 8), `the time and every button are whole and inside a ${width}px panel`);
     assert.ok(boxes[0].width >= 40, `the name keeps some room at ${width}px: ${Math.round(boxes[0].width)}`);
@@ -839,6 +841,46 @@ test('after Stop the reply says which background processes are still running, wi
   assert.ok(box.x >= 0 && box.x + box.width <= 260);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
+});
+
+test('a thread can be duplicated from its row, and the row still fits a 220px panel', async () => {
+  const { page, send, posted } = await openPanel();
+  const now = Date.now();
+  await send({ type: 'threadList', threads: [
+    { id: 'a', name: 'A very long thread name meant to overflow a narrow panel', updatedAt: now, preview: 'add tests', messageCount: 2, pinned: true, tokens: 1000, costUsd: 0.02, active: true },
+    { id: 'b', name: 'Other', updatedAt: now - 86400000, preview: 'x', messageCount: 1, active: false },
+  ] });
+  const dupBtn = page.locator('.session-card[data-id="a"] .session-action-btn[title="Duplicate thread"]');
+  assert.equal(await dupBtn.count(), 1, 'the row has a duplicate button');
+  await page.click('#sessions-toggle-btn');
+  await dupBtn.click();
+  assert.deepEqual((await posted('duplicateThread')).pop(), { type: 'duplicateThread', id: 'a' });
+  assert.equal((await posted('switchThread')).length, 0, 'the click does not also open the row');
+
+  await page.setViewportSize({ width: 220, height: 700 });
+  await page.waitForTimeout(50);
+  const m = await page.evaluate(() => {
+    const card = document.querySelector('.session-card[data-id="a"]');
+    const list = document.getElementById('sessions-list');
+    const rects = [...card.querySelectorAll('.session-action-btn')].map(b => b.getBoundingClientRect());
+    return {
+      titles: [...card.querySelectorAll('.session-action-btn')].map(b => b.title),
+      rows: new Set(rects.map(r => Math.round(r.top))).size,
+      rightMost: Math.max(...rects.map(r => r.right)),
+      cardRight: card.getBoundingClientRect().right,
+      name: card.querySelector('.session-card-name').getBoundingClientRect().width,
+      cardOverflow: card.scrollWidth - card.clientWidth,
+      listOverflow: list.scrollWidth - list.clientWidth,
+    };
+  });
+  // Pin, rename, duplicate, export, delete: all five, duplicate after rename
+  assert.equal(m.titles.length, 5, m.titles.join(', '));
+  assert.deepEqual(m.titles.slice(0, 3), ['Unpin', 'Rename', 'Duplicate thread']);
+  assert.equal(m.rows, 1, 'the buttons stay on one row');
+  assert.ok(m.rightMost <= m.cardRight + 0.5, `the actions stay inside the card (${m.rightMost} > ${m.cardRight})`);
+  assert.ok(m.name >= 40, `the name keeps some room: ${Math.round(m.name)}px`);
+  assert.ok(m.cardOverflow <= 1, `the row overflows its card by ${m.cardOverflow}px`);
+  assert.ok(m.listOverflow <= 1, `the list scrolls sideways by ${m.listOverflow}px`);
 });
 
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {

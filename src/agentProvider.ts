@@ -54,6 +54,7 @@ import { computeLineDiff } from './lineDiff';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
 import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
+import { duplicateStoredThread } from './threadDuplication';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile, listDirectoryTool, openSettingsMenu } from './chatFiles';
 import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
@@ -569,6 +570,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await this._stopTurnAndWait();
                 await this._deleteThread(msg.id);
                 break;
+            case 'duplicateThread':
+                // Refused, not stopped: a copy of a half-finished reply would be wrong.
+                if (this._busy) { this._post({ type: 'error', message: 'Cannot duplicate a thread while a reply is running. Wait for it to finish, or stop it, first.' }); break; }
+                await this._duplicateThread(msg.id);
+                break;
             case 'threadContextMenu':
                 await this._handleThreadContextMenu(msg.id);
                 break;
@@ -728,7 +734,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Automated tests only: the change report of the last turn. */
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
 
-    public evaluationTurns(): string[] { return this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
+    public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         return buildEvaluationRunMetrics({
@@ -2812,6 +2818,19 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             await store.update(this._activeThreadIdKey, next.id);
             this._post({ type: 'threadLoaded', id: next.id, name: next.name, displayMessages: this._displayMessages });
         }
+        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+    }
+
+    /** Copies a thread into a new, unpinned, active thread; nothing happens when it is gone. */
+    private async _duplicateThread(id: string): Promise<void> {
+        if (this._editsMode) { this._editsMode = false; this._editProposals.rejectAll(); this._post({ type: 'allProposalsResolved' }); }
+        const copy = await duplicateStoredThread(this._store, {
+            index: this._threadsIndexKey, activeId: this._activeThreadIdKey,
+            history: threadId => this._threadKey(threadId), display: threadId => this._threadDisplayKey(threadId),
+        }, id, { id: this._activeThreadId, history: this._history, display: this._displayMessages }, this._newId(), Date.now());
+        if (!copy) { return; }
+        this._activeThreadId = copy.entry.id; this._history = copy.history; this._displayMessages = copy.display;
+        this._post({ type: 'threadLoaded', id: copy.entry.id, name: copy.entry.name, displayMessages: copy.display });
         this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
     }
 

@@ -3,6 +3,7 @@
  * the change works. It is assembled from what Codico observed — files written, commands run
  * and their results — never from what the model says, and costs no model request.
  */
+import { matchLines } from './lineMatch';
 
 export type CheckKind = 'test' | 'build' | 'typecheck' | 'lint';
 export type CheckOutcome = 'passed' | 'failed' | 'unknown';
@@ -108,8 +109,12 @@ export function countChangedLines(before: string, after: string): { added: numbe
     while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) { end++; }
     const midA = a.slice(start, a.length - end);
     const midB = b.slice(start, b.length - end);
-    // Too large to compare line by line: every line of the changed region counts
-    if (midA.length * midB.length > MAX_LCS_CELLS) { return { added: midB.length, removed: midA.length }; }
+    if (midA.length * midB.length > MAX_LCS_CELLS) {
+        // A large region: counted exactly as long as the edits in it are few (two changes far apart
+        // in a long file). Only a region rewritten almost entirely counts every line.
+        const kept = matchLines(midA, midB);
+        return kept ? { added: midB.length - kept.length, removed: midA.length - kept.length } : { added: midB.length, removed: midA.length };
+    }
     let previous = new Array<number>(midB.length + 1).fill(0);
     for (let i = 1; i <= midA.length; i++) {
         const row = new Array<number>(midB.length + 1).fill(0);
