@@ -1846,7 +1846,7 @@
 
   // One listener for every message: actions, regenerate, and code block toggles
   msgs.addEventListener('click', function (e) {
-    var btn = e.target && e.target.closest ? e.target.closest('.msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link, .step-summary, .code-lang-bar button') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('.msg-rewind, .msg-edit, .msg-del, .regen-btn, .code-toggle, .file-link, .step-summary, .code-lang-bar button') : null;
     if (!btn) { return; }
     // Copy / Insert / New file on a code block. Handled here, not per button: a reply that is
     // still streaming re-renders its blocks many times a second, which would drop per-button handlers.
@@ -1891,6 +1891,8 @@
     if (btn.classList.contains('regen-btn')) { vscode.postMessage({ type: 'regenerate' }); return; }
     var el = btn.closest('.msg.user');
     if (!el || !el.dataset.turn || el.dataset.turn === 'none') { return; }
+    // Rewind asks in a dialog of the editor's, where the files it puts back are listed
+    if (btn.classList.contains('msg-rewind')) { vscode.postMessage({ type: 'rewind', turnId: el.dataset.turn }); return; }
     if (btn.classList.contains('msg-edit')) { _startEditUserMsg(el); } else { _confirmDeleteUserMsg(el); }
   });
 
@@ -2014,6 +2016,7 @@
     d.innerHTML =
       '<div class="msg-label">You' + _timeHtml(meta && meta.at || Date.now()) +
         '<span class="msg-actions">' +
+          '<button class="msg-act msg-rewind" title="Rewind to here: remove this message and what followed, and put back the files Codico changed since">\u21BA</button>' +
           '<button class="msg-act msg-edit" title="Edit and resend">\u270E</button>' +
           '<button class="msg-act msg-del" title="Delete this message and everything after it">\uD83D\uDDD1</button>' +
         '</span></div>' +
@@ -3978,6 +3981,13 @@
           });
         } else {
           welcome.style.display = 'flex';
+        }
+        // After a rewind the removed message is back in the input box, to change or send again
+        if (typeof data.draftText === 'string' && data.draftText) {
+          input.value = data.draftText;
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+          input.focus();
         }
         // An edited or regenerated message is being sent again: show it, its reply follows
         if (data.pendingUserText) {

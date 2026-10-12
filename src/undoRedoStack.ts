@@ -13,7 +13,22 @@ export interface FileSnapshot {
     after: Uint8Array;
     /** Short label shown in notifications. */
     label: string;
+    /** The turn of the conversation the change was made in (stamped by the stack). */
+    turnId?: string;
 }
+
+/** One file that rewinding would put back, and whether it is still as Codico left it. */
+export interface RewindFile { filepath: string; uri: vscode.Uri; restoreTo: Uint8Array | null; expected: Uint8Array; changes: number }
+
+/** What rewinding a set of turns would do to the files. */
+export interface RewindPlan {
+    files: RewindFile[];
+    /** Some changes of these turns are no longer recorded (the record keeps the newest changes only). */
+    incomplete: boolean;
+}
+
+/** What a rewind did: the files put back, and the ones the user kept because they had changed since. */
+export interface RewindResult { restored: string[]; kept: string[] }
 
 /** Asks the user whether to overwrite a file that changed since Codico wrote it. */
 export type ConfirmOverwrite = (message: string) => Promise<boolean>;
@@ -26,14 +41,68 @@ export class UndoRedoStack {
 
     private _undo: FileSnapshot[] = [];
     private _redo: FileSnapshot[] = [];
-    private readonly _max = 50;
+    private readonly _max = 300;
     private _opInProgress = false;
+    /** The turn in progress: every change recorded from now on belongs to it. */
+    public turn: string | undefined;
+    /** Turns that lost a change to the size limit: their files cannot be fully put back. */
+    private readonly _truncatedTurns = new Set<string>();
 
     /** Record a mutation. Clears the redo stack. */
     push(snap: FileSnapshot): void {
-        this._undo.push(snap);
-        if (this._undo.length > this._max) { this._undo.shift(); }
+        this._undo.push({ ...snap, turnId: snap.turnId ?? this.turn });
+        if (this._undo.length > this._max) {
+            const dropped = this._undo.shift();
+            if (dropped?.turnId) { this._truncatedTurns.add(dropped.turnId); }
+        }
         this._redo = [];
+    }
+
+    /** The files changed during these turns, each with the content it had before the first of them. */
+    planRewind(turnIds: readonly string[]): RewindPlan {
+        const turns = new Set(turnIds);
+        const files = new Map<string, RewindFile>();
+        for (const snap of this._undo) {
+            if (!snap.turnId || !turns.has(snap.turnId)) { continue; }
+            const known = files.get(snap.uri.toString());
+            if (known) { known.expected = snap.after; known.changes++; }
+            else { files.set(snap.uri.toString(), { filepath: snap.filepath, uri: snap.uri, restoreTo: snap.before, expected: snap.after, changes: 1 }); }
+        }
+        return { files: [...files.values()], incomplete: turnIds.some(id => this._truncatedTurns.has(id)) };
+    }
+
+    /**
+     * Puts back every file changed during these turns. A file that is no longer as Codico left it
+     * is only overwritten if the user agrees. The changes put back can be reapplied with Redo.
+     */
+    async rewind(turnIds: readonly string[]): Promise<RewindResult> {
+        const result: RewindResult = { restored: [], kept: [] };
+        if (this._opInProgress) { return result; }
+        this._opInProgress = true;
+        try {
+            const turns = new Set(turnIds);
+            const keptFiles = new Set<string>();
+            for (const file of this.planRewind(turnIds).files) {
+                const current = await readCurrentBytes(file.uri);
+                // Already as it was (undone by hand, for example): nothing to write or to ask
+                if (sameBytes(current, file.restoreTo)) { result.restored.push(file.filepath); continue; }
+                if (!sameBytes(current, file.expected) &&
+                    !await this._confirm(`${file.filepath} has changed since Codico last changed it. Put back the earlier version anyway and lose those changes?`)) {
+                    result.kept.push(file.filepath);
+                    keptFiles.add(file.uri.toString());
+                    continue;
+                }
+                await this._apply(file.uri, file.restoreTo, false);
+                result.restored.push(file.filepath);
+            }
+            const undone = this._undo.filter(snap => !!snap.turnId && turns.has(snap.turnId));
+            this._undo = this._undo.filter(snap => !undone.includes(snap));
+            // Newest first, so that Redo reapplies them oldest first; a kept file's changes are not offered again
+            this._redo = undone.filter(snap => !keptFiles.has(snap.uri.toString())).reverse();
+            return result;
+        } finally {
+            this._opInProgress = false;
+        }
     }
 
     /** Undo the most recent mutation. Returns undefined if there is nothing to undo. */
@@ -93,13 +162,13 @@ export class UndoRedoStack {
         };
     }
 
-    private async _apply(uri: vscode.Uri, content: Uint8Array | null): Promise<void> {
+    private async _apply(uri: vscode.Uri, content: Uint8Array | null, reveal = true): Promise<void> {
         if (content === null) {
             // File did not exist before — delete the current version
             try { await vscode.workspace.fs.delete(uri); } catch { /* already gone */ }
         } else {
             await writeCurrentBytes(uri, content);
-            await revealFile(uri);
+            if (reveal) { await revealFile(uri); }
         }
     }
 }

@@ -19,6 +19,7 @@ import { HookRunner } from './hookRunner';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
+import { rewindFiles, turnsFrom } from './rewind';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
@@ -74,13 +75,15 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     /** Edit (and resend), delete, or regenerate a turn: the conversation is cut back to just before it. */
-    private async _redoTurn(msg: Extract<WebviewMessage, { type: 'editMessage' | 'deleteMessage' | 'regenerate' }>): Promise<void> {
+    private async _redoTurn(msg: Extract<WebviewMessage, { type: 'editMessage' | 'deleteMessage' | 'regenerate' | 'rewind' }>): Promise<void> {
         if (this._busy) { this._post({ type: 'error', message: 'Wait for the current reply to finish, or stop it, first.' }); return; }
         const turnId = msg.type === 'regenerate' ? lastTurnId(this._displayMessages) : msg.turnId;
         const cut = turnId ? cutAtTurn(this._displayMessages, this._history, turnId) : { error: 'There is no message to regenerate.' };
         if ('error' in cut) { this._post({ type: 'error', message: cut.error }); return; }
         const { turn } = cut;
         if (msg.type === 'editMessage' && turn.shownAs) { this._post({ type: 'error', message: 'This message cannot be edited.' }); return; }
+        // A rewind also puts back the files these turns changed; cancelled there, nothing is cut
+        if (msg.type === 'rewind' && !await rewindFiles(this._undoRedo, turnsFrom(this._displayMessages, msg.turnId), this._evaluationMode)) { return; }
         this._history = cut.history;
         this._displayMessages = cut.display;
         this._planAwaitingAnswer = null;
@@ -89,7 +92,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const text = msg.type === 'editMessage' ? msg.text : msg.type === 'regenerate' ? turn.plan ?? turn.text : undefined;
         const shown = text === undefined ? undefined : turn.plan !== undefined ? `\uD83D\uDCCB Plan: ${text}` : turn.shownAs ?? text;
         const name = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === this._activeThreadId)?.name ?? '';
-        this._post({ type: 'threadLoaded', id: this._activeThreadId, name, displayMessages: this._displayMessages, pendingUserText: shown });
+        this._post({ type: 'threadLoaded', id: this._activeThreadId, name, displayMessages: this._displayMessages, pendingUserText: shown, draftText: msg.type === 'rewind' && !turn.shownAs ? turn.plan ?? turn.text : undefined });
+        if (msg.type === 'rewind') { this._post({ type: 'undoRedoState', ...this._undoRedo.state }); }
         if (text === undefined) { return; }
         await (turn.plan !== undefined ? this._handlePlan(text) : this._handleUserMessage(text, turn.parts, false, false, turn.shownAs));
     }
@@ -643,6 +647,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             case 'editMessage':
             case 'deleteMessage':
+            case 'rewind':
             case 'regenerate':
                 await this._redoTurn(msg);
                 break;
@@ -744,6 +749,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Automated tests only: the change report of the last turn. */
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
 
+    public evaluationTurns(): string[] { return this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         return buildEvaluationRunMetrics({
@@ -993,6 +999,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Ties the panel message, the saved transcript and the model history together (edit, delete, regenerate)
         const turnId = _skipUserPush ? undefined : this._newId();
         if (turnId) {
+            this._undoRedo.turn = turnId;
             this._history.push({ role: 'user', content: userContent, turnId });
             // Saved as the panel showed it live (a plan goal, not the planner prompt); `prompt` keeps what was sent
             const shown = this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : shownAs ?? rawText.slice(0, 20_000);

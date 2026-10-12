@@ -367,9 +367,10 @@ Manage multiple independent conversations per project:
 
 ---
 
-### Editing, Deleting and Regenerating Messages
-Hover one of your messages:
+### Rewinding, Editing, Deleting and Regenerating Messages
+Each of your messages has its actions next to its time:
 
+- **↺ Rewind to here** — takes the conversation back to just before that message *and* puts back every file Codico changed since, over as many turns as that covers. A dialog lists the files first and also offers to rewind the conversation only. A file you have edited by hand since is asked about, and kept unless you agree; a file Codico created is deleted again. The message returns to the input box so you can change it and send it again, and **Redo** reapplies the rewound changes one at a time. Not restored: what terminal commands changed on disk, and changes from before VS Code was last restarted (the record of changes is kept in memory, for the newest 300).
 - **✎ Edit and resend** (or press `↑` in an empty input to edit your last one) — the conversation is cut back to that message and the edited text is sent. For a Plan-mode message you edit the goal.
 - **🗑 Delete** — removes the message and everything after it, after a confirmation.
 - **↻ Regenerate** on the latest reply runs its message again and replaces the reply.
