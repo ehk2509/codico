@@ -20,6 +20,7 @@ import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom } from './rewind';
+import { MAX_STEER_CHARS, addSteer, steerNote } from './steering';
 import { EditProposalManager } from './editProposalManager';
 import { runGit, fetchCommitMessage } from './commitMessageProvider';
 import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
@@ -143,6 +144,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _abortController: AbortController | null = null;
     private _followUpAbortController: AbortController | null = null;
     private _busy = false;
+    /** A message sent while the agent works: given to the model with its next request. */
+    private _steer = '';
     // Medium by default: high effort costs noticeably more reasoning tokens on every step
     private _thinkingEffort: 'high' | 'medium' | 'low' = 'medium';
     private _repoInstructions: string | null | undefined = undefined; // undefined = not yet read
@@ -404,6 +407,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             case 'killBackgroundProcesses':
                 this._killBackgroundProcesses();
+                break;
+            case 'queueMessage':
+                this._steer = this._busy && msg.text.length <= MAX_STEER_CHARS ? msg.text : '';
                 break;
             case 'abortStream':
                 this._abortController?.abort();
@@ -999,7 +1005,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Ties the panel message, the saved transcript and the model history together (edit, delete, regenerate)
         const turnId = _skipUserPush ? undefined : this._newId();
         if (turnId) {
-            this._undoRedo.turn = turnId;
+            this._undoRedo.turn = turnId; this._steer = '';
             this._history.push({ role: 'user', content: userContent, turnId });
             // Saved as the panel showed it live (a plan goal, not the planner prompt); `prompt` keeps what was sent
             const shown = this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : shownAs ?? rawText.slice(0, 20_000);
@@ -1533,6 +1539,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     if (!await this._awaitCheckpoint(msgId, i + 1, signal, taskUsage.budgetPrompt())) { break; }
                     taskUsage.extendBudget();
                 }
+                // The agent goes on to another request: a message queued meanwhile goes with it
+                if (this._steer) { addSteer(this._history, this._steer); this._post({ type: 'appendContent', id: msgId, text: steerNote(this._steer) }); this._post({ type: 'queuedDelivered' }); this._steer = ''; }
 
             }
         } catch (err: unknown) {

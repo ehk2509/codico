@@ -421,6 +421,24 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── A message sent while the agent works is delivered with its next step ──
+  {
+    const before = (await getLog()).length; const t0 = Date.now();
+    const task = vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:steer] please do the task');
+    await waitFor(log => log.slice(before).some(e => e.scenario === 'steer' && e.stream), 8000);
+    await new Promise(r => setTimeout(r, 500));
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'queueMessage', text: 'STEER-MARKER use the other file' });
+    await task;
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'steer' && e.stream);
+    const second = (reqs[1] || {}).lastUser || '';
+    // In the same request as the command's result, after it, and only once
+    const delivered = /STEER-STEP-DONE[\s\S]*\[Message from the user, sent while you were working on the task above\]\nSTEER-MARKER use the other file/.test(second);
+    const once = reqs.length === 2 && reqs.every(r => !/STEER-MARKER/.test(r.lastUser || '') || r === reqs[1]);
+    results.push({ name: 'steer', ms: Date.now() - t0, requests: reqs.length, ok: delivered && once,
+      why: `${reqs.length} requests; the message arrived with the result of the step that was running: ${delivered}; delivered once and the task was not stopped: ${once}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Rewind: the conversation and the files go back to before a message ──
   {
     const t0 = Date.now(); const run = (name) => vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`);

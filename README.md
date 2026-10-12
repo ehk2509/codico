@@ -243,7 +243,7 @@ Click the **🔍** button in the thread tab bar to search across all threads:
 - **Context meter** — next to the token count: how close the conversation is to being compacted, as a bar and a percentage of the auto-compact threshold (green, then yellow from 70%, red from 90%). With auto-compact off it shows the size of the last request instead.
 - **Code block actions** — **Insert** puts the code at the cursor of the editor in use (replacing the selection); **New file** opens it in an untitled editor in its language; **Copy** as before. They work while the reply is still being written.
 - **Export a thread** — the ⤓ button on a thread in the list saves the conversation as a Markdown file or copies it: your messages, the replies, the steps taken (folded) and each change report. Reasoning and raw terminal output are left out.
-- **Queued message** — a message sent while the agent is busy waits in a banner. **Edit** puts it back in the box to change it, × cancels it, and anything you type while it waits stays in the box after it is sent.
+- **Message while the agent works** — a message sent during a task is given to the agent at its next step, with the result of the step in progress, so you can correct or add to a task without stopping it; the reply shows where it was taken in. Until then it waits in a banner (and is sent as a normal follow-up if the task finishes first). Commands and messages with attachments wait for the reply to end. **Edit** puts it back in the box to change it, × cancels it, and anything you type while it waits stays in the box after it is sent.
 
 ### Find in a Conversation
 Press `Ctrl+F` (`Cmd+F` on macOS) in the chat, or click **⌕** in the thread bar:
@@ -492,7 +492,7 @@ The toggle under the input box switches how the next message is handled:
 - **📋 Plan** — the agent first produces a step-by-step plan, then waits: nothing is changed until you click **▶ Approve & Execute** (same as `/plan`). While planning it can only read and search, enforced like Ask mode, so it can ground the plan in your code without modifying it.
 - **🤖 Agent** — fully autonomous with all tools (default)
 
-While a response is streaming, **Send** becomes **Queue →**: your next message is sent automatically when the current response finishes.
+While a response is streaming, **Send** becomes **Queue →**: your next message is given to the agent at its next step, or sent automatically when the response finishes if there is no next step.
 
 When a request is ambiguous, the agent may ask a **clarifying question** rendered as clickable options (with optional free-text input) before it starts.
 
