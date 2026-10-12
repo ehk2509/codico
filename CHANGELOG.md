@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.3.16 - 2026-10-12
 
 ### Added
 - Remembered commands: a terminal command's approval card offers **Always allow in this workspace**, for the command as written or, for known build and test tools, with any arguments (`npm test *`, `git status *`, `pytest *`). Such a rule never covers a command that chains, pipes, redirects or substitutes, so `npm test; rm -rf ~` still asks. **Codico: Remembered Commands** shows the list and removes entries. Rules are stored per workspace outside the repository, and are set aside for a turn in which the agent read web or MCP content.
