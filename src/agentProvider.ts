@@ -1057,7 +1057,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._subagentHost = {
                 request: (history, systemPrompt, tools) => requestModel(history, undefined, systemPrompt, tools),
                 nativeTools: nativeTools.length > 0,
-                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens); this._post({ type: 'activity', text: `Subagent \u00B7 ${taskUsage.tokens.toLocaleString('en-US')} tokens this task` }); },
+                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens); this._post({ type: 'tokenUsage', subagent: true, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
             };
 
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {

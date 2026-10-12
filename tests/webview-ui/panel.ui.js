@@ -1215,3 +1215,25 @@ test('a code search shows as a step with its result count, and its fenced form i
   assert.deepEqual(errors, []);
 });
 
+test('a subagent\'s usage shows in the token display and the task total, without moving the context meter', async () => {
+  const { page, send } = await openPanel();
+  await send({ type: 'uiSettings', density: 'comfortable', showReasoning: true, compactAt: 60000 }, { type: 'startMessage', id: 'u1' },
+    { type: 'tokenUsage', promptTokens: 30000, completionTokens: 200, totalTokens: 30200, taskTokens: 30200 });
+  assert.equal(await page.locator('#s-ctx .ctx-label').textContent(), '50%');
+  // The subagent's own steps would otherwise put the status back to "Thinking…"
+  await send({ type: 'toolStart', id: 'u1', tool: 'delegate', label: 'Find it' }, { type: 'toolStart', id: 'u1', tool: 'read_file', label: 'src/a.ts' }, { type: 'toolResult', id: 'u1', tool: 'read_file', label: 'src/a.ts', success: true },
+    { type: 'tokenUsage', subagent: true, promptTokens: 4200, completionTokens: 90, totalTokens: 4290, taskTokens: 34490, cachedTokens: 2100, taskCachedTokens: 2100 });
+  const text = await page.locator('#s-tokens').textContent();
+  assert.match(text, /^subagent 4\.2k↑ 90↓ \(50% cached\) · task 34k tok/i, text);
+  assert.match(await page.locator('#s-tokens').getAttribute('title'), /^Last request \(by a subagent, in its own conversation\): 4200 prompt/);
+  assert.equal(await page.locator('#s-text').textContent(), 'Subagent working…');
+  // The main conversation is still 30,000 tokens: the meter has not moved
+  assert.equal(await page.locator('#s-ctx .ctx-label').textContent(), '50%');
+  // Back in the main agent
+  await send({ type: 'toolResult', id: 'u1', tool: 'delegate', label: 'Find it — 1 request, 1 tool call', success: true }, { type: 'appendThinking', id: 'u1', text: 'Now' });
+  assert.notEqual(await page.locator('#s-text').textContent(), 'Subagent working…');
+  await send({ type: 'tokenUsage', promptTokens: 36000, completionTokens: 300, totalTokens: 36300, taskTokens: 70790 });
+  assert.doesNotMatch(await page.locator('#s-tokens').textContent(), /subagent/);
+  assert.equal(await page.locator('#s-ctx .ctx-label').textContent(), '60%');
+});
+

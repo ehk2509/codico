@@ -7,6 +7,12 @@ All notable changes to Codico will be documented in this file.
 ### Added
 - Local code search for the agent: a `search_code` tool that ranks the whole repository for a description or identifiers and returns the best-matching definitions with file and line, the symbols they define, a few of their lines and the files that import them. It is symbol-aware (files are cut at function and class boundaries; the chunk that defines a symbol outranks those that mention it; `autoCompactThreshold` and "compact threshold" find the same code), built on your machine on first use with no API key, kept current as files change, and sized for large repositories (`codico.codeSearchMaxFiles`, default 5,000 files). Source ranks above tests and documentation unless the question asks for those; a running language server's symbols and, if you built it, the embeddings index are blended in; importers are found for JavaScript and TypeScript (relative and aliased), Python, Java, Kotlin, Rust and Go; and every open workspace folder is searched. It applies the read tool's protections: nothing from `.codicoignore`d files, from files behind a symbolic link out of the workspace, from `.env` and other credential files or private keys. Available in Ask mode and to subagents.
 
+### Fixed
+- While a subagent worked, the status bar showed no token usage: its requests were added to the task total but never sent to the display. Each subagent request now updates the token count (marked "subagent") and the task total as it happens, the status reads "Subagent working…", and the context meter keeps showing the main conversation.
+
+### Changed
+- Subagents stay closer to the question. In a recorded run a subagent had its answer after 6 tool calls and made 32 more, because the task it was handed asked for definitions, tests and related code as well. Now: the agent is told to delegate exactly what it needs and no more; a subagent is told to stop as soon as it can answer; after 12 tool calls it is reminded once that it may already have the answer; and the default limit `codico.subagentMaxSteps` is 10 requests (was 15).
+
 ## 0.3.14 - 2026-10-11
 
 ### Added
