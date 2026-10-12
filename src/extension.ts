@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
 import { createUserExtension } from './userExtensionsLoader';
+import { createHooksFile } from './hookRunner';
 import * as fs from 'fs';
 import * as path from 'path';
 import { AgentProvider } from './agentProvider';
@@ -133,6 +134,7 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('codico.gettingStarted', () => openWalkthrough()),
         vscode.commands.registerCommand('codico.newSkill', () => createUserExtension('skill')),
         vscode.commands.registerCommand('codico.newAgent', () => createUserExtension('agent')),
+        vscode.commands.registerCommand('codico.newHooks', () => createHooksFile()),
         vscode.commands.registerCommand('codico.openChat', () => {
             vscode.commands.executeCommand(
                 'workbench.view.extension.codico-container'

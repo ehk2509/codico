@@ -47,6 +47,16 @@ async function main() {
   fs.writeFileSync(path.join(ws, '.codico/skills/Bad Name/SKILL.md'), 'BAD-SKILL-MARKER\n');
   fs.writeFileSync(path.join(ws, '.codico/agents/pirate.md'), '---\ndescription: Talks like a pirate\n---\n\nAGENT-BODY-MARKER: talk like a pirate.\n');
   fs.writeFileSync(path.join(ws, 'fixtures/approve-edit.txt'), 'alpha=1\nbeta=2\n');
+  // Project hooks, each for one narrow target so no other scenario meets them
+  fs.mkdirSync(path.join(ws, 'hooked'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'hooked/locked.txt'), 'locked=1\n');
+  fs.writeFileSync(path.join(ws, 'hooked/app.cfg'), 'mode=a\n');
+  fs.writeFileSync(path.join(ws, 'hooked/check.js'), "const fs = require('node:fs'); const input = JSON.parse(fs.readFileSync(process.env.CODICO_HOOK_INPUT, 'utf8'));\nconsole.log('HOOK-AFTER ' + process.argv[2] + ' now ' + fs.readFileSync(process.argv[2], 'utf8').trim() + ' via ' + input.tool);\nprocess.exit(1);\n");
+  fs.writeFileSync(path.join(ws, '.codico/hooks.json'), JSON.stringify({ hooks: [
+    { event: 'beforeEdit', match: 'hooked/locked.txt', name: 'locked files', command: 'node -e "console.log(\'HOOK-SAYS this file is locked\'); process.exit(1)"' },
+    { event: 'afterEdit', match: 'hooked/*.cfg', name: 'config check', command: 'node hooked/check.js {file}' },
+    { event: 'beforeCommand', match: '*hook-forbidden*', command: 'node -e "process.exit(2)"' },
+  ] }));
   fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
   fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
   fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'v1\n');

@@ -1,7 +1,7 @@
 /** Files the chat panel hands to the extension: dropped onto it, or clicked as links. */
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { isIgnoredDirectoryEntry, isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
 
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -109,6 +109,32 @@ export async function exportMarkdown(markdown: string, fileName: string): Promis
         if (!target) { return; }
         await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(markdown));
         await vscode.window.showTextDocument(target);
+    }
+}
+
+/** The panel's gear button: the settings that need a prompt of their own. */
+export async function openSettingsMenu(): Promise<void> {
+    const choice = await vscode.window.showQuickPick([
+        { label: '$(key) OpenRouter API Key', detail: 'Used for all OpenRouter models (free & premium)', cmd: 'codico.setApiKey' },
+        { label: '$(key) Direct Provider API Key', detail: 'Set a key for Anthropic, OpenAI, Google, Groq, DeepSeek…', cmd: 'codico.setDirectApiKey' },
+        { label: '$(server) Ollama Base URL', detail: 'Configure local Ollama server address', cmd: 'codico.setOllamaUrl' },
+        { label: '$(git-pull-request) GitHub Token', detail: 'Used for /pr PR review context', cmd: 'codico.setGithubToken' },
+    ], { title: 'Codico Settings', placeHolder: 'Select a setting to configure' });
+    if (choice) { await vscode.commands.executeCommand(choice.cmd); }
+}
+
+/** The list_directory tool: a folder's entries, without those the ignore rules hide. */
+export async function listDirectoryTool(dirpath: string, report: (outcome: { success: boolean; error?: string }) => void): Promise<string> {
+    try {
+        const target = await resolveWorkspaceToolPath(dirpath, true);
+        const entries = (await vscode.workspace.fs.readDirectory(target.uri)).filter(([name]) => !isIgnoredDirectoryEntry(target, name));
+        const lines = entries.map(([name, type]) => type === vscode.FileType.Directory ? `[dir]  ${name}/` : `[file] ${name}`);
+        report({ success: true });
+        return `[list_directory: ${dirpath}]\n${lines.join('\n')}`;
+    } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        report({ success: false, error: message });
+        return `[list_directory: ${dirpath}] ERROR: ${message}`;
     }
 }
 

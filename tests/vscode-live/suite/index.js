@@ -421,6 +421,24 @@ async function run() {
     return { ok: !error && found, why: `a file the agent wrote a moment before is found by the next search: ${found}` };
   });
 
+  // ── Project hooks from .codico/hooks.json ──
+  await scenario('hook_refuse', ({ read, reqs, text }) => {
+    const told = /\[edit_file\] Refused by the project's beforeEdit hook "locked files": it exited with code 1, so hooked\/locked\.txt was not changed\.\nThe hook said:\nHOOK-SAYS this file is locked/.test(text);
+    const unchanged = read('hooked/locked.txt') === 'locked=1\n';
+    return { ok: told && unchanged && reqs.length === 2, why: `${reqs.length} requests; the model was told why: ${told}; the file is unchanged: ${unchanged}` };
+  });
+  await scenario('hook_after', ({ read, text }) => {
+    // The hook ran after the edit was on disk, with the file name and the call as its input
+    const reported = /Edit applied successfully[\s\S]*\[Project afterEdit hook "config check" failed \(exit 1\)\]\nHOOK-AFTER hooked\/app\.cfg now mode=b via edit_file/.test(text);
+    const applied = read('hooked/app.cfg') === 'mode=b\n';
+    return { ok: reported && applied, why: `the edit was applied: ${applied}; the hook's output follows the edit result: ${reported}` };
+  });
+  await scenario('hook_command', ({ read, text }) => {
+    const told = /\[run_terminal\] Refused by the project's beforeCommand hook "node -e [^\n]*": it exited with code 2, so the command was not run\./.test(text);
+    const notRun = read('live/hook-ran.txt') === null;
+    return { ok: told && notRun, why: `the model was told: ${told}; the command did not run: ${notRun}` };
+  });
+
   // ── Subagents: the delegate tool runs a second agent with its own conversation ──
   for (const [main, child, model, marker, sawFile] of [['sub_main', 'sub_child', 'deepseek/deepseek-v4-flash', 'SUBAGENT-FOUND', 'sawNotesFile'], ['subf_main', 'subf_child', 'ollama/fake-model', 'FENCED-SUB', 'sawConfigFile']]) {
     await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model, maxIterations: 12 });
