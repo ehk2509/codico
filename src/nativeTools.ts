@@ -171,6 +171,19 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         },
     },
     {
+        name: 'remember',
+        description: 'Save one short, durable fact about this project for later sessions (a convention, the command that runs the tests, where something non-obvious lives, a mistake to avoid). It is kept in .codico/memory.md and shown to you at the start of every session. Not for task progress, things obvious from the code, or secrets. With "replaces", correct or remove an existing note.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                note: { type: 'string', description: 'The fact, in one sentence. Leave empty together with "replaces" to remove a note.' },
+                topic: { type: 'string', description: 'Heading to file it under: Conventions, Where things live, Commands, Mistakes to avoid, or another short heading.' },
+                replaces: { type: 'string', description: 'A few words of an existing note that this one replaces (or that should be removed).' },
+            },
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'browser_navigate',
         description: 'Navigate the controlled browser to a URL.',
         inputSchema: {
@@ -561,6 +574,10 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         case 'web_search': {
             const query = stringArg(args, 'query');
             return query ? { type: 'web_search', query } : null;
+        }
+        case 'remember': {
+            const note = stringArg(args, 'note'); const topic = stringArg(args, 'topic'); const replaces = stringArg(args, 'replaces');
+            return note || replaces ? { type: 'remember', ...(note ? { note } : {}), ...(topic ? { topic } : {}), ...(replaces ? { replaces } : {}) } : null;
         }
         case 'browser_navigate': {
             const url = stringArg(args, 'url');

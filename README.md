@@ -136,6 +136,7 @@ Long agent tasks resend the conversation with every step, so Codico keeps what i
 | `get_diagnostics` | Fetch TypeScript/ESLint/etc. errors from VS Code |
 | `fetch_url` | Fetch readable text from a public HTTP(S) URL (private/loopback destinations are blocked) |
 | `web_search` | Search the web for a query; returns titles, addresses and a line of text for up to 8 results |
+| `remember` | Save, replace or remove a short note about the project in `.codico/memory.md` for later sessions |
 | `lsp_symbol` | Look up symbol definitions/references via the language server |
 | `browser_*` | Full browser automation (navigate, click, type, screenshot, get text) via Playwright |
 | `mcp_call` | Call any tool exposed by a connected MCP server |
@@ -277,6 +278,16 @@ The agent has a ranked search of the whole repository, `search_code`. It describ
 - **Same protections as reading.** Files excluded by `.codicoignore`, files behind a symbolic link that leads outside the workspace, `.env` files and private keys are never indexed or shown.
 
 This is separate from the optional embeddings index used by `@workspace` (**Codico: Index Workspace**), which sends code to an embeddings API and is limited to 600 files.
+
+### Project Memory
+Codico can keep what it learns about a project for the next session: the command that really runs the tests, a convention, where something non-obvious lives, a mistake it made and should not repeat.
+
+- **Where it is kept.** In `.codico/memory.md`, a plain Markdown file in the project: short notes under headings such as *Conventions*, *Where things live*, *Commands* and *Mistakes to avoid*. Read it, edit it, delete lines; commit it to share it with your team, or add it to `.gitignore` to keep it yours. **Codico: Open Project Memory** opens it.
+- **How notes get there.** The agent has a `remember` tool: one short fact per note, at most 400 characters and 150 notes. A note is written through the ordinary file-change path, so you see it, approve it like any edit, and can undo it. A note that turns out wrong is replaced or removed the same way.
+- **How it is used.** At the start of each message the notes are added to the agent's instructions, marked as reminders from earlier sessions that may be out of date and must be checked against the code. They do not override your instructions or Codico's safety rules.
+- **What is refused.** Anything that looks like a key, token or password; notes over the length limit; duplicates.
+- **After web content.** Once the agent has read a web page or MCP output in a turn, a note is never saved without being shown to you, even if you allowed all file changes for that task: a note is read as fact by every later session, so it must not be something a web page told the agent to write.
+- Not available in Ask or Plan mode, or to subagents. `codico.memory: false` turns it off; notes are not read in a folder VS Code has not been told to trust.
 
 ### Web Search
 The agent can look something up without being given an address: current documentation, an error message, a release note. `web_search` returns up to 8 results (title, address, a line of text); the agent then reads the one it wants with `fetch_url`.
@@ -468,6 +479,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
 | `codico.startBackgroundTask` | Start a task in its own git worktree and window |
+| `codico.openMemory` | Open the project's memory file (`.codico/memory.md`) |
 | `codico.undoRewind` | Put the files back as they were just before the last rewind |
 | `codico.clearCheckpoints` | Delete this workspace's checkpoints to free disk space |
 | `codico.setWebSearchKey` | Store or remove the Brave Search API key used by `web_search` |
@@ -805,6 +817,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
+| `codico.memory` | `boolean` | `true` | Let the agent keep notes about the project in `.codico/memory.md` and read them at the start of each session |
 | `codico.checkpoints` | `boolean` | `true` | Take a checkpoint of the workspace with each message, so rewinding restores every file and works after a restart |
 | `codico.webSearch` | `string` | `"duckduckgo"` | Search engine of the `web_search` tool: `duckduckgo`, `brave` (needs a key) or `off` |
 | `codico.backgroundTasksDirectory` | `string` | `""` | Folder for the worktrees of background tasks (empty: `~/.codico/worktrees`) |
@@ -934,6 +947,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Project memory** — notes are a file in the workspace, written only through the approved file-change path and visible in the diff; they reach the model as reminders to verify, not as instructions; text that looks like a secret is refused; after web or MCP content was read in a turn, saving a note always asks, so a page cannot plant an instruction for later sessions unseen; not loaded in an untrusted workspace
 - **Checkpoints** — snapshots are stored in Codico's own git repository outside the project and never sent anywhere; files excluded by `.gitignore` (typically secrets) are not copied into it; the snapshot commands run with hooks, signing and the user's git configuration switched off; only a commit id is accepted as a checkpoint
 - **Web search** — a search sends only its query, to the engine named in the consent dialog; the Brave key is kept in `SecretStorage`, sent in a header to Brave only and never passed on through a redirect to another host; result addresses other than `http(s)` are dropped; results are wrapped as untrusted content
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers (including IPv6 forms that embed such an IPv4 address, such as `[::ffff:127.0.0.1]`), pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop

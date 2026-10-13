@@ -896,6 +896,17 @@ test('a web search shows as a step with its result count, and its fenced form is
   assert.deepEqual(errors, []);
 });
 
+test('a note the agent saves shows as the change to the memory file, not as a block of tool text', async () => {
+  const { page, send, errors } = await openPanel();
+  await send({ type: 'startMessage', id: 'n1' }, { type: 'appendContent', id: 'n1', text: 'I will note that.\n\n```remember\nnote: Tests run with node --test.\ntopic: Commands\n```\n' },
+    { type: 'toolStart', id: 'n1', tool: 'write_file', label: '.codico/memory.md' }, { type: 'toolResult', id: 'n1', tool: 'write_file', label: '.codico/memory.md', success: true },
+    { type: 'appendContent', id: 'n1', text: 'Noted.' }, { type: 'endMessage', id: 'n1' });
+  assert.equal(await page.locator('#msg-n1 .code-wrap').count(), 0, 'the tool block is not shown as code');
+  assert.doesNotMatch(await page.locator('#msg-n1').textContent(), /topic: Commands/);
+  assert.match(await page.locator('#msg-n1 .step-pill').first().textContent(), /\.codico\/memory\.md/);
+  assert.deepEqual(errors, []);
+});
+
 test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
   const { page, posted, errors } = await openPanel();
   await page.fill('#msg-input', '/back');
