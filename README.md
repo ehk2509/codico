@@ -135,6 +135,7 @@ Long agent tasks resend the conversation with every step, so Codico keeps what i
 | `run_terminal` | Execute a shell command — output streams live in the chat |
 | `get_diagnostics` | Fetch TypeScript/ESLint/etc. errors from VS Code |
 | `fetch_url` | Fetch readable text from a public HTTP(S) URL (private/loopback destinations are blocked) |
+| `web_search` | Search the web for a query; returns titles, addresses and a line of text for up to 8 results |
 | `lsp_symbol` | Look up symbol definitions/references via the language server |
 | `browser_*` | Full browser automation (navigate, click, type, screenshot, get text) via Playwright |
 | `mcp_call` | Call any tool exposed by a connected MCP server |
@@ -276,6 +277,14 @@ The agent has a ranked search of the whole repository, `search_code`. It describ
 - **Same protections as reading.** Files excluded by `.codicoignore`, files behind a symbolic link that leads outside the workspace, `.env` files and private keys are never indexed or shown.
 
 This is separate from the optional embeddings index used by `@workspace` (**Codico: Index Workspace**), which sends code to an embeddings API and is limited to 600 files.
+
+### Web Search
+The agent can look something up without being given an address: current documentation, an error message, a release note. `web_search` returns up to 8 results (title, address, a line of text); the agent then reads the one it wants with `fetch_url`.
+
+- **Asked first.** Each search shows the query and the engine it goes to, with *Allow Once* or *Allow External Actions This Turn*, like any other request to the outside. Declined, nothing is sent.
+- **Engines** (`codico.webSearch`): **DuckDuckGo** by default, with no key; it sometimes declines automated searches, and the agent is told so instead of being given an empty result. **Brave Search** with an API key, set by **Codico: Set Web Search Key** and kept in the editor's secret storage. **off** removes the ability.
+- **Results are untrusted.** They are quoted as external data the agent must not take instructions from, and after a search terminal commands are asked about again for the rest of the turn, as after any web content.
+- Available in Ask mode; not given to subagents.
 
 ### Background Tasks
 Hand a task to Codico and keep working: the task runs in a git worktree and a branch of its own, in a second VS Code window, so it cannot disturb the files you are editing.
@@ -450,6 +459,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
 | `codico.startBackgroundTask` | Start a task in its own git worktree and window |
+| `codico.setWebSearchKey` | Store or remove the Brave Search API key used by `web_search` |
 | `codico.backgroundTasks` | List background tasks: review, merge or discard their work |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
@@ -784,6 +794,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
+| `codico.webSearch` | `string` | `"duckduckgo"` | Search engine of the `web_search` tool: `duckduckgo`, `brave` (needs a key) or `off` |
 | `codico.backgroundTasksDirectory` | `string` | `""` | Folder for the worktrees of background tasks (empty: `~/.codico/worktrees`) |
 | `codico.openTabsContext` | `boolean` | `true` | Tell the agent which other files are open in tabs (their names; contents are read only when the task needs them) |
 | `codico.globalHistory` | `boolean` | `false` | Persist threads across all workspaces |
@@ -911,6 +922,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Web search** — a search sends only its query, to the engine named in the consent dialog; the Brave key is kept in `SecretStorage`, sent in a header to Brave only and never passed on through a redirect to another host; result addresses other than `http(s)` are dropped; results are wrapped as untrusted content
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers (including IPv6 forms that embed such an IPv4 address, such as `[::ffff:127.0.0.1]`), pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
 - **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, subresource and WebSocket against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
 - **Semantic-index privacy** — cloud semantic indexing is opt-in by default; persisted indexes store vectors/metadata and hashes, not raw source text

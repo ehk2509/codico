@@ -883,6 +883,19 @@ test('a thread can be duplicated from its row, and the row still fits a 220px pa
   assert.ok(m.listOverflow <= 1, `the list scrolls sideways by ${m.listOverflow}px`);
 });
 
+test('a web search shows as a step with its result count, and its fenced form is not shown as code', async () => {
+  const { page, send, errors } = await openPanel();
+  await send({ type: 'startMessage', id: 'w1' }, { type: 'toolStart', id: 'w1', tool: 'web_search', label: 'vscode webview csp nonce' });
+  assert.match(await page.locator('#msg-w1 .step-pill').first().textContent(), /Searching the web/);
+  await send({ type: 'toolResult', id: 'w1', tool: 'web_search', label: 'vscode webview csp nonce — 8 results', success: true },
+    { type: 'appendContent', id: 'w1', text: 'Looking it up.\n\n```web_search\nquery: vscode webview csp nonce\n```\n' }, { type: 'endMessage', id: 'w1' });
+  const pill = await page.locator('#msg-w1 .step-pill').first().textContent();
+  assert.match(pill, /Searched the web/);
+  assert.match(pill, /8 results/);
+  assert.equal(await page.locator('#msg-w1 .code-wrap').count(), 0);
+  assert.deepEqual(errors, []);
+});
+
 test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
   const { page, posted, errors } = await openPanel();
   await page.fill('#msg-input', '/back');

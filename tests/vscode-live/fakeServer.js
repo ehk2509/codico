@@ -97,6 +97,9 @@ const SCRIPTS = (port) => ({
   rr_changed: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 2\nend_line: 40'), 'Read.'],
   rr_declined: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
   rr_insist: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
+  // Web search reaches its handler from both tool formats (turned off in settings here: no request leaves the test)
+  ws_fenced: [tool('web_search', 'query: codico vscode extension'), 'Could not search.'],
+  ws_native: [{ toolCalls: [{ name: 'web_search', args: { query: 'codico vscode extension' } }] }, 'Could not search.'],
   // A background task: this window is the task's own, and runs it when it opens
   bg_task: [tool('write_file', 'filepath: live/bg-result.txt\ncontent:\nwritten by the background task'), 'The background task is done.'],
   // Duplicating a thread: refused while a reply runs, then an independent copy

@@ -5,6 +5,7 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- Web search: a `web_search` tool lets the agent look something up without being given an address, and returns up to 8 results that it can then read with `fetch_url`. DuckDuckGo is used by default and needs no key; Brave Search can be chosen with a key (**Codico: Set Web Search Key**), and `codico.webSearch: off` removes the ability. Each search is asked about first and names the engine the query goes to; results are treated as untrusted content.
 - Background tasks: `/background <task>` (or **Codico: Start Background Task**) runs a task in a git worktree and branch of its own, in a second window, while you keep working. A status bar item and notifications in your window say when a task finishes, fails or needs you; **Codico: Background Tasks** lists them, shows everything a task changed as one patch, merges it into your branch (a conflicting merge is undone) or discards it. Several tasks can run at once, one window each.
 - A usage record with every reply: the task's requests one by one (prompt, completion and cached tokens, and whether a subagent made the request) and the points at which the conversation was compacted. Until now only task totals were kept, so a question like "why did this task use 3 million tokens" could not be answered from the thread. The token tooltip also shows how many requests the task has made.
 

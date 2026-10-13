@@ -487,6 +487,25 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // ── Web search: the tool is offered and dispatched in both formats; here it is turned off, so nothing leaves the machine ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    await set('webSearch', 'off');
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:ws_fenced] please do the task');
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:ws_native] please do the task');
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+    await set('webSearch', undefined);
+    const fenced = (await getLog()).slice(before).filter(e => e.scenario === 'ws_fenced' && e.stream);
+    const native = (await getLog()).slice(before).filter(e => e.scenario === 'ws_native' && e.stream);
+    const off = /\[web_search: codico vscode extension\] ERROR: Web search is turned off \(the codico\.webSearch setting\)/;
+    const viaText = off.test((fenced[1] || {}).lastUser || '');
+    const viaNative = (native[0] || {}).toolNames.includes('web_search') && off.test(((native[1] || {}).toolResults || []).join('\n'));
+    results.push({ name: 'web_search', ms: Date.now() - t0, requests: fenced.length + native.length, ok: viaText && viaNative,
+      why: `the text format reaches the search tool: ${viaText}; the native tool is offered to the model and reaches it too: ${viaNative}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Background task: a window opened for a task runs it and reports its state through the shared registry ──
   {
     const t0 = Date.now(); const before = (await getLog()).length; const now = Date.now();

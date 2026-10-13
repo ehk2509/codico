@@ -1,3 +1,4 @@
+import { WEB_SEARCH_KEY } from './externalToolRuntime';
 import { BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
 import { BackgroundTaskManager } from './backgroundTaskManager';
@@ -156,6 +157,12 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('codico.newHooks', () => createHooksFile()),
         vscode.commands.registerCommand('codico.rememberedCommands', () => provider.approvedCommands.manage()),
         backgroundTasks,
+        vscode.commands.registerCommand('codico.setWebSearchKey', async () => {
+            const key = await vscode.window.showInputBox({ title: 'Brave Search API key', prompt: 'Used by the agent\'s web_search tool when codico.webSearch is "brave". Leave empty to remove the stored key.', password: true, ignoreFocusOut: true });
+            if (key === undefined) { return; }
+            if (key.trim()) { await context.secrets.store(WEB_SEARCH_KEY, key.trim()); } else { await context.secrets.delete(WEB_SEARCH_KEY); }
+            void vscode.window.showInformationMessage(key.trim() ? 'Codico: web search key saved.' : 'Codico: web search key removed.');
+        }),
         vscode.commands.registerCommand('codico.backgroundTasks', () => backgroundTasks.manage()),
         vscode.commands.registerCommand('codico.startBackgroundTask', (text?: string) => backgroundTasks.start(typeof text === 'string' ? text : undefined)),
         vscode.commands.registerCommand('codico.openChat', () => {
