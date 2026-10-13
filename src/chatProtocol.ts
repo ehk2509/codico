@@ -90,6 +90,7 @@ export type WebviewMessage =
     | { type: 'duplicateThread'; id: string }
     /** `/background <task>`: run the task in a worktree and a window of its own. */
     | { type: 'startBackgroundTask'; text: string }
+    | { type: 'openBackgroundTasks' }
     | { type: 'threadContextMenu'; id: string }
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }
@@ -159,6 +160,8 @@ export type ExtensionMessage =
     | { type: 'allProposalsResolved' }
     /** The queued message was given to the model mid-task: the panel no longer holds it. */
     | { type: 'queuedDelivered' }
+    /** Background tasks started from this window, for the panel's status row; empty text when there are none. */
+    | { type: 'backgroundTasks'; text: string; needsUser: boolean }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
     | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** After a rewind: the removed message, put back in the input box. */ draftText?: string; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }

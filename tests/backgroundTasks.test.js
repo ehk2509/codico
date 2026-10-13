@@ -61,6 +61,17 @@ test('status: a task whose window stopped reporting is shown as stopped, not as 
   assert.equal(activeSummary([task({ status: 'finished' })], now), '');
 });
 
+test('a task whose window has not taken it up says what it is waiting for', () => {
+  const { waitingForItsWindow, statusIcon, TRUST_WAIT_MS } = require('../out/backgroundTasks.js');
+  const now = 1_000_000;
+  const fresh = task({ status: 'starting', createdAt: now - 5000 });
+  const stuck = task({ status: 'starting', createdAt: now - TRUST_WAIT_MS - 1 });
+  assert.deepEqual([waitingForItsWindow(fresh, now), statusLabel(fresh, now)], [false, 'starting']);
+  assert.deepEqual([waitingForItsWindow(stuck, now), statusLabel(stuck, now), statusIcon(stuck, now)], [true, 'waiting for you: trust its folder in its window', '$(bell-dot)']);
+  assert.equal(activeSummary([stuck, task({ status: 'running', heartbeat: now })], now), '1 running, 1 needs you');
+  assert.equal(waitingForItsWindow(task({ status: 'running', createdAt: 0 }), now), false, 'only a task that never started');
+});
+
 test('the starting window is told when a task finishes, needs the user or fails, once', () => {
   const before = task({ status: 'running' });
   assert.equal(announcement(before, task({ status: 'finished' })), 'Codico finished a background task: "Add an archive button"');

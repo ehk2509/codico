@@ -581,6 +581,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'startBackgroundTask':
                 this.onBackgroundRequest?.(msg.text);
                 break;
+            case 'openBackgroundTasks':
+                void vscode.commands.executeCommand('codico.backgroundTasks');
+                break;
             case 'duplicateThread':
                 // Refused, not stopped: a copy of a half-finished reply would be wrong.
                 if (this._busy) { this._post({ type: 'error', message: 'Cannot duplicate a thread while a reply is running. Wait for it to finish, or stop it, first.' }); break; }
@@ -752,6 +755,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Declines whatever is waiting for an approval (a run with nobody to ask). */
     public denyPrompts(): void { this._cancelTurnPrompts(); }
     public onBackgroundRequest?: (text: string) => void;
+    public showBackgroundTasks(text: string, needsUser: boolean): void { this._post({ type: 'backgroundTasks', text, needsUser }); }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }

@@ -42,6 +42,13 @@ export const HEARTBEAT_MS = 10_000;
 /** A running task with no heartbeat for this long has lost its window. */
 export const STALE_AFTER_MS = 45_000;
 export const BRANCH_PREFIX = 'codico/';
+/** A task still not started after this long is waiting for its window: almost always for the folder to be trusted there. */
+export const TRUST_WAIT_MS = 20_000;
+
+/** True when the task's window has opened but has not taken the task up. */
+export function waitingForItsWindow(task: BackgroundTask, now: number): boolean {
+    return task.status === 'starting' && now - task.createdAt > TRUST_WAIT_MS;
+}
 
 /** A short name for the branch and the folder, from the first words of the task. */
 export function taskSlug(prompt: string): string {
@@ -69,7 +76,7 @@ export function lostItsWindow(task: BackgroundTask, now: number): boolean {
 export function statusLabel(task: BackgroundTask, now: number): string {
     if (lostItsWindow(task, now)) { return 'stopped (its window was closed)'; }
     switch (task.status) {
-        case 'starting': return 'starting';
+        case 'starting': return waitingForItsWindow(task, now) ? 'waiting for you: trust its folder in its window' : 'starting';
         case 'running': return 'running';
         case 'waiting': return 'needs you';
         case 'finished': return 'finished';
@@ -79,6 +86,7 @@ export function statusLabel(task: BackgroundTask, now: number): string {
 
 export function statusIcon(task: BackgroundTask, now: number): string {
     if (lostItsWindow(task, now)) { return '$(debug-disconnect)'; }
+    if (waitingForItsWindow(task, now)) { return '$(bell-dot)'; }
     return { starting: '$(loading~spin)', running: '$(sync~spin)', waiting: '$(bell-dot)', finished: '$(check)', failed: '$(error)' }[task.status];
 }
 
@@ -89,7 +97,7 @@ export function isActive(task: BackgroundTask, now: number): boolean {
 /** "3 running, 1 needs you" for the status bar; empty when nothing is active. */
 export function activeSummary(tasks: readonly BackgroundTask[], now: number): string {
     const active = tasks.filter(task => isActive(task, now));
-    const waiting = active.filter(task => task.status === 'waiting').length;
+    const waiting = active.filter(task => task.status === 'waiting' || waitingForItsWindow(task, now)).length;
     const running = active.length - waiting;
     return [running ? `${running} running` : '', waiting ? `${waiting} ${waiting === 1 ? 'needs' : 'need'} you` : ''].filter(Boolean).join(', ');
 }

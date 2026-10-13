@@ -2,6 +2,12 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Background tasks were only shown in VS Code's status bar at the bottom of the window, where they were easy to miss. The Codico panel now shows them too, next to its own status, and a click opens the list.
+- A background task whose window was waiting for VS Code's "do you trust this folder" question stayed at "starting" with no explanation. It is now shown as waiting for you, and a notification says where to answer.
+
 ## 0.4.0 - 2026-10-13
 
 ### Added

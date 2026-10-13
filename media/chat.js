@@ -309,6 +309,9 @@
     bgBtn.disabled = true;
     vscode.postMessage({ type: 'killBackgroundProcesses' });
   });
+  // Background tasks (each in a window of its own): how many, and whether one is waiting for the user
+  var bgTasksBtn = document.getElementById('bg-tasks-btn');
+  bgTasksBtn.addEventListener('click', function() { vscode.postMessage({ type: 'openBackgroundTasks' }); });
   /** Pending follow-up: { rawInput, attachments } — sent automatically when stream ends. */
   var _queuedMsg = null;
   var _queuedBarEl = null;
@@ -3918,6 +3921,11 @@
         }
         break;
       }
+      case 'backgroundTasks':
+        bgTasksBtn.style.display = data.text ? 'inline-block' : 'none';
+        bgTasksBtn.textContent = '\u29C9 ' + data.text;
+        bgTasksBtn.classList.toggle('needs-user', !!data.needsUser);
+        break;
       case 'queuedDelivered':
         // The agent has it: nothing is left to send when the reply ends
         _queuedMsg = null;
