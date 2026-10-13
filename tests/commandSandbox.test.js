@@ -41,7 +41,8 @@ test('the rules: the workspace and caches are writable, credential folders are h
   assert.deepEqual([sandboxToolFor('linux'), sandboxToolFor('darwin'), sandboxToolFor('win32')], ['bubblewrap', 'seatbelt', undefined]);
 });
 
-test('the wrapper commands say what the rules say, and the command is one argument that no shell re-reads', () => {
+// The wrappers exist for Linux and macOS only, and are written in their path syntax
+test('the wrapper commands say what the rules say, and the command is one argument that no shell re-reads', { skip: process.platform === 'win32' }, () => {
   const policy = policyFor({ network: false });
   const hostile = 'echo "a b"; rm -rf ~ # $(id) `id`';
   const args = bubblewrapArgs(policy, '/bin/sh', hostile);
