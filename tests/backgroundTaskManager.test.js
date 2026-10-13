@@ -6,7 +6,8 @@ const path = require('node:path');
 const cp = require('node:child_process');
 const Module = require('node:module');
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-bgm-')));
+// The long, real spelling of the folder, which is what git and the editor report
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-bgm-')));
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 const sh = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -44,7 +45,7 @@ let n = 0; const managers = [];
 test.after(() => managers.forEach(m => m.dispose()));
 function setup() {
   const repo = path.join(root, 'repo' + (++n)); fs.mkdirSync(repo);
-  sh(repo, 'init', '-q', '-b', 'main'); sh(repo, 'config', 'user.email', 't@example.com'); sh(repo, 'config', 'user.name', 'T');
+  sh(repo, 'init', '-q', '-b', 'main'); sh(repo, 'config', 'core.autocrlf', 'false'); sh(repo, 'config', 'user.email', 't@example.com'); sh(repo, 'config', 'user.name', 'T');
   fs.writeFileSync(path.join(repo, 'app.js'), 'module.exports = 1;\n'); sh(repo, 'add', '-A'); sh(repo, 'commit', '-q', '-m', 'first');
   Object.assign(ui, { folder: repo, trusted: true, answers: [], asked: [], opened: [], documents: [], notices: [] });
   const store = new BackgroundTaskStore(path.join(root, 'store' + n));
@@ -63,7 +64,7 @@ test('starting a task: asks what it may do, makes its branch and folder, records
   assert.match(ui.asked[1].items[1].detail, /Commands are not confined to the worktree/);
   assert.equal(task.branch.startsWith('codico/add-a-health-check-endpoint-'), true);
   assert.equal(task.worktree, path.join(root, 'worktrees', path.basename(repo), path.basename(task.worktree)));
-  assert.deepEqual([task.status, task.permissions, task.baseBranch, task.repoRoot], ['starting', 'edits', 'main', repo]);
+  assert.deepEqual([task.status, task.permissions, task.baseBranch, fs.realpathSync.native(task.repoRoot)], ['starting', 'edits', 'main', repo]);
   assert.equal(fs.existsSync(path.join(task.worktree, 'app.js')), true);
   assert.deepEqual((await store.all()).map(t => t.id), [task.id]);
   assert.deepEqual(ui.opened, [{ command: 'vscode.openFolder', folder: task.worktree, options: { forceNewWindow: true } }]);
@@ -171,7 +172,8 @@ test('the list shows each task of this repository with its state; changes are an
   await store.update(task.id, { status: 'finished', tokens: 12345, requests: 9 });
   ui.asked = []; ui.notices = []; ui.answers = ['Review Changes'];
   await manager.refresh();
-  await new Promise(r => setTimeout(r, 150));
+  // The review it chose runs git: wait for its outcome, not for a fixed time
+  for (let i = 0; i < 100 && !ui.notices.some(n => /has not changed any file/.test(n)); i++) { await new Promise(r => setTimeout(r, 50)); }
   assert.deepEqual(ui.asked[0].buttons, ['Review Changes', 'Open Its Window']);
   assert.match(ui.notices.join('\n'), /Codico finished a background task: "Write the docs"[\s\S]*has not changed any file/);
   ui.asked = []; ui.answers = [({ items }) => items[1], choose('open')];

@@ -18,14 +18,15 @@ const { BackgroundTaskStore } = require('../out/backgroundTaskStore.js');
 const { repositoryRoot, createWorktree, uncommittedCount, taskChanges, commitTaskWork, mergeTask, removeWorktree } = require('../out/backgroundGit.js');
 const { runTaskOfThisWindow, taskOfThisWindow, statusFromMessage } = require('../out/backgroundTaskRunner.js');
 
-const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-bg-')));
+// The long, real spelling of the folder, which is what git and the editor report
+const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'codico-bg-')));
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 const sh = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 let n = 0;
 function repository(files = { 'README.md': '# Project\n', 'src/app.js': 'module.exports = 1;\n' }) {
   const dir = path.join(root, 'repo' + (++n));
   fs.mkdirSync(dir);
-  sh(dir, 'init', '-q', '-b', 'main');
+  sh(dir, 'init', '-q', '-b', 'main'); sh(dir, 'config', 'core.autocrlf', 'false');
   sh(dir, 'config', 'user.email', 't@example.com'); sh(dir, 'config', 'user.name', 'T');
   for (const [name, text] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true }); fs.writeFileSync(path.join(dir, name), text); }
   sh(dir, 'add', '-A'); sh(dir, 'commit', '-q', '-m', 'first');
@@ -100,7 +101,8 @@ test('the registry is shared through files: saved whole, updated in place, gone 
 
 test('git: a task works on its own branch in its own folder, from the last commit', async () => {
   const repo = repository();
-  assert.equal(await repositoryRoot(path.join(repo, 'src')), repo);
+  assert.equal(fs.realpathSync.native(await repositoryRoot(path.join(repo, 'src'))), repo);
+  assert.equal(await repositoryRoot(path.join(repo, 'src')), path.normalize(await repositoryRoot(repo)), 'in the form the system uses');
   assert.equal(await repositoryRoot(root), undefined);
   fs.writeFileSync(path.join(repo, 'src/app.js'), 'module.exports = 2; // not committed\n');
   fs.writeFileSync(path.join(repo, 'notes.txt'), 'untracked');

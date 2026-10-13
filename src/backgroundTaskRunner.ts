@@ -13,7 +13,12 @@ export interface BackgroundAgent {
     lastReplyUsage(): { tokens?: number; requests?: unknown[] } | undefined;
 }
 
-const realPath = (folder: string) => { try { return fs.realpathSync(folder); } catch { return folder; } };
+/** One spelling per folder: links and short names resolved, and no difference of case where the system has none. */
+const realPath = (folder: string) => {
+    let real = folder;
+    try { real = fs.realpathSync.native(folder); } catch { /* not there (yet): compare as written */ }
+    return process.platform === 'win32' ? real.toLowerCase() : real;
+};
 
 /** The task this window was opened for, if its folder is a task's worktree. */
 export async function taskOfThisWindow(store: BackgroundTaskStore, folder: string | undefined): Promise<BackgroundTask | undefined> {

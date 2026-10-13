@@ -21,7 +21,9 @@ const gitReason = (text: string) => text.split('\n').map(line => line.trim()).fi
 /** The top folder of the repository that holds `folder`, or undefined when it is not in one. */
 export async function repositoryRoot(folder: string): Promise<string | undefined> {
     const result = await git(folder, ['rev-parse', '--show-toplevel']);
-    return result.ok ? firstLine(result.stdout) || undefined : undefined;
+    // git answers with forward slashes on every system: use the system's own form, as the editor does
+    const top = result.ok ? firstLine(result.stdout) : '';
+    return top ? path.normalize(top) : undefined;
 }
 
 export interface NewWorktree { baseCommit: string; baseBranch?: string }
