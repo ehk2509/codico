@@ -2,7 +2,26 @@
  * Token and cost accounting for one agent task (all steps of one user message),
  * plus the optional per-task token budget that pauses the agent for confirmation.
  */
+/** One request of a task: prompt tokens, completion tokens, prompt tokens served from cache, and who made it. */
+export type RequestRecord = [prompt: number, completion: number, cached: number, by: 'main' | 'subagent'];
+
+/** What a task cost, request by request, kept with the reply so it can be examined afterwards. */
+export interface TaskUsageRecord {
+    requests: RequestRecord[];
+    /** How many requests had been made when each compaction of the conversation happened. */
+    compactions: number[];
+    tokens: number;
+    cachedTokens: number;
+    costUsd?: number;
+}
+
+/** Requests kept per task; a longer task keeps its totals and its first requests. */
+export const MAX_RECORDED_REQUESTS = 500;
+
 export class TaskUsage {
+    private _requests: RequestRecord[] = [];
+    private _requestCount = 0;
+    private _compactions: number[] = [];
     private _tokens = 0;
     private _cachedTokens = 0;
     private _costUsd: number | undefined;
@@ -20,7 +39,21 @@ export class TaskUsage {
     /** Provider-reported cost in USD, or undefined when the provider reports none. */
     get costUsd(): number | undefined { return this._costUsd; }
 
-    add(totalTokens: number, costUsd?: number, cachedTokens = 0): void {
+    /** Requests made so far, by the agent and its subagents. */
+    get requests(): number { return this._requestCount; }
+
+    /** The conversation was compacted at this point of the task: what was read before is gone from it. */
+    markCompaction(): void { this._compactions.push(this._requestCount); }
+
+    /** The task request by request, or undefined when it made none. */
+    record(): TaskUsageRecord | undefined {
+        if (this._requestCount === 0) { return undefined; }
+        return { requests: this._requests, compactions: this._compactions, tokens: this._tokens, cachedTokens: this._cachedTokens, ...(this._costUsd !== undefined ? { costUsd: this._costUsd } : {}) };
+    }
+
+    add(totalTokens: number, costUsd?: number, cachedTokens = 0, promptTokens = 0, completionTokens = 0, by: 'main' | 'subagent' = 'main'): void {
+        this._requestCount++;
+        if (this._requests.length < MAX_RECORDED_REQUESTS) { this._requests.push([Math.max(0, promptTokens), Math.max(0, completionTokens), Math.max(0, cachedTokens), by]); }
         this._tokens += Math.max(0, totalTokens);
         this._cachedTokens += Math.max(0, cachedTokens);
         if (costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0) {

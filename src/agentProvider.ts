@@ -736,6 +736,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Automated tests only: the change report of the last turn. */
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
 
+    public evaluationUsage(): unknown { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
@@ -1047,7 +1048,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._subagentHost = {
                 request: (history, systemPrompt, tools) => requestModel(history, undefined, systemPrompt, tools),
                 nativeTools: nativeTools.length > 0,
-                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens); this._post({ type: 'tokenUsage', subagent: true, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
+                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens, usage.promptTokens, usage.completionTokens, 'subagent'); this._post({ type: 'tokenUsage', subagent: true, taskRequests: taskUsage.requests, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
             };
 
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
@@ -1307,8 +1308,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                         this._evalPromptTokens += chunk.promptTokens;
                         this._evalCompletionTokens += chunk.completionTokens;
                         if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
-                        taskUsage.add(chunk.totalTokens, chunk.costUsd, chunk.cachedTokens);
-                        this._post({ type: 'tokenUsage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens, taskCachedTokens: taskUsage.cachedTokens });
+                        taskUsage.add(chunk.totalTokens, chunk.costUsd, chunk.cachedTokens, chunk.promptTokens, chunk.completionTokens);
+                        this._post({ type: 'tokenUsage', taskRequests: taskUsage.requests, promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens, taskCachedTokens: taskUsage.cachedTokens });
                     } else if (chunk.type === 'finish') {
                         const reason = normalizeFinishReason(chunk.reason);
                         if (reason === 'length') {
@@ -1507,7 +1508,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // streaming state and continues as soon as compaction finishes.
                 const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 60_000);
                 if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid && this._history.length >= this._compactRetryAt) {
+                    const sizeBefore = this._history.length;
                     await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
+                    if (this._history.length < sizeBefore) { taskUsage.markCompaction(); }
                     currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
                 }
 
@@ -1596,7 +1599,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
         }
         if (summaryText || (recording && recording.events.length > 0)) {
-            this._displayMessages.push({ role: 'assistant', text: summaryText, events: recording?.events, at: Date.now() });
+            this._displayMessages.push({ role: 'assistant', text: summaryText, events: recording?.events, at: Date.now(), usage: taskUsage.record() });
         }
 
         // In edits mode: surface queued proposals for review

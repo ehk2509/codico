@@ -1585,7 +1585,8 @@ test('a code search shows as a step with its result count, and its fenced form i
 test('a subagent\'s usage shows in the token display and the task total, without moving the context meter', async () => {
   const { page, send } = await openPanel();
   await send({ type: 'uiSettings', density: 'comfortable', showReasoning: true, compactAt: 60000 }, { type: 'startMessage', id: 'u1' },
-    { type: 'tokenUsage', promptTokens: 30000, completionTokens: 200, totalTokens: 30200, taskTokens: 30200 });
+    { type: 'tokenUsage', promptTokens: 30000, completionTokens: 200, totalTokens: 30200, taskTokens: 30200, taskRequests: 1 });
+  assert.match(await page.locator('#s-tokens').getAttribute('title'), /This task: 30200 tokens in 1 request$/m);
   assert.equal(await page.locator('#s-ctx .ctx-label').textContent(), '50%');
   // The subagent's own steps would otherwise put the status back to "Thinking…"
   await send({ type: 'toolStart', id: 'u1', tool: 'delegate', label: 'Find it' }, { type: 'toolStart', id: 'u1', tool: 'read_file', label: 'src/a.ts' }, { type: 'toolResult', id: 'u1', tool: 'read_file', label: 'src/a.ts', success: true },

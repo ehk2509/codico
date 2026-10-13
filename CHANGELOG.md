@@ -2,6 +2,14 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- A usage record with every reply: the task's requests one by one (prompt, completion and cached tokens, and whether a subagent made the request) and the points at which the conversation was compacted. Until now only task totals were kept, so a question like "why did this task use 3 million tokens" could not be answered from the thread. The token tooltip also shows how many requests the task has made.
+
+### Changed
+- File reads that are still current are no longer trimmed from the conversation. Codico replaced any tool result over 6,000 characters with a "compacted, re-run the tool if needed" note once six newer large results existed. For a file read that mostly produced another read of the same lines, a full request to save part of one. A read is now kept while its file has not been edited since and no later read holds the same lines, up to 120,000 characters of such reads in total; a read made stale by an edit, or repeated by a later read, is trimmed as before.
+
 ## 0.3.17 - 2026-10-13
 
 ### Security

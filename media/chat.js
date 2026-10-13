@@ -3822,7 +3822,7 @@
           sTokens.title = (data.subagent ? 'Last request (by a subagent, in its own conversation): ' : 'Last request: ') + data.promptTokens + ' prompt' +
             (data.cachedTokens ? ' (' + data.cachedTokens + ' from cache)' : '') +
             ' + ' + data.completionTokens + ' completion tokens' +
-            (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' : '') +
+            (data.taskTokens ? '\nThis task: ' + data.taskTokens + ' tokens' + (data.taskRequests ? ' in ' + data.taskRequests + (data.taskRequests === 1 ? ' request' : ' requests') : '') : '') +
             (typeof data.taskCostUsd === 'number' ? ' (provider-reported cost $' + data.taskCostUsd.toFixed(4) + ')' : '');
         }
         break;

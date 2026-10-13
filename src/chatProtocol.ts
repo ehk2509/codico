@@ -35,6 +35,8 @@ export interface DisplayMessage {
     plan?: string;
     /** User messages: the text actually sent, when it differs from what is shown. */
     prompt?: string;
+    /** Replies: what the task cost, request by request, and when the conversation was compacted. */
+    usage?: import('./taskUsage').TaskUsageRecord;
 }
 
 /** Events replayed to rebuild a reply when a thread is reopened. Interactive ones are excluded. */
@@ -127,7 +129,7 @@ export type ExtensionMessage =
     | { type: 'fileWriteResult'; id: string; filepath: string; granted: boolean; error?: string; diff?: string }
     | { type: 'toolStart'; id: string; tool: string; label: string }
     | { type: 'toolResult'; id: string; tool: string; label: string; success: boolean; error?: string; diff?: string }
-    | { type: 'tokenUsage'; /** The request was a subagent's: its size says nothing about the main conversation. */ subagent?: boolean; promptTokens: number; completionTokens: number; totalTokens: number; /** Tokens used by the current task so far. */ taskTokens?: number; /** Provider-reported cost of the task so far (USD), when known. */ taskCostUsd?: number; /** Prompt tokens of the last request served from the provider's cache. */ cachedTokens?: number; /** Cached prompt tokens of the task so far. */ taskCachedTokens?: number }
+    | { type: 'tokenUsage'; /** The request was a subagent's: its size says nothing about the main conversation. */ subagent?: boolean; promptTokens: number; completionTokens: number; totalTokens: number; /** Tokens used by the current task so far. */ taskTokens?: number; /** Requests the task has made so far. */ taskRequests?: number; /** Provider-reported cost of the task so far (USD), when known. */ taskCostUsd?: number; /** Prompt tokens of the last request served from the provider's cache. */ cachedTokens?: number; /** Cached prompt tokens of the task so far. */ taskCachedTokens?: number }
     | { type: 'streamFinishReason'; id: string; reason: string }
     | { type: 'streamError'; id: string; message: string }
     | { type: 'contextSnippet'; kind: string; label: string; text: string }
