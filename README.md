@@ -356,6 +356,39 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Running Without the Editor (`codico` command)
+Codico can run one task from a terminal, a script, CI or a schedule. The `codico` command starts VS Code for the task, prints what the agent does, and exits with a code that says how it went.
+
+```bash
+node ~/.vscode/extensions/codico.codico-<version>/bin/codico.js run "Update the changelog for the last three commits" --allow-edits
+```
+
+**Codico: Copy Command-Line Command** copies that path for your installed version. VS Code must be installed (`code` on the `PATH`, or `--vscode <path>`); on Linux without a display, run it under `xvfb-run`.
+
+With nobody to approve anything, what the task may do is decided on the command line, and whatever is not allowed is declined:
+
+| Option | Allows |
+|---|---|
+| *(none)* | reading and searching the folder |
+| `--allow-edits` | creating and changing files in the folder |
+| `--allow-commands` | terminal commands (and edits) |
+| `--allow-web` | fetching pages and web search |
+| `--allow-hooks` | the project's hooks in `.codico/hooks.json` |
+
+Other options: `--cwd <dir>`, `--model <id>`, `--max-steps <n>`, `--timeout <seconds>` (default 1800), `--json` (one JSON object per line: text, steps, results, what was declined, the end). The agent's reply goes to standard output; steps and the summary go to standard error.
+
+| Exit code | Meaning |
+|---|---|
+| `0` | the task finished |
+| `1` | the run failed (no model answer, VS Code did not start, timeout) |
+| `2` | the agent asked a question it needs answered |
+| `3` | finished, but something it wanted to do was not allowed |
+
+- **Keys** come from the environment: `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `CEREBRAS_API_KEY`.
+- **A run is isolated from your editor.** It uses a profile of its own, created for the run and removed afterwards: your settings, extensions, threads and stored keys are not used, and the folder is treated as trusted because you pointed the command at it.
+- **A VS Code unpacked from an archive** (CI caches, portable installs) cannot use Chromium's process sandbox; the command notices, says so, and starts it with `--no-sandbox`. Extra arguments for VS Code can be given in `CODICO_VSCODE_ARGS`.
+- **Unattended commands are not confined** unless you also turn on the command sandbox for that machine. In CI, a throwaway runner is the usual boundary.
+
 ### Pull Requests
 - **Open one.** **Codico: Create Pull Request** publishes the branch checked out in your window; in **Codico: Background Tasks**, *Open a pull request* does the same for a task's branch (after committing what the task left uncommitted). A confirmation shows the repository, the branches, the title and the changed files first, with **Create Draft** and **Create Pull Request**; only then is the branch pushed to `origin` and the pull request opened. The description quotes the task and says an agent wrote it. If one is already open for the branch, the push updates it.
 - **Work through a review.** **Codico: Address Review Comments** reads the unresolved review threads of your branch's pull request and gives them to the agent as a task: for each, decide whether it asks for a change, make it, and report per comment. The comments are passed as quoted outside text, not as instructions. Nothing is posted back to GitHub: you read the result, commit and push.
@@ -506,6 +539,7 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.startBackgroundTask` | Start a task in its own git worktree and window |
 | `codico.createPullRequest` | Push the current branch and open a pull request for it, after a confirmation |
 | `codico.addressReview` | Give the agent the unresolved review comments of the current branch's pull request |
+| `codico.copyCliCommand` | Copy the command that runs Codico from a terminal (`codico run …`) |
 | `codico.openMemory` | Open the project's memory file (`.codico/memory.md`) |
 | `codico.undoRewind` | Put the files back as they were just before the last rewind |
 | `codico.clearCheckpoints` | Delete this workspace's checkpoints to free disk space |
@@ -977,6 +1011,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Headless runs** — the `codico` command grants only what its options name: with none, the agent can read and nothing else; every approval that was not granted and every dialog is declined and reported, and the exit code says when something was declined; the run uses a temporary profile, so the user's keys and settings are not exposed to it; headless mode exists only in an editor started for it, never in an ordinary window
 - **Pull requests** — pushing a branch and opening a pull request always shows a confirmation naming the repository, the branches and the changes; the token is sent to `api.github.com` only, and a remote counts as GitHub only when its host is `github.com`; review comments reach the agent wrapped as untrusted content; Codico posts no comments and resolves no threads
 - **Command sandbox** (optional) — terminal commands run under bubblewrap (Linux) or the macOS sandbox with the machine read-only except the workspace, package caches and private temporary folders, credential folders unreadable, and optionally no network; the command is passed as a single argument to the wrapper; the settings are machine-scoped so a repository cannot disable them; a configured writable path can never uncover a credential folder
 - **Project memory** — notes are a file in the workspace, written only through the approved file-change path and visible in the diff; they reach the model as reminders to verify, not as instructions; text that looks like a secret is refused; after web or MCP content was read in a turn, saving a note always asks, so a page cannot plant an instruction for later sessions unseen; not loaded in an untrusted workspace

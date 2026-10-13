@@ -69,6 +69,8 @@ jobs:
         run: npm install --no-save @vscode/test-electron@2.5.2
       - name: Run live agent scenarios against a fake model server
         run: xvfb-run -a npm run test:live
+      - name: Run the codico command (headless) against the same VS Code and a fake model
+        run: xvfb-run -a npm run test:headless
 
 
   vsix:

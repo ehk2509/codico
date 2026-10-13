@@ -32,6 +32,9 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "bin": {
+    "codico": "./bin/codico.js"
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -135,6 +138,10 @@
       {
         "command": "codico.backgroundTasks",
         "title": "Codico: Background Tasks"
+      },
+      {
+        "command": "codico.copyCliCommand",
+        "title": "Codico: Copy Command-Line Command"
       },
       {
         "command": "codico.createPullRequest",
@@ -648,6 +655,7 @@
     "pretest": "npm run compile",
     "test": "node --test",
     "test:live": "node tests/vscode-live/run.js",
+    "test:headless": "node tests/headless/run.js",
     "test:ui": "node --test tests/webview-ui/panel.ui.js",
     "check": "npm test",
     "eval:coding": "node scripts/eval/run.js"

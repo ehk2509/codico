@@ -749,6 +749,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Set in the window of a background task: its permissions, and a listener that follows what the agent does. */
     public backgroundPermissions: 'ask' | 'edits' | 'all' = 'ask'; public backgroundListener?: (msg: ExtensionMessage) => void;
     public get ready(): boolean { return !!this._view; }
+    /** Declines whatever is waiting for an approval (a run with nobody to ask). */
+    public denyPrompts(): void { this._cancelTurnPrompts(); }
     public onBackgroundRequest?: (text: string) => void;
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
