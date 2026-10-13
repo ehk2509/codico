@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { commitTaskWork, createWorktree, mergeTask, removeWorktree, repositoryRoot, taskChanges, uncommittedCount } from './backgroundGit';
-import { activeSummary, announcement, BackgroundPermissions, BackgroundTask, branchName, isActive, statusIcon, statusLabel, worktreeFolderName } from './backgroundTasks';
+import { activeSummary, announcement, BackgroundPermissions, BackgroundTask, branchName, isActive, statusIcon, statusLabel, waitingForItsWindow, worktreeFolderName } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
 
 const POLL_MS = 4_000;
@@ -24,8 +24,13 @@ export class BackgroundTaskManager implements vscode.Disposable {
     private readonly _timer: ReturnType<typeof setInterval>;
     private _known = new Map<string, BackgroundTask>();
     private _primed = false;
+    private _shown: string | undefined;
+    private readonly _toldToTrust = new Set<string>();
 
     /** @param _openPullRequest publishes a task's branch as a pull request; absent, the list does not offer it */
+    /** Told on every refresh what to show in the Codico panel: the summary, or '' when there is no task. */
+    public onSummary?: (text: string, needsUser: boolean) => void;
+
     constructor(private readonly _store: BackgroundTaskStore, private readonly _openPullRequest?: (input: { cwd: string; branch: string; baseBranch?: string; prompt: string; stat: string }) => Promise<string | undefined>) {
         this._status.command = 'codico.backgroundTasks';
         this._timer = setInterval(() => { void this.refresh(); }, POLL_MS);
@@ -59,6 +64,15 @@ export class BackgroundTaskManager implements vscode.Disposable {
             this._status.tooltip = 'Finished background tasks to review, merge or discard.';
             this._status.show();
         } else { this._status.hide(); }
+        const shown = summary || (tasks.length > 0 ? `${tasks.length} background ${tasks.length === 1 ? 'task' : 'tasks'}` : '');
+        if (shown !== this._shown) { this._shown = shown; this.onSummary?.(shown, /need/.test(summary)); }
+        // A window that has not taken its task up is almost always asking whether its folder is trusted: said once
+        for (const task of tasks) {
+            if (!waitingForItsWindow(task, now) || this._toldToTrust.has(task.id)) { continue; }
+            this._toldToTrust.add(task.id);
+            void vscode.window.showInformationMessage(`A Codico background task has not started: "${short(task.prompt, 60)}". Its window is probably asking whether you trust the folder; answer it there (trusting the parent folder covers later tasks).`, 'Open Its Window')
+                .then(pick => { if (pick) { void this.openWindow(task); } });
+        }
         for (const task of tasks) {
             // Not what was already so when this window opened
             const message = this._primed ? announcement(this._known.get(task.id), task) : undefined;

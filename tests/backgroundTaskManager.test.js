@@ -211,3 +211,25 @@ test('a background task can be published as a pull request: its work is committe
   assert.equal(await manager.pullRequest(idle), undefined);
   assert.equal(published.length, 1);
 });
+
+test('the panel is told the summary when it changes, and a task that has not started after a while is explained once', async () => {
+  const { store, manager } = setup();
+  const told = []; manager.onSummary = (text, needsUser) => told.push([text, needsUser]);
+  await manager.refresh();
+  assert.deepEqual(told, [['', false]], 'no task: the panel shows nothing');
+  ui.answers = [choose('edits')];
+  const task = await manager.start('Tidy the docs');
+  assert.deepEqual(told.at(-1), ['1 running', false]);
+  const before = told.length;
+  await manager.refresh(); await manager.refresh();
+  assert.equal(told.length, before, 'not repeated while nothing changes');
+  // Its window never took it up: the folder is waiting to be trusted there
+  await store.save({ ...(await store.get(task.id)), createdAt: Date.now() - 60_000 });
+  ui.notices = [];
+  await manager.refresh(); await manager.refresh();
+  assert.deepEqual(told.at(-1), ['1 needs you', true]);
+  assert.equal(ui.notices.filter(n => /has not started: "Tidy the docs"\. Its window is probably asking whether you trust the folder/.test(n)).length, 1, 'said once, not every few seconds');
+  await store.update(task.id, { status: 'finished' });
+  await manager.refresh();
+  assert.deepEqual(told.at(-1), ['1 background task', false]);
+});

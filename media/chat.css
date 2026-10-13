@@ -531,7 +531,8 @@ body{
 /* A narrow panel gets a second row rather than cut-off buttons; only text longer than a whole row shortens with "…" */
 #s-text,#s-step,#s-tokens{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto}
 /* The buttons stay whole and together: when the row is full, both move to the second row */
-#s-actions{display:flex;align-items:center;gap:5px;flex-shrink:0;margin-left:auto}
+/* The buttons never shrink; when three do not fit a narrow panel, the group wraps inside it */
+#s-actions{display:flex;align-items:center;gap:5px;row-gap:3px;flex-shrink:0;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;max-width:100%}
 #s-actions:not(:has(> button:not([style*="none"]))){display:none}
 /* The token count takes the free space, so the buttons sit at the right edge on either row */
 #status #s-tokens{flex:1 1 auto;text-align:right}
@@ -864,6 +865,12 @@ body{
   flex-shrink:0;
 }
 #bg-btn:hover{border-color:var(--vscode-inputValidation-errorBorder,#be1100)}
+#bg-tasks-btn{
+  flex-shrink:0;font:inherit;font-size:10.5px;padding:1px 7px;border-radius:9px;cursor:pointer;white-space:nowrap;
+  color:var(--vscode-foreground);background:transparent;border:1px solid var(--vscode-panel-border);
+}
+#bg-tasks-btn:hover{border-color:var(--vscode-focusBorder,#a78bfa)}
+#bg-tasks-btn.needs-user{border-color:var(--vscode-editorWarning-foreground,#d4a017);color:var(--vscode-editorWarning-foreground,#d4a017)}
 .checkpoint-stop-btn{
   flex-shrink:0;padding:2px 10px;border-radius:4px;cursor:pointer;
   background:transparent;color:inherit;

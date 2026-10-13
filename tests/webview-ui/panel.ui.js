@@ -907,6 +907,31 @@ test('a note the agent saves shows as the change to the memory file, not as a bl
   assert.deepEqual(errors, []);
 });
 
+test('background tasks show in the panel\'s own status row, and a click opens their list', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const chip = page.locator('#bg-tasks-btn');
+  assert.equal(await chip.isVisible(), false, 'nothing while there is no task');
+  await send({ type: 'backgroundTasks', text: '2 running', needsUser: false });
+  assert.equal(await chip.isVisible(), true);
+  assert.match(await chip.textContent(), /2 running$/);
+  assert.equal(await chip.evaluate(el => el.classList.contains('needs-user')), false);
+  // In the row that says "Ready", where one looks for what Codico is doing
+  const sameRow = await page.evaluate(() => { const a = document.getElementById('bg-tasks-btn').getBoundingClientRect(); const b = document.getElementById('s-text').getBoundingClientRect(); return Math.abs(a.top - b.top) < 12 || (a.top >= b.top - 2 && a.top < b.bottom + 30); });
+  assert.equal(sameRow, true);
+  await send({ type: 'backgroundTasks', text: '1 running, 1 needs you', needsUser: true });
+  assert.equal(await chip.evaluate(el => el.classList.contains('needs-user')), true);
+  await chip.click();
+  assert.deepEqual(await posted('openBackgroundTasks'), [{ type: 'openBackgroundTasks' }]);
+  // A narrow panel: the chip stays whole and nothing is pushed out
+  await page.setViewportSize({ width: 240, height: 700 });
+  const box = await chip.boundingBox();
+  assert.ok(box.x >= 0 && box.x + box.width <= 240, `${box.x}–${box.x + box.width}`);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await send({ type: 'backgroundTasks', text: '', needsUser: false });
+  assert.equal(await chip.isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
 test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
   const { page, posted, errors } = await openPanel();
   await page.fill('#msg-input', '/back');
@@ -939,8 +964,15 @@ test('a crowded status bar wraps to a second row: Stop and the background chip s
     assert.match(chip.text, /^⚙ 1 background process ✕$/);
     assert.ok(!chip.cut && chip.left >= 0 && chip.right <= panelRight, `chip whole at ${width}px: ${JSON.stringify(chip)}`);
     // Both buttons sit on the same row, side by side
-    const tops = await page.locator('#s-actions button').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)));
+    const shownTops = () => page.locator('#s-actions button').evaluateAll(els => els.filter(e => e.getBoundingClientRect().width > 0).map(e => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2)));
+    const tops = await shownTops();
     assert.ok(tops.length === 2 && Math.abs(tops[0] - tops[1]) <= 2, `buttons on one row at ${width}px: ${tops}`);
+    // With the background-tasks chip as well, every button is still whole and inside the panel
+    await send({ type: 'backgroundTasks', text: '1 running, 1 needs you', needsUser: true });
+    const all = await page.locator('#s-actions button').evaluateAll(els => els.filter(e => e.getBoundingClientRect().width > 0).map(e => { const r = e.getBoundingClientRect(); return { id: e.id, left: r.left, right: r.right, cut: e.scrollWidth > e.clientWidth + 1 }; }));
+    assert.equal(all.length, 3);
+    for (const b of all) { assert.ok(!b.cut && b.left >= 0 && b.right <= panelRight + 0.5, `${b.id} whole at ${width}px: ${JSON.stringify(b)}`); }
+    await send({ type: 'backgroundTasks', text: '', needsUser: false });
     const rows = await page.locator('#status').evaluate(e => new Set([...e.children].filter(c => c.getBoundingClientRect().width > 0).map(c => Math.round(c.getBoundingClientRect().top + c.getBoundingClientRect().height / 2))).size);
     assert.ok(width >= 900 ? rows === 1 : width <= 300 ? rows >= 2 : rows >= 1, `${rows} row(s) at ${width}px`);
     assert.match(await page.locator('#bg-btn').getAttribute('title'), /1 background process — click to stop:\nsleep 30/);

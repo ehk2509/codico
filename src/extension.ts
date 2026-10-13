@@ -144,6 +144,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const backgroundStore = new BackgroundTaskStore(path.join(context.globalStorageUri.fsPath, 'background-tasks'));
     const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
+    backgroundTasks.onSummary = (text, needsUser) => provider.showBackgroundTasks(text, needsUser);
     // This window may have been opened for a task: start it once the panel is there
     if (!evaluationMode) { void runTaskOfThisWindow(backgroundStore, provider); }
     else {
