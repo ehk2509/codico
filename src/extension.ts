@@ -1,3 +1,4 @@
+import { addressReviewComments, createPullRequestForCurrentBranch, openPullRequest } from './pullRequestService';
 import { openProjectMemory } from './projectMemoryStore';
 import { clearCheckpoints, undoLastRewind } from './rewind';
 import { WEB_SEARCH_KEY } from './externalToolRuntime';
@@ -135,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── Background tasks: started here, run in a window of their own ───────────
     const backgroundStore = new BackgroundTaskStore(path.join(context.globalStorageUri.fsPath, 'background-tasks'));
-    const backgroundTasks = new BackgroundTaskManager(backgroundStore);
+    const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
     // This window may have been opened for a task: start it once the panel is there
     if (!evaluationMode) { void runTaskOfThisWindow(backgroundStore, provider); }
@@ -166,6 +167,8 @@ export function activate(context: vscode.ExtensionContext): void {
             void vscode.window.showInformationMessage(key.trim() ? 'Codico: web search key saved.' : 'Codico: web search key removed.');
         }),
         vscode.commands.registerCommand('codico.openMemory', () => openProjectMemory()),
+        vscode.commands.registerCommand('codico.createPullRequest', () => createPullRequestForCurrentBranch(context)),
+        vscode.commands.registerCommand('codico.addressReview', () => addressReviewComments(context, text => provider.sendMessage(text))),
         vscode.commands.registerCommand('codico.undoRewind', () => undoLastRewind(provider.checkpoints)),
         vscode.commands.registerCommand('codico.clearCheckpoints', () => clearCheckpoints(provider.checkpoints)),
         vscode.commands.registerCommand('codico.backgroundTasks', () => backgroundTasks.manage()),

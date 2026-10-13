@@ -137,6 +137,14 @@
         "title": "Codico: Background Tasks"
       },
       {
+        "command": "codico.createPullRequest",
+        "title": "Codico: Create Pull Request"
+      },
+      {
+        "command": "codico.addressReview",
+        "title": "Codico: Address Review Comments"
+      },
+      {
         "command": "codico.openMemory",
         "title": "Codico: Open Project Memory"
       },

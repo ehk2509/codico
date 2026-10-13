@@ -25,7 +25,8 @@ export class BackgroundTaskManager implements vscode.Disposable {
     private _known = new Map<string, BackgroundTask>();
     private _primed = false;
 
-    constructor(private readonly _store: BackgroundTaskStore) {
+    /** @param _openPullRequest publishes a task's branch as a pull request; absent, the list does not offer it */
+    constructor(private readonly _store: BackgroundTaskStore, private readonly _openPullRequest?: (input: { cwd: string; branch: string; baseBranch?: string; prompt: string; stat: string }) => Promise<string | undefined>) {
         this._status.command = 'codico.backgroundTasks';
         this._timer = setInterval(() => { void this.refresh(); }, POLL_MS);
         void this.refresh();
@@ -152,6 +153,18 @@ export class BackgroundTaskManager implements vscode.Disposable {
         return true;
     }
 
+    /** Publishes the task's work: its branch is committed, pushed and offered as a pull request. */
+    async pullRequest(task: BackgroundTask): Promise<string | undefined> {
+        if (!this._openPullRequest) { return undefined; }
+        if (isActive(task, Date.now()) && task.status !== 'waiting') { void vscode.window.showWarningMessage('Codico: this task is still running. Open the pull request when it has finished, or stop it in its window first.'); return undefined; }
+        const changes = await taskChanges(task.worktree, task.baseCommit);
+        if ('error' in changes) { void vscode.window.showErrorMessage(`Codico: ${changes.error}`); return undefined; }
+        if (changes.files === 0) { void vscode.window.showInformationMessage('Codico: this background task has not changed any file, so there is nothing to open a pull request for.'); return undefined; }
+        const committed = await commitTaskWork(task.worktree, `Codico: ${short(task.prompt, 72)}`);
+        if ('error' in committed) { void vscode.window.showErrorMessage(`Codico: ${committed.error}`); return undefined; }
+        return this._openPullRequest({ cwd: task.worktree, branch: task.branch, baseBranch: task.baseBranch, prompt: task.prompt, stat: changes.stat });
+    }
+
     /** Throws the task away: its worktree, its branch and its entry. */
     async discard(task: BackgroundTask): Promise<boolean> {
         const go = await vscode.window.showWarningMessage('Discard this background task?',
@@ -186,11 +199,13 @@ export class BackgroundTaskManager implements vscode.Disposable {
             { id: 'review', label: '$(diff) Review its changes', description: 'everything it changed since it started, as one patch' },
             { id: 'open', label: '$(window) Open its window', description: 'see the conversation, answer or approve' },
             { id: 'merge', label: '$(git-merge) Merge into the branch checked out here' },
+            ...(this._openPullRequest ? [{ id: 'pr', label: '$(git-pull-request) Open a pull request', description: 'push its branch and open a pull request on GitHub, after a confirmation' }] : []),
             { id: 'discard', label: '$(trash) Discard', description: 'delete its worktree and branch' },
         ], { title: short(task.prompt) });
         if (action?.id === 'review') { await this.review(task); }
         if (action?.id === 'open') { await this.openWindow(task); }
         if (action?.id === 'merge') { await this.merge(task); }
+        if (action?.id === 'pr') { await this.pullRequest(task); }
         if (action?.id === 'discard') { await this.discard(task); }
     }
 }
