@@ -471,6 +471,9 @@ async function run() {
     await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
     await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:rrn_first] please do the task');
     await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:rrn_again] please do the task');
+    // What the task cost is kept with its reply, one entry per request
+    const usage = await vscode.commands.executeCommand('codico.__evalUsage') || {};
+    const recorded = Array.isArray(usage.requests) && usage.requests.length >= 1 && usage.requests.every(r => r[0] === 1500 && r[1] === 20 && r[3] === 'main') && usage.tokens === 1520 * usage.requests.length && Array.isArray(usage.compactions) && usage.tokens > 0;
     await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
     const reqs = (await getLog()).slice(before).filter(e => /^rrn_/.test(e.scenario) && e.stream);
     const got = reqs.map(r => (r.toolResults || []).join('\n')).join('\n=====\n');
@@ -479,8 +482,8 @@ async function run() {
     const whole = /\[read_file: fixtures\/long\.txt lines 1–30 of 60; [^\]]*\]\n```\n1\trow 1 of the long file/.test(got);
     const sameTurn = /\[read_file: fixtures\/long\.txt lines 5–30 of 60\] Not repeated/.test(got);
     const nextTurn = /\[read_file: fixtures\/long\.txt lines 1–30 of 60\] Not repeated/.test(got);
-    results.push({ name: 'no_repeat_native', ms: Date.now() - t0, requests: reqs.length, ok: whole && sameTurn && nextTurn,
-      why: `lines already in the thread are declined on a native read: ${nextTurn}; an overlapping range in the next step too: ${sameTurn}; asked again, the text is returned as a tool result: ${whole}` });
+    results.push({ name: 'no_repeat_native', ms: Date.now() - t0, requests: reqs.length, ok: whole && sameTurn && nextTurn && recorded,
+      why: `lines already in the thread are declined on a native read: ${nextTurn}; an overlapping range in the next step too: ${sameTurn}; asked again, the text is returned as a tool result: ${whole}; the task's requests are recorded with the reply: ${recorded} (${JSON.stringify(usage).slice(0, 160)})` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 

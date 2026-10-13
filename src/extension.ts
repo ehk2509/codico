@@ -73,6 +73,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
             vscode.commands.registerCommand('codico.__evalPassport', () => provider.evaluationPassport()),
             vscode.commands.registerCommand('codico.__evalTurns', (thread?: boolean) => provider.evaluationTurns(thread)),
+            vscode.commands.registerCommand('codico.__evalUsage', () => provider.evaluationUsage()),
             vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean | 'commands') => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );

@@ -252,7 +252,8 @@ function start(port0) {
         if (i < chunks.length) { res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: chunks[i++] }, finish_reason: null }] }) + '\n\n'); return setTimeout(tick, 3); }
         if (reply.drop) { return res.socket.destroy(); }
         // Large reported prompt sizes push the compaction scenario over the auto-compact threshold
-        const usage = scenario === 'compaction' || scenario === 'bad_summary' ? { usage: { prompt_tokens: 20000, completion_tokens: 50, total_tokens: 20050 } } : {};
+        const usage = scenario === 'compaction' || scenario === 'bad_summary' ? { usage: { prompt_tokens: 20000, completion_tokens: 50, total_tokens: 20050 } }
+          : /^rrn_/.test(scenario) ? { usage: { prompt_tokens: 1500, completion_tokens: 20, total_tokens: 1520 } } : {};
         res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: reply.finish || 'stop' }], ...usage }) + '\n\n');
         res.write('data: [DONE]\n\n'); res.end();
       };

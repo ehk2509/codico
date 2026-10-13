@@ -13,6 +13,8 @@ export interface HistoryProjectionOptions {
     preserveNewestLargeResults?: number;
     preserveNewestTargetResults?: number;
     maxWorkingSetChars?: number;
+    /** Characters of file reads that are still current (see `currentReads`) kept whatever their age. */
+    maxCurrentReadChars?: number;
 }
 
 /** Shorter results cost less than the note that would replace them. */
@@ -110,6 +112,35 @@ function resultTarget(
     return null;
 }
 
+const cleanPath = (value: string) => value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+
+interface ReadResult { path: string; from: number; to: number; whole: boolean }
+
+/** A tool result that is one file read: which file and which lines it holds. */
+function readResult(content: string): ReadResult | null {
+    const header = /^(?:\[Tool Results\]\s*)?\[read_file: ([^\n\]]+?) lines (\d+)\u2013(\d+) of \d+([^\n\]]*)\]/.exec(content);
+    if (!header) { return null; }
+    // Only a read that carries all of its lines can stand in for an older one
+    return { path: cleanPath(header[1]), from: Number(header[2]), to: Number(header[3]), whole: !header[4].includes('are left out') };
+}
+
+/** For each file, the positions in the history where an edit or a write to it succeeded. */
+function editPositions(history: ChatMessage[]): Map<string, number[]> {
+    const edits = new Map<string, number[]>();
+    const applied = /\[(?:edit_file: ([^\n\]]+?)\] Edit applied|write_file: ([^\n\]]+?)\] Written)/g;
+    history.forEach((message, index) => {
+        if ((message.role !== 'tool' && message.role !== 'user') || typeof message.content !== 'string') { return; }
+        if (!message.content.includes('_file: ')) { return; }
+        applied.lastIndex = 0;
+        let found: RegExpExecArray | null;
+        while ((found = applied.exec(message.content)) !== null) {
+            const path = cleanPath(found[1] ?? found[2]);
+            edits.set(path, [...(edits.get(path) ?? []), index]);
+        }
+    });
+    return edits;
+}
+
 /**
  * Builds a provider-facing copy of conversation history without mutating the
  * canonical session history.
@@ -118,6 +149,13 @@ function resultTarget(
  * tool targets is retained even after it falls outside the last few messages.
  * This prevents an agent from forgetting a source file it just inspected and
  * then repeatedly re-reading it because a different large result became newer.
+ *
+ * File reads are treated apart from other results: a read stays as long as it is
+ * current, that is, the file has not been edited since and no later read holds the
+ * same lines. Replacing such a read with a note only makes the agent read the file
+ * again, which costs a whole request to save part of one. Their total size is bounded;
+ * past that, the oldest go first. A read made stale by an edit, or repeated by a later
+ * read, is trimmed like any other old result.
  */
 export function projectHistoryForModel(
     history: ChatMessage[],
@@ -129,6 +167,11 @@ export function projectHistoryForModel(
     const preserveNewestLargeResults = Math.max(0, options.preserveNewestLargeResults ?? 1);
     const preserveNewestTargetResults = Math.max(0, options.preserveNewestTargetResults ?? 6);
     const maxWorkingSetChars = Math.max(maxLargeResultChars, options.maxWorkingSetChars ?? 80_000);
+    const maxCurrentReadChars = Math.max(0, options.maxCurrentReadChars ?? 120_000);
+    const edits = editPositions(history);
+    // Reads met so far (they are later in the conversation), per file
+    const laterReads = new Map<string, ReadResult[]>();
+    let currentReadChars = 0;
     const recentStart = Math.max(0, history.length - recentMessages);
     const targetsByCallId = callTargets(history);
 
@@ -163,7 +206,16 @@ export function projectHistoryForModel(
             }
             laterResults.add(content);
         }
+        const read = readResult(content);
+        const stale = !!read && (edits.get(read.path) ?? []).some(position => position > index);
+        const repeated = !!read && (laterReads.get(read.path) ?? []).some(later => later.whole && later.from <= read.from && later.to >= read.to);
+        if (read && !stale) { laterReads.set(read.path, [...(laterReads.get(read.path) ?? []), read]); }
         if (content.length <= largeResultChars) { continue; }
+        // A current read is kept whatever came after it, within the budget for such reads
+        if (read && !stale && !repeated && currentReadChars + content.length <= maxCurrentReadChars) {
+            currentReadChars += content.length;
+            continue;
+        }
 
         const target = resultTarget(message, targetsByCallId);
         const newestForTarget = Boolean(target && !seenTargets.has(target));
