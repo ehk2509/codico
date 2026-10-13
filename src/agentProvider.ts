@@ -572,6 +572,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await this._stopTurnAndWait();
                 await this._deleteThread(msg.id);
                 break;
+            case 'startBackgroundTask':
+                this.onBackgroundRequest?.(msg.text);
+                break;
             case 'duplicateThread':
                 // Refused, not stopped: a copy of a half-finished reply would be wrong.
                 if (this._busy) { this._post({ type: 'error', message: 'Cannot duplicate a thread while a reply is running. Wait for it to finish, or stop it, first.' }); break; }
@@ -736,7 +739,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Automated tests only: the change report of the last turn. */
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
 
-    public evaluationUsage(): unknown { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
+    public lastReplyUsage(): DisplayMessage['usage'] { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
+    /** Set in the window of a background task: its permissions, and a listener that follows what the agent does. */
+    public backgroundPermissions: 'ask' | 'edits' | 'all' = 'ask'; public backgroundListener?: (msg: ExtensionMessage) => void;
+    public get ready(): boolean { return !!this._view; }
+    public onBackgroundRequest?: (text: string) => void;
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
@@ -842,8 +849,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Reset per-response allow-all flags at the start of every new user turn
-        this._allowAllWrites  = this._evaluationMode && !this._evalRequireApproval;
-        this._allowAllTerminal = this._evaluationMode && !this._evalAskCommands;
+        this._allowAllWrites  = (this._evaluationMode && !this._evalRequireApproval) || this.backgroundPermissions !== 'ask';
+        this._allowAllTerminal = (this._evaluationMode && !this._evalAskCommands) || this.backgroundPermissions === 'all';
         this._external.resetTurnPermissions();
 
         // ── /pr slash command: inject PR context then re-prompt as a review ──
@@ -2825,6 +2832,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private _post(msg: ExtensionMessage): void {
         this._view?.webview.postMessage(msg);
+        this.backgroundListener?.(msg);
         noteAttention(msg, !!this._view?.visible);
         if (this._recording && (msg as { id?: unknown }).id === this._recording.msgId) {
             this._recordEvent(msg);

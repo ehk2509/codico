@@ -133,6 +133,14 @@
         "title": "Codico: Remembered Commands"
       },
       {
+        "command": "codico.backgroundTasks",
+        "title": "Codico: Background Tasks"
+      },
+      {
+        "command": "codico.startBackgroundTask",
+        "title": "Codico: Start Background Task"
+      },
+      {
         "command": "codico.setOllamaUrl",
         "title": "Set Ollama Base URL",
         "category": "Codico"
@@ -430,6 +438,12 @@
           "minimum": 200,
           "maximum": 3000,
           "description": "Debounce delay in ms before requesting an inline completion"
+        },
+        "codico.backgroundTasksDirectory": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Folder in which background tasks get their git worktrees. Empty: ~/.codico/worktrees. Trusting this folder once in VS Code covers every task's window."
         },
         "codico.openTabsContext": {
           "type": "boolean",

@@ -86,6 +86,8 @@ export type WebviewMessage =
     | { type: 'renameThread'; id: string; name: string }
     | { type: 'deleteThread'; id: string }
     | { type: 'duplicateThread'; id: string }
+    /** `/background <task>`: run the task in a worktree and a window of its own. */
+    | { type: 'startBackgroundTask'; text: string }
     | { type: 'threadContextMenu'; id: string }
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }

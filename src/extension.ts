@@ -1,3 +1,7 @@
+import { BackgroundTask } from './backgroundTasks';
+import { BackgroundTaskStore } from './backgroundTaskStore';
+import { BackgroundTaskManager } from './backgroundTaskManager';
+import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
 import { createUserExtension } from './userExtensionsLoader';
@@ -73,7 +77,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('codico.__evalSnapshot', () => provider.getEvaluationSnapshot()),
             vscode.commands.registerCommand('codico.__evalPassport', () => provider.evaluationPassport()),
             vscode.commands.registerCommand('codico.__evalTurns', (thread?: boolean) => provider.evaluationTurns(thread)),
-            vscode.commands.registerCommand('codico.__evalUsage', () => provider.evaluationUsage()),
+            vscode.commands.registerCommand('codico.__evalUsage', () => provider.lastReplyUsage()),
             vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean | 'commands') => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );
@@ -126,6 +130,19 @@ export function activate(context: vscode.ExtensionContext): void {
         )
     );
 
+    // ── Background tasks: started here, run in a window of their own ───────────
+    const backgroundStore = new BackgroundTaskStore(path.join(context.globalStorageUri.fsPath, 'background-tasks'));
+    const backgroundTasks = new BackgroundTaskManager(backgroundStore);
+    provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
+    // This window may have been opened for a task: start it once the panel is there
+    if (!evaluationMode) { void runTaskOfThisWindow(backgroundStore, provider); }
+    else {
+        context.subscriptions.push(vscode.commands.registerCommand('codico.__evalBackground', async (task?: BackgroundTask) => {
+            if (task) { await backgroundStore.save(task); return runTaskOfThisWindow(backgroundStore, provider); }
+            return backgroundStore.all();
+        }));
+    }
+
     // ── Inline diff accept / reject commands ──────────────────────────────────
     registerInlineDiffCommands(context);
 
@@ -138,6 +155,9 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('codico.newAgent', () => createUserExtension('agent')),
         vscode.commands.registerCommand('codico.newHooks', () => createHooksFile()),
         vscode.commands.registerCommand('codico.rememberedCommands', () => provider.approvedCommands.manage()),
+        backgroundTasks,
+        vscode.commands.registerCommand('codico.backgroundTasks', () => backgroundTasks.manage()),
+        vscode.commands.registerCommand('codico.startBackgroundTask', (text?: string) => backgroundTasks.start(typeof text === 'string' ? text : undefined)),
         vscode.commands.registerCommand('codico.openChat', () => {
             vscode.commands.executeCommand(
                 'workbench.view.extension.codico-container'

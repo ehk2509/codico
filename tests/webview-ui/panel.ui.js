@@ -883,6 +883,23 @@ test('a thread can be duplicated from its row, and the row still fits a 220px pa
   assert.ok(m.listOverflow <= 1, `the list scrolls sideways by ${m.listOverflow}px`);
 });
 
+test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
+  const { page, posted, errors } = await openPanel();
+  await page.fill('#msg-input', '/back');
+  assert.match(await page.locator('#slash-hint').textContent(), /\/background\s*Run a task in its own git worktree and window while you keep working here/);
+  await page.fill('#msg-input', '/background add a health check endpoint\nwith a test');
+  await page.click('#send-btn');
+  assert.deepEqual(await posted('startBackgroundTask'), [{ type: 'startBackgroundTask', text: 'add a health check endpoint\nwith a test' }]);
+  assert.equal((await posted('sendMessage')).length, 0);
+  assert.equal(await page.inputValue('#msg-input'), '');
+  assert.equal(await page.locator('.msg.user').count(), 0, 'nothing is added to this conversation');
+  // Without a task the extension asks for it
+  await page.fill('#msg-input', '/background');
+  await page.click('#send-btn');
+  assert.deepEqual((await posted('startBackgroundTask')).pop(), { type: 'startBackgroundTask', text: '' });
+  assert.deepEqual(errors, []);
+});
+
 test('a crowded status bar wraps to a second row: Stop and the background chip stay whole', async () => {
   const { page, send } = await openPanel();
   for (const width of [240, 300, 420, 900]) {

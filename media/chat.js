@@ -344,6 +344,7 @@
     { cmd: '/test',     desc: 'Run test suite and auto-fix failures until all pass' },
     { cmd: '/new',      desc: 'Create a new file or project scaffold from a description' },
     { cmd: '/compact',  desc: 'Summarize conversation history to reduce context size' },
+    { cmd: '/background', desc: 'Run a task in its own git worktree and window while you keep working here' },
   ];
 
   // The project's own agents and skills (.codico folder), sent by the extension
@@ -1428,6 +1429,17 @@
     // Prepend @agent mention if a badge is active (and not already in text)
     if (_activeAgent && !text.includes('@' + _activeAgent)) {
       text = '@' + _activeAgent + ' ' + text;
+    }
+
+    // Slash command: /background <task>: the task runs elsewhere, this conversation is not involved
+    var backgroundMatch = text.match(/^\/background(?:\s+([\s\S]+))?$/i);
+    if (backgroundMatch) {
+      input.value = '';
+      input.style.height = 'auto';
+      slashHintEl.style.display = 'none';
+      _setHintMode(null);
+      vscode.postMessage({ type: 'startBackgroundTask', text: (backgroundMatch[1] || '').trim() });
+      return;
     }
 
     // Slash command: /compact

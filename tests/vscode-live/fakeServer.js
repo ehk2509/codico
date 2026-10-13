@@ -97,6 +97,8 @@ const SCRIPTS = (port) => ({
   rr_changed: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 2\nend_line: 40'), 'Read.'],
   rr_declined: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
   rr_insist: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
+  // A background task: this window is the task's own, and runs it when it opens
+  bg_task: [tool('write_file', 'filepath: live/bg-result.txt\ncontent:\nwritten by the background task'), 'The background task is done.'],
   // Duplicating a thread: refused while a reply runs, then an independent copy
   dup_slow: [tool('run_terminal', 'command: sleep 2; echo dup-slow-done'), 'Done.'],
   dup_after: ['Said in the copy only.'],

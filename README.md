@@ -277,6 +277,17 @@ The agent has a ranked search of the whole repository, `search_code`. It describ
 
 This is separate from the optional embeddings index used by `@workspace` (**Codico: Index Workspace**), which sends code to an embeddings API and is limited to 600 files.
 
+### Background Tasks
+Hand a task to Codico and keep working: the task runs in a git worktree and a branch of its own, in a second VS Code window, so it cannot disturb the files you are editing.
+
+- **Start one** with `/background <task>` in the chat, or **Codico: Start Background Task**. You choose what it may do without asking: edit files freely and ask before commands (recommended), edit and run commands unattended, or ask before everything.
+- **Where it works.** A new branch `codico/<task>-<id>` is created at your last commit and checked out under `~/.codico/worktrees/<repository>/` (change it with `codico.backgroundTasksDirectory`). Your own window stays on its branch. Uncommitted changes are not part of the task; you are told before it starts.
+- **Its window.** The worktree opens in a new window where the task starts by itself, with the conversation, approvals and Stop as usual. VS Code asks once whether you trust the folder; trusting the parent folder covers every later task.
+- **Keeping track.** A status bar item in your window shows "2 running, 1 needs you". You are notified when a task finishes, fails, or waits for an approval or an answer. **Codico: Background Tasks** lists them.
+- **Review, merge, discard.** From that list: *Review* shows everything the task changed since it started as one patch, committed or not; *Merge* brings it into the branch checked out in your window, and if it conflicts with what you did meanwhile the merge is undone and nothing changes; *Discard* deletes the worktree and the branch.
+
+Things to know: a fresh worktree has no installed dependencies, build output or untracked files such as `.env`, and the agent is told so; each running task is another VS Code window, which costs memory; and a task whose window is closed is shown as stopped, not restarted.
+
 ### Subagents
 For a question that needs a lot of reading before anything can be done — how a feature works end to end, every place something is used, what a change would affect — the agent can **delegate** it. A subagent starts with a conversation of its own, reads and searches as much as the question needs, and returns a short report with file paths and line numbers. Only the report enters the main conversation, which stays small however much was read.
 
@@ -417,6 +428,7 @@ The panel, the saved thread and the history the model sees are always cut at the
 | `/plan` | Create a step-by-step plan for a goal, then approve to execute |
 | `/test` | Detect the project's test command, run it, and fix failures until the suite passes |
 | `/compact` | Summarize the conversation history to reduce context size |
+| `/background <task>` | Run the task in its own git worktree, branch and window while you keep working here |
 | `/pr` | Fetch the open GitHub PR for the current branch and review it |
 | `/coverage` | Parse the coverage report and generate tests for uncovered lines |
 | `/new <description>` | Scaffold a new file or project from a natural-language description |
@@ -437,6 +449,8 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newAgent` | Create a project agent in `.codico/agents` |
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
+| `codico.startBackgroundTask` | Start a task in its own git worktree and window |
+| `codico.backgroundTasks` | List background tasks: review, merge or discard their work |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
 | `codico.setGithubToken` | Store a GitHub token for PR context features |
 | `codico.toggleInlineCompletions` | Toggle ghost-text inline completions on/off |
@@ -770,6 +784,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
+| `codico.backgroundTasksDirectory` | `string` | `""` | Folder for the worktrees of background tasks (empty: `~/.codico/worktrees`) |
 | `codico.openTabsContext` | `boolean` | `true` | Tell the agent which other files are open in tabs (their names; contents are read only when the task needs them) |
 | `codico.globalHistory` | `boolean` | `false` | Persist threads across all workspaces |
 | `codico.autoInjectDiagnostics` | `boolean` | `true` | Auto-inject Problems panel errors/warnings |
@@ -887,6 +902,7 @@ codico/
 - **Centralized workspace confinement** — agent file paths are normalized through one multi-root-aware policy before reads, listings, searches, writes, edits, or file-scoped diagnostics; paths that lead outside the workspace through a symbolic link (or a dangling one) are refused
 - **Open tabs** — only the names of other open tabs are sent with a message, never their contents, and a tab outside the workspace or excluded by `.codicoignore` is not named
 - **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
+- **Background tasks** — a task's edits are made in its own git worktree, never in the files of the window that started it; nothing is merged without a confirmation that shows the changes, and a conflicting merge is undone. Its window is subject to workspace trust like any other. Commands a task runs are not confined to the worktree, which the choice to run them unattended says
 - **Remembered commands** — a terminal command runs without asking only if you chose "Always allow" for it on its approval card. A rule is either one whole command, matched exactly, or a build/test command with any arguments (`npm test *`), which never matches a command that chains, pipes, redirects or substitutes (`npm test; …`, `&&`, `|`, `>`, `$( )`, backticks). Rules live in the workspace's private state, not in a settings file a repository could ship, do not apply in an untrusted folder, and are set aside for the rest of a turn once the agent has read web or MCP content
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Terminal secret scrubbing** — approved shell commands inherit only an execution/toolchain allowlist (PATH, HOME, Java/Go/Python/Node toolchain roots, temp/system paths, locale), not arbitrary VS Code process secrets
