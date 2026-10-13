@@ -86,7 +86,8 @@ export async function rewindFiles(stack: UndoRedoStack, turnIds: readonly string
 export function workspaceCheckpoints(globalStorage: string): CheckpointService {
     return new CheckpointService(path.join(globalStorage, 'checkpoints'),
         () => (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath),
-        () => vscode.workspace.isTrusted && vscode.workspace.getConfiguration('codico').get<boolean>('checkpoints', true));
+        () => vscode.workspace.isTrusted && vscode.workspace.getConfiguration('codico').get<boolean>('checkpoints', true),
+        () => vscode.workspace.getConfiguration('codico').get<number>('checkpointRetentionDays', 14));
 }
 
 /** "Codico: Undo Last Rewind": the files as they were just before the last rewind. */
