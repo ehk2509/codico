@@ -356,6 +356,12 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Pull Requests
+- **Open one.** **Codico: Create Pull Request** publishes the branch checked out in your window; in **Codico: Background Tasks**, *Open a pull request* does the same for a task's branch (after committing what the task left uncommitted). A confirmation shows the repository, the branches, the title and the changed files first, with **Create Draft** and **Create Pull Request**; only then is the branch pushed to `origin` and the pull request opened. The description quotes the task and says an agent wrote it. If one is already open for the branch, the push updates it.
+- **Work through a review.** **Codico: Address Review Comments** reads the unresolved review threads of your branch's pull request and gives them to the agent as a task: for each, decide whether it asks for a change, make it, and report per comment. The comments are passed as quoted outside text, not as instructions. Nothing is posted back to GitHub: you read the result, commit and push.
+- **Read one.** `/pr` adds the pull request of the current branch (description, files, recent comments) to the conversation, as before.
+- **Access.** A GitHub token set with **Set GitHub Token**, or the GitHub CLI's when you are signed in with `gh auth login`. Repositories on github.com only.
+
 ### Command Sandbox
 Approvals decide *whether* a command runs. The sandbox decides *what it can touch* once it does, enforced by the operating system and not by reading the command.
 
@@ -498,6 +504,8 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
 | `codico.startBackgroundTask` | Start a task in its own git worktree and window |
+| `codico.createPullRequest` | Push the current branch and open a pull request for it, after a confirmation |
+| `codico.addressReview` | Give the agent the unresolved review comments of the current branch's pull request |
 | `codico.openMemory` | Open the project's memory file (`.codico/memory.md`) |
 | `codico.undoRewind` | Put the files back as they were just before the last rewind |
 | `codico.clearCheckpoints` | Delete this workspace's checkpoints to free disk space |
@@ -969,6 +977,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Pull requests** — pushing a branch and opening a pull request always shows a confirmation naming the repository, the branches and the changes; the token is sent to `api.github.com` only, and a remote counts as GitHub only when its host is `github.com`; review comments reach the agent wrapped as untrusted content; Codico posts no comments and resolves no threads
 - **Command sandbox** (optional) — terminal commands run under bubblewrap (Linux) or the macOS sandbox with the machine read-only except the workspace, package caches and private temporary folders, credential folders unreadable, and optionally no network; the command is passed as a single argument to the wrapper; the settings are machine-scoped so a repository cannot disable them; a configured writable path can never uncover a credential folder
 - **Project memory** — notes are a file in the workspace, written only through the approved file-change path and visible in the diff; they reach the model as reminders to verify, not as instructions; text that looks like a secret is refused; after web or MCP content was read in a turn, saving a note always asks, so a page cannot plant an instruction for later sessions unseen; not loaded in an untrusted workspace
 - **Checkpoints** — snapshots are stored in Codico's own git repository outside the project and never sent anywhere; files excluded by `.gitignore` (typically secrets) are not copied into it; the snapshot commands run with hooks, signing and the user's git configuration switched off; only a commit id is accepted as a checkpoint

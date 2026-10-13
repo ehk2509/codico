@@ -184,3 +184,30 @@ test('the list shows each task of this repository with its state; changes are an
   assert.equal(ui.opened[0].folder, task.worktree);
   assert.equal(sh(repo, 'rev-parse', '--abbrev-ref', 'HEAD').trim(), 'main');
 });
+
+test('a background task can be published as a pull request: its work is committed on its branch first', async () => {
+  const { repo, store } = setup();
+  const published = [];
+  const manager = new BackgroundTaskManager(store, async (input) => { published.push(input); return 'https://github.com/acme/widgets/pull/1'; }); managers.push(manager);
+  ui.answers = [choose('edits')];
+  const task = await manager.start('Add a health check');
+  fs.writeFileSync(path.join(task.worktree, 'health.js'), 'ok\n');
+  await store.update(task.id, { status: 'running', heartbeat: Date.now() });
+  assert.equal(await manager.pullRequest(await store.get(task.id)), undefined);
+  assert.match(ui.notices.at(-1), /still running\. Open the pull request when it has finished/);
+  const finished = await store.update(task.id, { status: 'finished' });
+  assert.equal(await manager.pullRequest(finished), 'https://github.com/acme/widgets/pull/1');
+  assert.deepEqual([published[0].branch, published[0].baseBranch, published[0].prompt, fs.realpathSync.native(published[0].cwd)], [task.branch, 'main', 'Add a health check', fs.realpathSync.native(task.worktree)]);
+  assert.match(published[0].stat, /health\.js[\s\S]*1 file changed/);
+  // What the pull request will carry is on the branch, not left lying in the folder
+  assert.equal(sh(task.worktree, 'status', '--porcelain').trim(), '');
+  assert.match(sh(repo, 'log', '--format=%s', '-1', task.branch), /^Codico: Add a health check/);
+  // The list offers it only when publishing is possible, and nothing is published for a task that changed nothing
+  ui.asked = []; ui.answers = [({ items }) => items[1], undefined];
+  await manager.manage();
+  assert.deepEqual(ui.asked[1].items.map(i => i.id), ['review', 'open', 'merge', 'pr', 'discard']);
+  ui.answers = [choose('edits')];
+  const idle = await store.update((await manager.start('Nothing to do')).id, { status: 'finished' });
+  assert.equal(await manager.pullRequest(idle), undefined);
+  assert.equal(published.length, 1);
+});
