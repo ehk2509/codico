@@ -3,9 +3,10 @@ import { BrowserManager } from './browserManager';
 import { McpManager } from './mcpManager';
 import {
     BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool,
-    FetchUrlTool, GetDiagnosticsTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool,
+    FetchUrlTool, WebSearchTool, GetDiagnosticsTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool,
 } from './toolParser';
-import { fetchPublicText } from './urlFetcher';
+import { fetchPublicRaw, fetchPublicText } from './urlFetcher';
+import { duckDuckGoRefused, engineName, parseBrave, parseDuckDuckGo, renderResults, SearchEngine, searchRequest } from './webSearch';
 import { resolveSymbol } from './symbolProvider';
 import { ExtensionMessage } from './chatProtocol';
 import { isWorkspaceUriAllowed, resolveWorkspaceToolPath } from './workspaceSecurity';
@@ -21,6 +22,9 @@ import { wrapUntrusted } from './untrustedContent';
 
 /** Largest MCP result passed to the model. */
 const MCP_RESULT_MAX_CHARS = 20_000;
+/** The name under which the search key is kept in the editor's secret storage. */
+export const WEB_SEARCH_KEY = 'codico.webSearchKey';
+
 export class ExternalToolRuntime {
     private readonly _browser = new BrowserManager();
     private _allowAllExternal = false;
@@ -156,6 +160,39 @@ export class ExternalToolRuntime {
         const buf = await this._browser.screenshot();
         const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
         this._post({ type: 'browserScreenshot', id: msgId, dataUrl, url: this._browser.currentUrl });
+    }
+
+    /** Where the key of a search engine that needs one is kept (the editor's secret storage). */
+    public searchKey?: () => PromiseLike<string | undefined>;
+
+    public async _handleWebSearch(tool: WebSearchTool, msgId: string): Promise<string> {
+        const label = tool.query.length > 80 ? tool.query.slice(0, 80) + '\u2026' : tool.query;
+        const fail = (message: string) => {
+            this._post({ type: 'toolResult', id: msgId, tool: 'web_search', label, success: false, error: message });
+            return `[web_search: ${tool.query}] ERROR: ${message}`;
+        };
+        const setting = vscode.workspace.getConfiguration('codico').get<string>('webSearch', 'duckduckgo');
+        if (setting === 'off') { return fail('Web search is turned off (the codico.webSearch setting). Ask the user for an address, or work from what is in the workspace.'); }
+        const engine: SearchEngine = setting === 'brave' ? 'brave' : 'duckduckgo';
+        const key = engine === 'brave' ? (await this.searchKey?.())?.trim() : undefined;
+        if (engine === 'brave' && !key) { return fail('Brave Search is selected but no key is set. The user can set one with "Codico: Set Web Search Key", or choose DuckDuckGo in the codico.webSearch setting.'); }
+        // The words of the query leave the machine: asked like any other request to the outside
+        if (!await this._confirmExternalAction('search the web', `"${tool.query}"\n\nThe query is sent to ${engineName(engine)}.`)) {
+            return `[web_search: ${tool.query}] Denied by user`;
+        }
+        try {
+            const request = searchRequest(engine, tool.query, key);
+            const body = await fetchPublicRaw(request.url, request.headers);
+            if (engine === 'duckduckgo' && duckDuckGoRefused(body)) {
+                return fail('DuckDuckGo declined the request (it does this to automated searches at times). Try again later, or the user can switch to Brave Search with a key in the codico.webSearch setting.');
+            }
+            const results = engine === 'brave' ? parseBrave(body) : parseDuckDuckGo(body);
+            this._post({ type: 'toolResult', id: msgId, tool: 'web_search', label: `${label} \u2014 ${results.length} result${results.length === 1 ? '' : 's'}`, success: true });
+            return `[web_search: ${tool.query}] ${engineName(engine)}\n${this._untrusted(`web search results from ${engineName(engine)}`, renderResults(results))}`;
+        } catch (err: unknown) {
+            const message = err instanceof Error ? err.message : String(err);
+            return fail(/^HTTP 4(?:01|03)$/.test(message) && engine === 'brave' ? 'Brave Search refused the key. The user can set another with "Codico: Set Web Search Key".' : message);
+        }
     }
 
     public async _handleFetchUrl(tool: FetchUrlTool, msgId: string): Promise<string> {

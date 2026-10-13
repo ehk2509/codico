@@ -32,7 +32,7 @@ import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagen
 import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
-import { ExternalToolRuntime } from './externalToolRuntime';
+import { ExternalToolRuntime, WEB_SEARCH_KEY } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
 import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
@@ -220,6 +220,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
         _context.subscriptions.push(this._userExtensions, this._hooks);
+        this._external.searchKey = () => _context.secrets.get(WEB_SEARCH_KEY);
         // Abort in-flight requests when the extension deactivates.
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
@@ -1600,7 +1601,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? lastMsg.content
                     : (lastMsg.content as MessageContentPart[]).filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('');
                 const displayText = raw
-                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
+                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
                     .trim().slice(0, 300);
                 summaryText = displayText;
             }
@@ -1978,6 +1979,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'fetch_url': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'fetch_url', label: tool.url });
                 result = await untilStopped(this._external._handleFetchUrl(tool, msgId), signal, stopped);
+                break;
+            }
+            case 'web_search': {
+                this._post({ type: 'toolStart', id: msgId, tool: 'web_search', label: tool.query.slice(0, 80) });
+                result = await untilStopped(this._external._handleWebSearch(tool, msgId), signal, stopped);
                 break;
             }
             case 'browser_navigate': {

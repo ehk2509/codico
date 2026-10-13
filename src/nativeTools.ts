@@ -161,6 +161,16 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         },
     },
     {
+        name: 'web_search',
+        description: 'Search the web for a query and get a short list of results (title, address, a line of text). Use it when you need something that is not in the workspace and you have no address for it: current documentation, an error message, a release. Read a result with fetch_url.',
+        inputSchema: {
+            type: 'object',
+            properties: { query: { type: 'string', description: 'A few specific words, as you would type them into a search engine.' } },
+            required: ['query'],
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'browser_navigate',
         description: 'Navigate the controlled browser to a URL.',
         inputSchema: {
@@ -274,6 +284,7 @@ const READ_ONLY = new Set<ToolCall['type']>([
     'find_files',
     'get_diagnostics',
     'fetch_url',
+    'web_search',
     'lsp_symbol',
 ]);
 
@@ -302,6 +313,7 @@ const ACTION_DISCOVERY = new Set<ToolCall['type']>([
     'find_files',
     'list_directory',
     'fetch_url',
+    'web_search',
     'lsp_symbol',
     'browser_get_text',
 ]);
@@ -545,6 +557,10 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         case 'fetch_url': {
             const url = stringArg(args, 'url');
             return url ? { type: 'fetch_url', url } : null;
+        }
+        case 'web_search': {
+            const query = stringArg(args, 'query');
+            return query ? { type: 'web_search', query } : null;
         }
         case 'browser_navigate': {
             const url = stringArg(args, 'url');

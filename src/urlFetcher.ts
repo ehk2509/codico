@@ -28,7 +28,8 @@ export function htmlToReadableText(rawHtml: string): string {
 async function fetchRaw(
     rawUrl: string,
     redirectDepth: number,
-    options: Required<FetchPublicTextOptions>
+    options: Required<FetchPublicTextOptions>,
+    extraHeaders: Record<string, string> = {}
 ): Promise<string> {
     const resolvedUrl = await resolvePublicHttpUrl(rawUrl);
     const parsed = resolvedUrl.url;
@@ -52,6 +53,7 @@ async function fetchRaw(
             headers: {
                 'User-Agent': 'Mozilla/5.0 (compatible; Codico/1.0)',
                 'Accept': 'text/html,application/xhtml+xml,*/*',
+                ...extraHeaders,
             },
             timeout: options.timeoutMs,
             lookup: resolvedUrl.lookup,
@@ -71,7 +73,8 @@ async function fetchRaw(
                     done.reject(new Error(`Invalid redirect URL: ${res.headers.location}`));
                     return;
                 }
-                fetchRaw(next.href, redirectDepth + 1, options).then(done.resolve, done.reject);
+                // A header meant for the first host (a key) is not passed on to wherever it redirects
+                fetchRaw(next.href, redirectDepth + 1, options, next.host === parsed.host ? extraHeaders : {}).then(done.resolve, done.reject);
                 return;
             }
 
@@ -103,6 +106,11 @@ async function fetchRaw(
             done.reject(new Error('Request timed out'));
         });
     });
+}
+
+/** The body of a public page or API answer as it is, for a caller that parses it itself. */
+export function fetchPublicRaw(rawUrl: string, headers: Record<string, string> = {}, options: FetchPublicTextOptions = {}): Promise<string> {
+    return fetchRaw(rawUrl, 0, { maxRedirects: options.maxRedirects ?? 3, timeoutMs: options.timeoutMs ?? 15_000, maxBytes: options.maxBytes ?? 2 * 1024 * 1024, maxChars: options.maxChars ?? 0 }, headers);
 }
 
 export async function fetchPublicText(

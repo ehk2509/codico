@@ -137,6 +137,10 @@
         "title": "Codico: Background Tasks"
       },
       {
+        "command": "codico.setWebSearchKey",
+        "title": "Codico: Set Web Search Key"
+      },
+      {
         "command": "codico.startBackgroundTask",
         "title": "Codico: Start Background Task"
       },
@@ -444,6 +448,13 @@
           "default": "",
           "scope": "machine",
           "description": "Folder in which background tasks get their git worktrees. Empty: ~/.codico/worktrees. Trusting this folder once in VS Code covers every task's window."
+        },
+        "codico.webSearch": {
+          "type": "string",
+          "enum": ["duckduckgo", "brave", "off"],
+          "enumDescriptions": ["DuckDuckGo, no key needed. It sometimes declines automated searches.", "Brave Search API. Needs a key: run \"Codico: Set Web Search Key\".", "The agent cannot search the web."],
+          "default": "duckduckgo",
+          "description": "Search engine of the agent's web_search tool. Each search is asked about first, like any request to the outside, and sends the query to that engine."
         },
         "codico.openTabsContext": {
           "type": "boolean",

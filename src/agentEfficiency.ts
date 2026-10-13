@@ -8,6 +8,7 @@ const EXPLORATION_TOOLS = new Set<ToolCall['type']>([
     'find_files',
     'get_diagnostics',
     'fetch_url',
+    'web_search',
     'lsp_symbol',
     'browser_get_text',
 ]);
@@ -29,6 +30,7 @@ export function explorationTarget(tool: ToolCall): string | null {
         case 'get_diagnostics': return `get_diagnostics:${tool.filepath ?? 'workspace'}`;
         case 'lsp_symbol': return `lsp_symbol:${tool.query}`;
         case 'fetch_url': return `fetch_url:${tool.url}`;
+        case 'web_search': return `web_search:${tool.query}`;
         case 'browser_get_text': return `browser_get_text:${tool.selector ?? 'page'}`;
         case 'search_files': return `search_files:${tool.pattern}:${tool.glob ?? ''}`;
         case 'search_code': return `search_code:${tool.query}:${tool.path ?? ''}`;
