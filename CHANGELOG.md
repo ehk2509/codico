@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.4.0 - 2026-10-13
 
 ### Added
 - Running without the editor: a `codico` command (`bin/codico.js` in the extension; **Codico: Copy Command-Line Command** copies its path) runs one task from a terminal, a script, CI or a schedule. It starts VS Code for the task, prints the agent's reply and steps, and exits with 0 (finished), 1 (failed), 2 (the agent asked a question) or 3 (something was not allowed). Nothing is allowed unless an option says so: `--allow-edits`, `--allow-commands`, `--allow-web`, `--allow-hooks`. Keys are read from environment variables, and `--json` gives machine-readable output.
