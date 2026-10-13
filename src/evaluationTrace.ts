@@ -33,6 +33,8 @@ export function evaluationToolTarget(tool: ToolCall): string {
             return clip(`${tool.query}${tool.path ? ` @ ${tool.path}` : ''}`);
         case 'web_search':
             return clip(tool.query);
+        case 'remember':
+            return clip(tool.note ?? tool.replaces ?? '');
         case 'fetch_url':
         case 'browser_navigate':
             return clip(tool.url);

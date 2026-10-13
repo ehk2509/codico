@@ -52,6 +52,15 @@ export interface WebSearchTool {
     query: string;
 }
 
+export interface RememberTool {
+    type: 'remember';
+    /** One short fact to keep for later sessions. Empty with `replaces`: remove that note. */
+    note?: string;
+    topic?: string;
+    /** Words of an existing note to replace or remove. */
+    replaces?: string;
+}
+
 export interface BrowserNavigateTool {
     type: 'browser_navigate';
     url: string;
@@ -138,6 +147,7 @@ export interface DelegateTool {
 }
 
 export type ToolCall =
+    | RememberTool
     | WebSearchTool
     | WriteFileTool
     | ReadFileTool
@@ -173,7 +183,7 @@ export function toolFingerprint(tool: ToolCall): string {
     return `${tool.type}:${hash}`;
 }
 
-const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code';
+const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|remember|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code';
 const TOOL_FENCE_OPEN_RE = new RegExp('(`{3,})(' + TOOL_NAMES + ')[ \\t]*\\r?\\n', 'g');
 const FENCE_LINE_RE = /^ {0,3}(`{3,})(.*)$/;
 
@@ -343,6 +353,11 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
         case 'web_search': {
             const query = extractField(body, 'query');
             if (query) { tools.push({ type: 'web_search', query }); }
+            break;
+        }
+        case 'remember': {
+            const note = extractField(body, 'note'); const topic = extractField(body, 'topic'); const replaces = extractField(body, 'replaces');
+            if (note || replaces) { tools.push({ type: 'remember', ...(note ? { note } : {}), ...(topic ? { topic } : {}), ...(replaces ? { replaces } : {}) }); }
             break;
         }
         case 'search_code': {

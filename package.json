@@ -137,6 +137,10 @@
         "title": "Codico: Background Tasks"
       },
       {
+        "command": "codico.openMemory",
+        "title": "Codico: Open Project Memory"
+      },
+      {
         "command": "codico.undoRewind",
         "title": "Codico: Undo Last Rewind"
       },
@@ -468,6 +472,11 @@
           "type": "boolean",
           "default": true,
           "description": "Take a checkpoint of the workspace when each message is sent, so that rewinding to the message restores every file, including what terminal commands changed, and still works after a restart. Checkpoints are kept in a git repository of Codico's own, outside the project, and need git to be installed. Files your .gitignore excludes are not included."
+        },
+        "codico.memory": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let the agent keep short notes about the project in .codico/memory.md (conventions, where things live, mistakes to avoid) and read them at the start of every session. Each note is written through the normal file-change approval."
         },
         "codico.openTabsContext": {
           "type": "boolean",

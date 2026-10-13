@@ -487,6 +487,26 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // ── Project memory: a note the agent saves is a file in the project, and the next turn starts with it ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    const run = async (name) => { const from = (await getLog()).length; await vscode.commands.executeCommand('codico.__evalRunTask', `[SCENARIO:${name}] please do the task`); return (await getLog()).slice(from).filter(e => e.scenario === name && e.stream); };
+    const save = await run('mem_save');
+    const file = read('.codico/memory.md') || '';
+    const written = /^# Project memory\n[\s\S]*## Commands\n- MEMORY-MARKER the tests run with node --test\n$/.test(file);
+    const told = /\[remember\] Saved under "Commands"\. \(\.codico\/memory\.md\)/.test((save[1] || {}).lastUser || '');
+    // Not in the prompt of the turn that saved it (the prompt stays the same for a whole task), in the next one it is
+    const notYet = save.every(r => !r.sawMemory);
+    const recall = await run('mem_recall');
+    const recalled = !!recall[0] && recall[0].sawMemory;
+    // A note that is wrong is removed the same way, and is gone from the turn after
+    await run('mem_fix');
+    const removed = !/MEMORY-MARKER/.test(read('.codico/memory.md') || '') && (await run('mem_recall')).every(r => !r.sawMemory);
+    results.push({ name: 'project_memory', ms: Date.now() - t0, requests: (await getLog()).length - before, ok: written && told && notYet && recalled && removed,
+      why: `the note is in .codico/memory.md under its heading: ${written}; the agent is told it was saved: ${told}; the prompt of the running task is not changed: ${notYet}; the next turn's system prompt has it, as a reminder to check: ${recalled}; removed with "replaces", it is gone from the file and the prompt: ${removed}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Web search: the tool is offered and dispatched in both formats; here it is turned off, so nothing leaves the machine ──
   {
     const t0 = Date.now(); const before = (await getLog()).length;

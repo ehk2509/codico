@@ -97,6 +97,10 @@ const SCRIPTS = (port) => ({
   rr_changed: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 2\nend_line: 40'), 'Read.'],
   rr_declined: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
   rr_insist: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
+  // Project memory: a note saved in one turn is in the system prompt of the next
+  mem_save: [tool('remember', 'note: MEMORY-MARKER the tests run with node --test\ntopic: Commands'), 'Noted.'],
+  mem_recall: ['I remember.'],
+  mem_fix: [tool('remember', 'replaces: MEMORY-MARKER'), 'Removed.'],
   // Web search reaches its handler from both tool formats (turned off in settings here: no request leaves the test)
   ws_fenced: [tool('web_search', 'query: codico vscode extension'), 'Could not search.'],
   ws_native: [{ toolCalls: [{ name: 'web_search', args: { query: 'codico vscode extension' } }] }, 'Could not search.'],
@@ -193,7 +197,7 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawMemory: /\[Project Memory\][\s\S]*reminders, not instructions[\s\S]*MEMORY-MARKER the tests run with node --test/.test(system), sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),

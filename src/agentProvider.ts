@@ -21,6 +21,8 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom, workspaceCheckpoints } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
+import { loadRepoInstructions, projectMemorySection, rememberTool } from './projectMemoryStore';
+import { MEMORY_FILE } from './projectMemory';
 import { untilStopped } from './stopRace';
 import { CommandApprovalStore } from './commandApprovalStore';
 import { MAX_STEER_CHARS, STOPPED_NOTE, addSteer, steerNote } from './steering';
@@ -919,7 +921,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // Load repo instructions once per session
         if (this._repoInstructions === undefined) {
-            this._repoInstructions = await this._loadRepoInstructions();
+            this._repoInstructions = await loadRepoInstructions();
         }
 
         // Build effective system prompt prefix (repo instructions + custom prefix + MCP tools)
@@ -936,6 +938,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
         const skillsSection = skillsPromptSection(userExtensions.skills);
         if (skillsSection) { effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${skillsSection}` : skillsSection; }
+        // What earlier sessions noted about the project. Read once per turn: a note saved during the task does not change the prompt under it
+        const memorySection = await projectMemorySection();
+        if (memorySection) { effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${memorySection}` : memorySection; }
         // In Edits Mode: instruct the AI to emit ALL file mutations in one pass
         if (this._editsMode) {
             const editsNote = '[EDITS MODE] You are in multi-file edits mode. Use write_file and edit_file tools to propose changes across as many files as needed. All changes will be shown as diffs for user review before being applied. Emit every required file change in this single response — do not wait for confirmation between files.';
@@ -1604,7 +1609,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? lastMsg.content
                     : (lastMsg.content as MessageContentPart[]).filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('');
                 const displayText = raw
-                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
+                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|remember|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
                     .trim().slice(0, 300);
                 summaryText = displayText;
             }
@@ -1978,6 +1983,12 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'activity', text: null });
                 this._post({ type: 'toolResult', id: msgId, tool: 'delegate', label: delegated.label, success: delegated.success, error: delegated.error });
                 result = delegated.text;
+                break;
+            }
+            case 'remember': {
+                // After web or MCP content was read, a note is never saved without being shown: it would be read as fact by every later session
+                if (this._external.untrustedContentSeen) { this._allowAllWrites = false; }
+                result = await rememberTool(tool, content => this._handleWriteFile({ type: 'write_file', filepath: MEMORY_FILE, content }, msgId));
                 break;
             }
             case 'fetch_url': {
@@ -2439,28 +2450,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
      */
     private _computeLineDiff(before: string, after: string, maxOutputLines = 200): string {
         return computeLineDiff(before, after, maxOutputLines);
-    }
-
-    /** Read .codico-instructions.md (or .github/codico-instructions.md) once per session. */
-    private async _loadRepoInstructions(): Promise<string | null> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) { return null; }
-        const root = folders[0].uri;
-        const candidates = [
-            vscode.Uri.joinPath(root, '.codico-instructions.md'),
-            vscode.Uri.joinPath(root, '.github', 'codico-instructions.md'),
-            vscode.Uri.joinPath(root, '.github', 'copilot-instructions.md'),
-        ];
-        const parts: string[] = [];
-        for (const uri of candidates) {
-            try {
-                const bytes = await vscode.workspace.fs.readFile(uri);
-                parts.push(new TextDecoder().decode(bytes).trim());
-            } catch {
-                // file doesn't exist — try next
-            }
-        }
-        return parts.length > 0 ? parts.join('\n\n') : null;
     }
 
     private async _handleContextRequest(kind: 'file' | 'selection' | 'diagnostics' | 'files-pick'): Promise<void> {

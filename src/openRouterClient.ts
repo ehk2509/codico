@@ -1,3 +1,4 @@
+import { MEMORY_RULE } from './projectMemory';
 import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
@@ -158,6 +159,11 @@ url: <full URL>
 \`\`\`web_search
 query: <a few specific words>
 \`\`\`
+\`\`\`remember
+note: <one short, durable fact about this project>
+topic: <optional heading: Conventions | Where things live | Commands | Mistakes to avoid>
+replaces: <optional: words of an existing note to replace or remove>
+\`\`\`
 \`\`\`browser_navigate
 url: <full URL>
 \`\`\`
@@ -210,6 +216,7 @@ frame_id: <optional frame index, 0 = top of stack>
 13. Use update_todo only for genuinely multi-step tasks. Skip it for focused one-file fixes. When a plan is useful, keep it concise (normally 2–4 items), update it as work completes, and do not expand scope without evidence. Use [~] for active, [x] for done, [!] for failed.
 14. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
 15. ${UNTRUSTED_CONTENT_RULE}
+16. ${MEMORY_RULE}
 
 ## Clarification
 
