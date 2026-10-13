@@ -465,6 +465,25 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // ── The same with native tool calls: results are tool messages, not text ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'deepseek/deepseek-v4-flash', maxIterations: 12 });
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:rrn_first] please do the task');
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:rrn_again] please do the task');
+    await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+    const reqs = (await getLog()).slice(before).filter(e => /^rrn_/.test(e.scenario) && e.stream);
+    const got = reqs.map(r => (r.toolResults || []).join('\n')).join('\n=====\n');
+    // This thread already holds lines 1–40 from the scenario above, so even the first read here is declined;
+    // asked a second time for exactly those lines (the next turn), the text is given
+    const whole = /\[read_file: fixtures\/long\.txt lines 1–30 of 60; [^\]]*\]\n```\n1\trow 1 of the long file/.test(got);
+    const sameTurn = /\[read_file: fixtures\/long\.txt lines 5–30 of 60\] Not repeated/.test(got);
+    const nextTurn = /\[read_file: fixtures\/long\.txt lines 1–30 of 60\] Not repeated/.test(got);
+    results.push({ name: 'no_repeat_native', ms: Date.now() - t0, requests: reqs.length, ok: whole && sameTurn && nextTurn,
+      why: `lines already in the thread are declined on a native read: ${nextTurn}; an overlapping range in the next step too: ${sameTurn}; asked again, the text is returned as a tool result: ${whole}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Duplicate thread: refused while a reply runs; the copy has the conversation and is independent ──
   {
     const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
