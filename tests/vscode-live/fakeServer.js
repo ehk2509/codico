@@ -88,6 +88,9 @@ const SCRIPTS = (port) => ({
   cs_fresh: [tool('write_file', 'filepath: live/cs-new.ts\ncontent:\nexport function zebraQuokkaHandler() {\n  return 42;\n}'), tool('search_code', 'query: zebra quokka handler'), 'Found the new file.'],
   // A search with many matches in one file, and the context block of a message sent with a secret file open in a tab
   lean_search: [tool('search_files', 'pattern: of the long file\nglob: fixtures/**'), 'Searched.'],
+  // The same with native tool calls (DeepSeek): one read, then the same lines again in the next step and in the next turn
+  rrn_first: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/long.txt', start_line: 1, end_line: 30 } }] }, { toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/long.txt', start_line: 5, end_line: 30 } }] }, 'Read.'],
+  rrn_again: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/long.txt', start_line: 1, end_line: 30 } }] }, 'Read.'],
   // Reading again what is already in the conversation
   rr_first: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), 'Read.'],
   rr_again: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 1\nend_line: 40'), tool('read_file', 'filepath: ./fixtures/long.txt\nstart_line: 21\nend_line: 60'), 'Read.'],
