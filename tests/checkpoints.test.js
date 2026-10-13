@@ -32,7 +32,7 @@ Module._load = function (request, parent, isMain) { return request === 'vscode' 
 test.after(() => { Module._load = originalLoad; });
 
 const { CheckpointService, restoreSummary, restoreOutcome } = require('../out/checkpoints.js');
-const { shadowDir, takeSnapshot, snapshotExists } = require('../out/checkpointGit.js');
+const { shadowDir, takeSnapshot, snapshotExists, pruneSnapshots, SENSITIVE } = require('../out/checkpointGit.js');
 const { rewindFiles, REWIND_ALL, REWIND_CONVERSATION } = require('../out/rewind.js');
 const { UndoRedoStack } = require('../out/undoRedoStack.js');
 
@@ -153,7 +153,7 @@ test('what the user is asked before a rewind through checkpoints', () => {
   assert.equal(asked.message, 'Rewind to before this message? 2 messages and their replies are removed from the conversation.');
   assert.equal(asked.detail, '3 files return to what they were when the message was sent:\n    src/a.js\n    out.log  (created since: deleted)\n    old.js  (deleted since: restored)\n\n' +
     'This covers every change since then: by Codico, by terminal commands, and by you. "Codico: Undo Last Rewind" brings the present state back.\n\n' +
-    'Not covered: files your .gitignore excludes (dependencies, build output, local settings such as .env).');
+    'Not covered: files your .gitignore excludes (dependencies, build output), and files that hold credentials, such as .env and key files.');
   assert.match(restoreSummary({ files: 0, folders: [{ folder: '/w/app', target: 'a', now: 'b', changes: [] }] }, 1).detail, /^The files are already as they were then, so no file is touched\./);
   const two = restoreSummary({ files: 2, folders: [{ folder: '/w/app', target: 'a', now: 'b', changes: [{ status: 'modified', path: 'x' }] }, { folder: '/w/lib', target: 'a', now: 'b', changes: [{ status: 'modified', path: 'x' }] }] }, 1);
   assert.match(two.detail, /    app\/x\n    lib\/x\n/);
@@ -186,4 +186,62 @@ test('rewind uses the checkpoint when there is one: confirmation, conversation o
   ui.asked = []; ui.answers = ['Rewind Conversation'];
   assert.equal(await rewindFiles(stack, ['t1'], false, service, undefined), true);
   assert.match(ui.asked[0].detail, /^No file change by Codico is recorded for these messages/);
+});
+
+const storedFiles = (storage, dir, snapshot) => cp.execFileSync('git', [`--git-dir=${shadowDir(storage, dir)}`, 'ls-tree', '-r', '--name-only', snapshot], { encoding: 'utf8' }).split('\n').filter(Boolean).sort();
+
+test('files that hold credentials are never copied into the store, even when .gitignore does not list them', async () => {
+  // A project with no .gitignore at all, and secrets lying where they usually lie
+  const secrets = { '.env': 'DATABASE_PASSWORD=hunter2\n', '.env.production': 'KEY=1\n', 'config/.env.local': 'KEY=2\n', 'deploy/server.pem': 'PEM\n', 'deploy/tls.key': 'KEY\n',
+    'id_ed25519': 'PRIVATE\n', '.npmrc': '//registry/:_authToken=abc\n', 'infra/terraform.tfstate': '{"secret":1}\n', 'gcp/service-account-prod.json': '{}\n', 'credentials.json': '{}\n', '.aws/credentials': '[default]\n' };
+  const ordinary = { 'src/app.js': 'a\n', '.env.example': 'DATABASE_PASSWORD=\n', 'docs/keys.md': 'how keys work\n', 'src/environment.ts': 'export {}\n', 'src/keyboard.key.ts': 'x\n' };
+  const { dir, storage, service } = project({ ...secrets, ...ordinary });
+  const checkpoint = await service.begin('x');
+  assert.deepEqual(storedFiles(storage, dir, checkpoint[dir]), ['.env.example', 'docs/keys.md', 'src/app.js', 'src/environment.ts', 'src/keyboard.key.ts'].sort());
+  // Nothing of them anywhere in the store's objects either
+  const found = cp.spawnSync('git', [`--git-dir=${shadowDir(storage, dir)}`, 'grep', '-c', 'hunter2', checkpoint[dir]], { encoding: 'utf8' });
+  assert.equal(found.status, 1, 'the password is not in any stored file: ' + found.stdout);
+});
+
+test('a rewind leaves credential files exactly as they are', async () => {
+  const { dir, service } = project({ '.env': 'KEY=old\n', 'src/app.js': 'a\n' });
+  const checkpoint = await service.begin('x');
+  write(dir, '.env', 'KEY=rotated\n'); write(dir, 'src/app.js', 'changed\n'); write(dir, 'new.pem', 'made later\n');
+  const plan = await service.plan(checkpoint);
+  assert.deepEqual(plan.folders[0].changes, [{ status: 'modified', path: 'src/app.js' }], 'they are not part of what a rewind lists');
+  await service.restore(plan);
+  assert.deepEqual([read(dir, 'src/app.js'), read(dir, '.env'), read(dir, 'new.pem')], ['a\n', 'KEY=rotated\n', 'made later\n']);
+  assert.ok(SENSITIVE.includes('.env') && SENSITIVE.includes('*.pem'));
+});
+
+test('the store is private to the user, and one made under older rules is thrown away', { skip: process.platform === 'win32' }, async () => {
+  const { dir, storage, service } = project({ 'a.txt': 'one\n' });
+  const first = await service.begin('x');
+  const store = shadowDir(storage, dir);
+  assert.equal(fs.statSync(store).mode & 0o077, 0, 'no access for group or others');
+  // As a store from the first release was: no rules line. It may hold a secret the rules now keep out
+  fs.writeFileSync(path.join(store, 'CODICO-CHECKPOINTS.txt'), 'Codico checkpoints\n');
+  const second = await new CheckpointService(storage, () => [dir]).begin('y');
+  assert.equal(await snapshotExists(storage, dir, first[dir]), false, 'the old store is gone, with whatever it held');
+  assert.equal(await snapshotExists(storage, dir, second[dir]), true);
+  assert.match(fs.readFileSync(path.join(store, 'CODICO-CHECKPOINTS.txt'), 'utf8'), /Rules: 2\n/);
+});
+
+test('checkpoints older than the keep-until period are deleted, with what only they held', async () => {
+  const { dir, storage } = project({ 'a.txt': 'OLD-CONTENT-ONLY-IN-THE-FIRST\n' });
+  const day = 86_400_000;
+  const old = await takeSnapshot(storage, dir, 'old');
+  write(dir, 'a.txt', 'newer\n');
+  const recent = await takeSnapshot(storage, dir, 'recent');
+  assert.equal(await pruneSnapshots(storage, dir, 14), 0, 'nothing is old yet');
+  assert.equal(await pruneSnapshots(storage, dir, 0), 0, '0 keeps everything');
+  // Twenty days later, keeping fourteen: both are past it
+  assert.equal(await pruneSnapshots(storage, dir, 14, Date.now() + 20 * day), 2);
+  assert.equal(await snapshotExists(storage, dir, old), false);
+  assert.equal(await snapshotExists(storage, dir, recent), false);
+  // The service does this once per session before taking a new checkpoint, and a message whose checkpoint is gone falls back
+  const service = new CheckpointService(storage, () => [dir], () => true, () => 14);
+  const again = await service.begin('z');
+  assert.ok(again && await snapshotExists(storage, dir, again[dir]));
+  assert.equal(await service.plan({ [dir]: old }), undefined);
 });

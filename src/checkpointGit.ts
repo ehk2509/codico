@@ -11,7 +11,23 @@ import { git, GitResult } from './backgroundGit';
  */
 
 /** Folders that are rebuilt, not written: never worth copying, even in a project with no .gitignore. */
-const ALWAYS_EXCLUDED = ['node_modules/', '.venv/', 'venv/', '__pycache__/', '.git/', '.hg/', '.svn/', '.DS_Store', 'Thumbs.db'];
+const REBUILT = ['node_modules/', '.venv/', 'venv/', '__pycache__/', '.git/', '.hg/', '.svn/', '.DS_Store', 'Thumbs.db'];
+/**
+ * Files that hold credentials. They are never copied into the store, whether or not the
+ * project's .gitignore lists them: a checkpoint must not become a second place where a
+ * secret lives. The price is that a rewind does not restore them.
+ */
+export const SENSITIVE = [
+    '.env', '.env.*', '!.env.example', '!.env.sample', '!.env.template', '*.pem', '*.key', '*.p12', '*.pfx', '*.jks', '*.keystore', '*.kdbx',
+    'id_rsa', 'id_rsa.*', 'id_dsa', 'id_ecdsa', 'id_ecdsa.*', 'id_ed25519', 'id_ed25519.*', '.npmrc', '.pypirc', '.netrc', '.git-credentials', '.htpasswd',
+    'credentials.json', 'credentials.yml', 'credentials.yaml', 'secrets.json', 'secrets.yml', 'secrets.yaml', 'service-account*.json', '*.tfstate', '*.tfstate.*', '*.tfvars',
+    '.aws/', '.ssh/', '.gnupg/', '.kube/', '.azure/', '.docker/config.json',
+];
+const ALWAYS_EXCLUDED = [...REBUILT, ...SENSITIVE];
+/** Changed whenever the exclusions change: a store made under older rules is deleted, since it may hold what the new rules keep out. */
+const RULES_VERSION = 2;
+const MARKER = 'CODICO-CHECKPOINTS.txt';
+const SNAPSHOT_REFS = 'refs/codico/cp/';
 
 export interface ChangedFile { status: 'modified' | 'added' | 'deleted'; path: string }
 
@@ -30,21 +46,28 @@ function run(shadow: string, workTree: string, args: string[], timeoutMs = 120_0
     return git(workTree, [
         `--git-dir=${shadow}`, `--work-tree=${workTree}`,
         '-c', `core.hooksPath=${path.join(shadow, 'no-hooks')}`, '-c', 'commit.gpgsign=false', '-c', 'core.autocrlf=false', '-c', 'core.safecrlf=false',
-        '-c', 'core.fsmonitor=false', '-c', 'core.quotepath=false', '-c', 'user.name=Codico', '-c', 'user.email=codico@localhost', '-c', 'gc.auto=200', '-c', 'advice.addEmbeddedRepo=false',
+        '-c', 'core.fsmonitor=false', '-c', 'core.quotepath=false', '-c', 'core.logAllRefUpdates=false', '-c', 'user.name=Codico', '-c', 'user.email=codico@localhost', '-c', 'gc.auto=200', '-c', 'advice.addEmbeddedRepo=false',
         ...args], timeoutMs);
 }
 
 const sha = (text: string) => /^[0-9a-f]{40,64}$/.exec(text.trim())?.[0];
 
 async function ensureRepository(shadow: string, workTree: string): Promise<boolean> {
-    if (fs.existsSync(path.join(shadow, 'HEAD'))) { return true; }
-    await fs.promises.mkdir(shadow, { recursive: true });
+    if (fs.existsSync(path.join(shadow, 'HEAD'))) {
+        let rules = '';
+        try { rules = await fs.promises.readFile(path.join(shadow, MARKER), 'utf8'); } catch { /* an older store has no rules line */ }
+        if (rules.includes(`Rules: ${RULES_VERSION}\n`)) { return true; }
+        await fs.promises.rm(shadow, { recursive: true, force: true });
+    }
+    // Readable by this user only: it holds a copy of the project's files
+    await fs.promises.mkdir(shadow, { recursive: true, mode: 0o700 });
+    try { await fs.promises.chmod(shadow, 0o700); } catch { /* a file system without permissions */ }
     const made = await run(shadow, workTree, ['init', '--quiet']);
     if (!made.ok) { return false; }
     await fs.promises.mkdir(path.join(shadow, 'info'), { recursive: true });
     await fs.promises.writeFile(path.join(shadow, 'info', 'exclude'), ALWAYS_EXCLUDED.join('\n') + '\n');
     // So that someone looking at the folder knows what it is and that it can be deleted
-    await fs.promises.writeFile(path.join(shadow, 'CODICO-CHECKPOINTS.txt'), `Codico checkpoints of ${workTree}\nSafe to delete: only the ability to rewind to earlier messages is lost.\n`);
+    await fs.promises.writeFile(path.join(shadow, MARKER), `Codico checkpoints of ${workTree}\nSafe to delete: only the ability to rewind to earlier messages is lost.\nRules: ${RULES_VERSION}\n`);
     return true;
 }
 
@@ -57,9 +80,27 @@ export async function takeSnapshot(storageRoot: string, workTree: string, label:
         // Some files could not be read (locked, vanished meanwhile): the snapshot holds the rest
         if (!fs.existsSync(path.join(shadow, 'index'))) { return undefined; }
     }
-    const committed = await run(shadow, workTree, ['commit', '--quiet', '--allow-empty', '--no-verify', '-m', label.slice(0, 200) || 'checkpoint']);
-    if (!committed.ok) { return undefined; }
-    return sha((await run(shadow, workTree, ['rev-parse', 'HEAD'])).stdout);
+    // Each snapshot stands alone, under a name that carries its time: old ones can then be dropped without rewriting anything
+    const tree = sha((await run(shadow, workTree, ['write-tree'])).stdout);
+    if (!tree) { return undefined; }
+    const commit = sha((await run(shadow, workTree, ['commit-tree', tree, '-m', label.slice(0, 200) || 'checkpoint'])).stdout);
+    if (!commit) { return undefined; }
+    const named = await run(shadow, workTree, ['update-ref', `${SNAPSHOT_REFS}${Date.now()}-${commit.slice(0, 12)}`, commit]);
+    return named.ok ? commit : undefined;
+}
+
+/**
+ * Deletes the snapshots older than `days` and what only they held. Returns how many went.
+ * The state kept for "Undo Last Rewind" is not a dated snapshot and stays.
+ */
+export async function pruneSnapshots(storageRoot: string, workTree: string, days: number, now = Date.now()): Promise<number> {
+    const shadow = shadowDir(storageRoot, workTree);
+    if (!(days > 0) || !fs.existsSync(path.join(shadow, 'HEAD'))) { return 0; }
+    const refs = (await run(shadow, workTree, ['for-each-ref', '--format=%(refname)', SNAPSHOT_REFS])).stdout.split('\n').filter(Boolean);
+    const old = refs.filter(ref => { const taken = Number(/\/(\d+)-[0-9a-f]+$/.exec(ref)?.[1]); return Number.isFinite(taken) && now - taken > days * 86_400_000; });
+    for (const ref of old) { await run(shadow, workTree, ['update-ref', '-d', ref]); }
+    if (old.length > 0) { await run(shadow, workTree, ['gc', '--prune=now', '--quiet'], 300_000); }
+    return old.length;
 }
 
 export async function snapshotExists(storageRoot: string, workTree: string, snapshot: string): Promise<boolean> {

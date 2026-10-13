@@ -1,5 +1,5 @@
 import * as path from 'path';
-import { ChangedFile, changesBetween, deleteSnapshots, keepSnapshot, keptSnapshot, restoreSnapshot, snapshotExists, takeSnapshot } from './checkpointGit';
+import { ChangedFile, changesBetween, deleteSnapshots, keepSnapshot, keptSnapshot, pruneSnapshots, restoreSnapshot, snapshotExists, takeSnapshot } from './checkpointGit';
 
 /** A checkpoint: for each workspace folder, the snapshot of it taken when a message was sent. */
 export type Checkpoint = Record<string, string>;
@@ -25,7 +25,10 @@ export class CheckpointService {
      * @param _folders the workspace folders, as absolute paths
      * @param _enabled false when the user turned checkpoints off
      */
-    constructor(private readonly _storageRoot: string, private readonly _folders: () => string[], private readonly _enabled: () => boolean = () => true) {}
+    /** @param _retentionDays how long a checkpoint is kept; 0 keeps them until they are cleared */
+    constructor(private readonly _storageRoot: string, private readonly _folders: () => string[], private readonly _enabled: () => boolean = () => true, private readonly _retentionDays: () => number = () => 0) {}
+    /** Folders whose old checkpoints were already dropped in this session. */
+    private readonly _pruned = new Set<string>();
 
     private _next<T>(work: () => Promise<T>): Promise<T> {
         const result = this._queue.then(work, work);
@@ -39,6 +42,8 @@ export class CheckpointService {
             if (!this._enabled()) { return undefined; }
             const checkpoint: Checkpoint = {};
             for (const folder of this._folders()) {
+                // Once per session: what is past its keep-until date goes before more is added
+                if (!this._pruned.has(folder)) { this._pruned.add(folder); await pruneSnapshots(this._storageRoot, folder, this._retentionDays()); }
                 const snapshot = await takeSnapshot(this._storageRoot, folder, label);
                 if (snapshot) { checkpoint[folder] = snapshot; }
             }
@@ -124,7 +129,7 @@ export function restoreSummary(plan: RestorePlan, turns: number): { message: str
         if (all.length > 14) { lines.push(`    … and ${all.length - 14} more`); }
         lines.push('', 'This covers every change since then: by Codico, by terminal commands, and by you. "Codico: Undo Last Rewind" brings the present state back.');
     }
-    lines.push('', 'Not covered: files your .gitignore excludes (dependencies, build output, local settings such as .env).');
+    lines.push('', 'Not covered: files your .gitignore excludes (dependencies, build output), and files that hold credentials, such as .env and key files.');
     return { message, detail: lines.join('\n') };
 }
 

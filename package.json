@@ -494,7 +494,7 @@
         "codico.checkpoints": {
           "type": "boolean",
           "default": true,
-          "description": "Take a checkpoint of the workspace when each message is sent, so that rewinding to the message restores every file, including what terminal commands changed, and still works after a restart. Checkpoints are kept in a git repository of Codico's own, outside the project, and need git to be installed. Files your .gitignore excludes are not included."
+          "description": "Take a checkpoint of the workspace when each message is sent, so that rewinding to the message restores every file, including what terminal commands changed, and still works after a restart. Checkpoints are kept in a git repository of Codico's own, outside the project, and need git to be installed. Files your .gitignore excludes are not included, and files that hold credentials (.env, key files and the like) never are."
         },
         "codico.memory": {
           "type": "boolean",
@@ -531,6 +531,12 @@
           "default": [],
           "scope": "machine",
           "description": "Further folders sandboxed commands may write to, besides the workspace, package caches and temporary folders. Credential folders stay hidden whatever is listed here."
+        },
+        "codico.checkpointRetentionDays": {
+          "type": "number",
+          "default": 14,
+          "minimum": 0,
+          "description": "Days a checkpoint is kept. Older ones are deleted, with the file contents only they held; their messages can then rewind the conversation but not the files. 0 keeps checkpoints until you clear them."
         },
         "codico.openTabsContext": {
           "type": "boolean",
