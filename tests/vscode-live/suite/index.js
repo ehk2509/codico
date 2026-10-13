@@ -487,6 +487,25 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // ── Background task: a window opened for a task runs it and reports its state through the shared registry ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length; const now = Date.now();
+    const task = { id: 'ab12cd34ef567890', prompt: '[SCENARIO:bg_task] write the result file', repoRoot: path.join(ws, '..', 'origin-repo'), worktree: ws,
+      branch: 'codico/write-the-result-file-ab12cd', baseCommit: '0123456789abcdef', baseBranch: 'main', permissions: 'ask', status: 'starting', createdAt: now, updatedAt: now };   // 'ask': the window keeps a task's permissions, and later scenarios test approvals
+    const done = await vscode.commands.executeCommand('codico.__evalBackground', task) || {};
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'bg_task' && e.stream);
+    const told = /\[Background task\] You are working in a separate git worktree of the project, on its own branch "codico\/write-the-result-file-ab12cd" \(started from "main"\)/.test((reqs[0] || {}).lastUser || '');
+    const ran = read('live/bg-result.txt') !== null && reqs.length >= 2;
+    const listed = (await vscode.commands.executeCommand('codico.__evalBackground') || []).find(t => t.id === task.id) || {};
+    // Opening the same window again must not run the task a second time
+    const again = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalBackground', { ...listed });
+    const once = (await getLog()).slice(again).filter(e => e.scenario === 'bg_task').length === 0;
+    results.push({ name: 'background_task', ms: Date.now() - t0, requests: reqs.length, ok: told && ran && done.status === 'finished' && listed.status === 'finished' && listed.heartbeat > now - 1000 && once,
+      why: `the agent was told where it works: ${told}; the task ran in this window: ${ran}; reported as ${done.status} to the caller and ${listed.status} in the registry other windows read; not run again when the window reopens: ${once}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Duplicate thread: refused while a reply runs; the copy has the conversation and is independent ──
   {
     const t0 = Date.now(); const msg = (m) => vscode.commands.executeCommand('codico.__evalWebviewMessage', m);
