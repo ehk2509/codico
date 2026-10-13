@@ -122,45 +122,59 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-run-'));
   const out = path.join(work, 'events.jsonl'); const taskFile = path.join(work, 'task.json');
-  fs.writeFileSync(out, '');
   fs.writeFileSync(taskFile, JSON.stringify({ prompt: options.prompt, out, model: options.model, permissions: options.permissions, allowWeb: !!options.allowWeb, allowHooks: !!options.allowHooks, maxSteps: options.maxSteps, ollamaUrl: options.ollamaUrl }), { mode: 0o600 });
-
   const env = { ...process.env, CODICO_HEADLESS: '1', CODICO_HEADLESS_TASK: taskFile };
   delete env.ELECTRON_RUN_AS_NODE;
-  const args = [options.cwd, `--extensionDevelopmentPath=${EXTENSION_ROOT}`, `--extensionTestsPath=${path.join(__dirname, 'headless-runner.js')}`,
-    '--user-data-dir', path.join(work, 'user-data'), '--extensions-dir', path.join(work, 'extensions'),
-    '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-gpu',
-    ...(process.env.CODICO_VSCODE_ARGS ? process.env.CODICO_VSCODE_ARGS.split(' ').filter(Boolean) : [])];
-  const child = cp.spawn(vscode, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
-  let stderrTail = '';
-  child.stderr.on('data', chunk => { stderrTail = (stderrTail + chunk).slice(-4000); });
 
-  // The extension appends one JSON object per line; read what is new
-  let read = 0; let rest = ''; let end;
-  const drain = () => {
-    let text = '';
-    try { const all = fs.readFileSync(out); text = all.subarray(read).toString('utf8'); read = all.length; } catch { return; }
-    const lines = (rest + text).split('\n'); rest = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.trim()) { continue; }
-      let event; try { event = JSON.parse(line); } catch { continue; }
-      if (event.type === 'end') { end = event; }
-      if (options.json) { process.stdout.write(line + '\n'); continue; }
-      const shown = render(event);
-      if (shown) { (shown.stream === 'out' ? process.stdout : process.stderr).write(shown.text); }
-    }
+  /** One start of the editor for the task; resolves when it has exited. */
+  const launch = async (extraArgs) => {
+    fs.writeFileSync(out, '');
+    const args = [options.cwd, `--extensionDevelopmentPath=${EXTENSION_ROOT}`, `--extensionTestsPath=${path.join(__dirname, 'headless-runner.js')}`,
+      '--user-data-dir', path.join(work, 'user-data'), '--extensions-dir', path.join(work, 'extensions'),
+      '--disable-extensions', '--disable-workspace-trust', '--skip-welcome', '--skip-release-notes', '--disable-updates', '--disable-gpu',
+      ...extraArgs, ...(process.env.CODICO_VSCODE_ARGS ? process.env.CODICO_VSCODE_ARGS.split(' ').filter(Boolean) : [])];
+    const child = cp.spawn(vscode, args, { env, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderrTail = '';
+    child.stderr.on('data', chunk => { stderrTail = (stderrTail + chunk).slice(-4000); });
+
+    // The extension appends one JSON object per line; read what is new
+    let read = 0; let rest = ''; let end; let events = 0;
+    const drain = () => {
+      let text = '';
+      try { const all = fs.readFileSync(out); text = all.subarray(read).toString('utf8'); read = all.length; } catch { return; }
+      const lines = (rest + text).split('\n'); rest = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) { continue; }
+        let event; try { event = JSON.parse(line); } catch { continue; }
+        events++;
+        if (event.type === 'end') { end = event; }
+        if (options.json) { process.stdout.write(line + '\n'); continue; }
+        const shown = render(event);
+        if (shown) { (shown.stream === 'out' ? process.stdout : process.stderr).write(shown.text); }
+      }
+    };
+    const poll = setInterval(drain, 150);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 3000); }, options.timeout * 1000);
+    // Once the task has ended the editor is no longer needed: give it a moment to close, then close it
+    const closer = setInterval(() => { if (end) { clearInterval(closer); setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* gone */ } }, 4000); } }, 200);
+    const stop = () => { try { child.kill('SIGTERM'); } catch { /* gone */ } };
+    process.on('SIGINT', stop); process.on('SIGTERM', stop);
+    const exited = await new Promise(resolve => { child.on('exit', code => resolve(code)); child.on('error', error => { stderrTail += String(error.message); resolve(-1); }); });
+    clearInterval(poll); clearInterval(closer); clearTimeout(timer);
+    process.removeListener('SIGINT', stop); process.removeListener('SIGTERM', stop);
+    drain();
+    return { end, events, exited, stderrTail, timedOut };
   };
-  const poll = setInterval(drain, 150);
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; child.kill('SIGTERM'); setTimeout(() => child.kill('SIGKILL'), 3000); }, options.timeout * 1000);
-  // Once the task has ended the editor is no longer needed: give it a moment to close, then close it
-  const closer = setInterval(() => { if (end) { clearInterval(closer); setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* gone */ } }, 4000); } }, 200);
-  const stop = () => { try { child.kill('SIGTERM'); } catch { /* gone */ } };
-  process.on('SIGINT', stop); process.on('SIGTERM', stop);
 
-  const exited = await new Promise(resolve => { child.on('exit', code => resolve(code)); child.on('error', error => { stderrTail += String(error.message); resolve(-1); }); });
-  clearInterval(poll); clearInterval(closer); clearTimeout(timer);
-  drain();
+  let run = await launch([]);
+  // A VS Code unpacked from an archive (CI caches, portable installs) cannot use Chromium's own process sandbox, and
+  // stops before it starts. That sandbox isolates the editor's windows from each other, not the agent's commands.
+  if (!run.end && run.events === 0 && process.platform === 'linux' && /setuid_sandbox_host|SUID sandbox helper|chrome-sandbox/.test(run.stderrTail)) {
+    process.stderr.write('codico: this VS Code cannot start with Chromium\'s process sandbox (its chrome-sandbox helper is not set up); starting it with --no-sandbox.\n');
+    run = await launch(['--no-sandbox']);
+  }
+  const { end, exited, stderrTail, timedOut } = run;
   if (!options.json && end) { process.stdout.write('\n'); }
   try { fs.rmSync(work, { recursive: true, force: true }); } catch { /* left for the system to clean */ }
 

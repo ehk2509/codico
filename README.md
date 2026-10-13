@@ -386,6 +386,7 @@ Other options: `--cwd <dir>`, `--model <id>`, `--max-steps <n>`, `--timeout <sec
 
 - **Keys** come from the environment: `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY`, `CEREBRAS_API_KEY`.
 - **A run is isolated from your editor.** It uses a profile of its own, created for the run and removed afterwards: your settings, extensions, threads and stored keys are not used, and the folder is treated as trusted because you pointed the command at it.
+- **A VS Code unpacked from an archive** (CI caches, portable installs) cannot use Chromium's process sandbox; the command notices, says so, and starts it with `--no-sandbox`. Extra arguments for VS Code can be given in `CODICO_VSCODE_ARGS`.
 - **Unattended commands are not confined** unless you also turn on the command sandbox for that machine. In CI, a throwaway runner is the usual boundary.
 
 ### Pull Requests
