@@ -30,6 +30,8 @@ export interface TerminalProcessOptions {
     env?: NodeJS.ProcessEnv;
     onChunk?: (text: string) => void;
     maxCapturedBytes?: number;
+    /** Wraps the command in an operating-system sandbox: given the shell, returns the program to start instead. */
+    sandbox?: (shell: string, command: string) => { file: string; args: string[] };
 }
 
 export interface TerminalProcessResult {
@@ -88,6 +90,7 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         env = buildTerminalEnvironment(),
         onChunk,
         maxCapturedBytes = 1024 * 1024,
+        sandbox,
     } = options;
 
     return new Promise<TerminalProcessResult>((resolve) => {
@@ -99,10 +102,12 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
         // Let Node construct the platform-specific shell invocation. In particular,
         // this avoids cmd.exe /s /c double-quoting bugs for commands that themselves
         // contain quotes (for example node -e "...").
-        const child = cp.spawn(command, {
+        // In a sandbox the wrapper is the program, and it starts the shell itself
+        const wrapped = sandbox && process.platform !== 'win32' ? sandbox(process.env.SHELL && /\/(?:ba|z|da)?sh$/.test(process.env.SHELL) ? process.env.SHELL : '/bin/sh', command) : undefined;
+        const child = cp.spawn(wrapped ? wrapped.file : command, wrapped ? wrapped.args : [], {
             cwd,
             env,
-            shell,
+            shell: wrapped ? false : shell,
             detached: useProcessGroup,
             windowsHide: true,
             // No input: a command that prompts (npx install, npm init…) gets end-of-input and

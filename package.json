@@ -478,6 +478,27 @@
           "default": true,
           "description": "Let the agent keep short notes about the project in .codico/memory.md (conventions, where things live, mistakes to avoid) and read them at the start of every session. Each note is written through the normal file-change approval."
         },
+        "codico.commandSandbox": {
+          "type": "string",
+          "enum": ["off", "auto", "required"],
+          "enumDescriptions": ["Commands run as your user, limited only by approvals.", "Commands run in an operating-system sandbox when one is available (Linux with bubblewrap, macOS); otherwise as with \"off\".", "Commands run only in the sandbox; where none is available they are refused."],
+          "default": "off",
+          "scope": "machine",
+          "description": "Confine the agent's terminal commands with an operating-system sandbox: they can read the machine but write only in the workspace, package caches and temporary folders, and cannot read credential folders such as ~/.ssh. Set per machine; a project cannot change it."
+        },
+        "codico.commandSandboxNetwork": {
+          "type": "boolean",
+          "default": true,
+          "scope": "machine",
+          "description": "Whether sandboxed commands may use the network. Turning it off stops installs and downloads too."
+        },
+        "codico.commandSandboxWritablePaths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "scope": "machine",
+          "description": "Further folders sandboxed commands may write to, besides the workspace, package caches and temporary folders. Credential folders stay hidden whatever is listed here."
+        },
         "codico.openTabsContext": {
           "type": "boolean",
           "default": true,
