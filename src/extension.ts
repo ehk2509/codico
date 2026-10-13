@@ -1,3 +1,4 @@
+import { isHeadless, runHeadless } from './headless';
 import { addressReviewComments, createPullRequestForCurrentBranch, openPullRequest } from './pullRequestService';
 import { openProjectMemory } from './projectMemoryStore';
 import { clearCheckpoints, undoLastRewind } from './rewind';
@@ -134,6 +135,11 @@ export function activate(context: vscode.ExtensionContext): void {
         )
     );
 
+    // ── Headless: started by the `codico` command with a task and nobody at the screen ──
+    if (isHeadless(context)) {
+        context.subscriptions.push(vscode.commands.registerCommand('codico.__headlessRun', () => runHeadless(context, provider)));
+    }
+
     // ── Background tasks: started here, run in a window of their own ───────────
     const backgroundStore = new BackgroundTaskStore(path.join(context.globalStorageUri.fsPath, 'background-tasks'));
     const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
@@ -165,6 +171,11 @@ export function activate(context: vscode.ExtensionContext): void {
             if (key === undefined) { return; }
             if (key.trim()) { await context.secrets.store(WEB_SEARCH_KEY, key.trim()); } else { await context.secrets.delete(WEB_SEARCH_KEY); }
             void vscode.window.showInformationMessage(key.trim() ? 'Codico: web search key saved.' : 'Codico: web search key removed.');
+        }),
+        vscode.commands.registerCommand('codico.copyCliCommand', async () => {
+            const command = `node "${path.join(context.extensionPath, 'bin', 'codico.js')}"`;
+            await vscode.env.clipboard.writeText(command);
+            void vscode.window.showInformationMessage(`Codico: copied. Run a task without the editor with: ${command} run "<task>" --allow-edits   (add --help for the options)`);
         }),
         vscode.commands.registerCommand('codico.openMemory', () => openProjectMemory()),
         vscode.commands.registerCommand('codico.createPullRequest', () => createPullRequestForCurrentBranch(context)),
