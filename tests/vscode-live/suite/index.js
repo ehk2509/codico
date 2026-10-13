@@ -652,22 +652,28 @@ async function run() {
     await run('rw_second');
     const secondTurn = (await vscode.commands.executeCommand('codico.__evalTurns')).at(-1);
     await run('rw_third');
-    const changed = read('fixtures/rewind.txt') === 'v3\n' && read('live/rw-new.txt') !== null && read('fixtures/rewind-kept.txt') === 'k2\n';
+    // The second turn also ran a command that created one file and appended to another
+    const changed = read('fixtures/rewind.txt') === 'v3\n' && read('live/rw-new.txt') !== null && read('live/rw-cmd.txt') !== null && /^k2\r?\nappended-by-a-command/.test(read('fixtures/rewind-kept.txt') || '');
     const turnsBefore = (await vscode.commands.executeCommand('codico.__evalTurns')).length;
     await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'rewind', turnId: secondTurn });
-    // Both later turns' changes are gone, the file the second turn created too; the first turn's change stays
+    // Both later turns' changes are gone, the file the second turn created too; the first turn's change stays.
+    // What the command did is undone as well: its file is deleted and its appended line removed
     const restored = read('fixtures/rewind.txt') === 'v1\n' && read('live/rw-new.txt') === null && read('fixtures/rewind-kept.txt') === 'k2\n';
+    const commandUndone = read('live/rw-cmd.txt') === null;
     const turnsAfter = (await vscode.commands.executeCommand('codico.__evalTurns')).length;
     const mid = (await getLog()).length;
     await run('rw_after');
     // The next request is sent from where the second turn started: same conversation length, none of the later turns in it
     const second = await firstOf('rw_second', mark); const after = await firstOf('rw_after', mid);
     const cut = !!second && !!after && after.roles.length === second.roles.length && turnsBefore - turnsAfter === 2;
-    // Redo brings the rewound changes back, oldest first
-    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'redo' });
-    const redone = read('fixtures/rewind.txt') === 'v2\n';
-    results.push({ name: 'rewind', ms: Date.now() - t0, requests: 0, ok: changed && restored && cut && redone,
-      why: `three turns changed the files: ${changed}; after rewinding to the second, its and the third's changes are undone and the first's kept: ${restored}; two turns left the conversation and the next request starts from there: ${cut}; redo reapplies the first rewound change: ${redone}` });
+    // Undo Last Rewind brings back the files as they were just before it (the third turn's state)
+    await vscode.commands.executeCommand('codico.undoRewind');
+    const redone = read('fixtures/rewind.txt') === 'v3\n' && read('live/rw-cmd.txt') !== null && read('live/rw-new.txt') !== null;
+    // …and the scenarios that follow start from the rewound state again
+    await vscode.commands.executeCommand('codico.undoRewind');
+    const back = read('fixtures/rewind.txt') === 'v1\n' && read('live/rw-cmd.txt') === null;
+    results.push({ name: 'rewind', ms: Date.now() - t0, requests: 0, ok: changed && restored && commandUndone && cut && redone && back,
+      why: `three turns changed the files: ${changed}; after rewinding to the second, its and the third's changes are undone and the first's kept: ${restored}; two turns left the conversation and the next request starts from there: ${cut}; what a terminal command created and appended is undone too: ${commandUndone}; Undo Last Rewind brings the pre-rewind files back, and again returns to the checkpoint: ${redone && back}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 

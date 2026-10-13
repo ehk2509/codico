@@ -137,6 +137,14 @@
         "title": "Codico: Background Tasks"
       },
       {
+        "command": "codico.undoRewind",
+        "title": "Codico: Undo Last Rewind"
+      },
+      {
+        "command": "codico.clearCheckpoints",
+        "title": "Codico: Clear Checkpoints"
+      },
+      {
         "command": "codico.setWebSearchKey",
         "title": "Codico: Set Web Search Key"
       },
@@ -455,6 +463,11 @@
           "enumDescriptions": ["DuckDuckGo, no key needed. It sometimes declines automated searches.", "Brave Search API. Needs a key: run \"Codico: Set Web Search Key\".", "The agent cannot search the web."],
           "default": "duckduckgo",
           "description": "Search engine of the agent's web_search tool. Each search is asked about first, like any request to the outside, and sends the query to that engine."
+        },
+        "codico.checkpoints": {
+          "type": "boolean",
+          "default": true,
+          "description": "Take a checkpoint of the workspace when each message is sent, so that rewinding to the message restores every file, including what terminal commands changed, and still works after a restart. Checkpoints are kept in a git repository of Codico's own, outside the project, and need git to be installed. Files your .gitignore excludes are not included."
         },
         "codico.openTabsContext": {
           "type": "boolean",

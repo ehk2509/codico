@@ -35,6 +35,8 @@ export interface DisplayMessage {
     plan?: string;
     /** User messages: the text actually sent, when it differs from what is shown. */
     prompt?: string;
+    /** User messages: the snapshot of each workspace folder taken when the message was sent. */
+    checkpoint?: Record<string, string>;
     /** Replies: what the task cost, request by request, and when the conversation was compacted. */
     usage?: import('./taskUsage').TaskUsageRecord;
 }

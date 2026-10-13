@@ -53,6 +53,9 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
 
     agent.backgroundPermissions = task.permissions;
     let current: string = 'running';
+    // One write at a time, in the order things happened: a later status must not be overtaken by an earlier one
+    let writes: Promise<unknown> = Promise.resolve();
+    const put = (change: Partial<BackgroundTask>) => { writes = writes.then(() => store.update(task.id, change), () => undefined); return writes; };
     let question = false;
     let failure: string | undefined;
     agent.backgroundListener = message => {
@@ -62,18 +65,20 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
         const next = statusFromMessage(message);
         if (!next || next.status === current) { return; }
         current = next.status;
-        void store.update(task.id, { status: next.status, note: next.note, heartbeat: Date.now() });
+        void put({ status: next.status, note: next.note, heartbeat: Date.now() });
     };
-    const beat = setInterval(() => { void store.update(task.id, { heartbeat: Date.now() }); }, HEARTBEAT_MS);
+    const beat = setInterval(() => { void put({ heartbeat: Date.now() }); }, HEARTBEAT_MS);
     try {
         await agent.sendMessage(`${taskPreface(task)}\n\n${task.prompt}`);
         const usage = agent.lastReplyUsage();
         const outcome = failure ? { status: 'failed' as const, note: failure.slice(0, 200) }
             : question ? { status: 'waiting' as const, note: 'answer its question' }
             : { status: 'finished' as const, note: undefined };
-        return await store.update(task.id, { ...outcome, heartbeat: Date.now(), tokens: usage?.tokens, requests: usage?.requests?.length });
+        await put({ ...outcome, heartbeat: Date.now(), tokens: usage?.tokens, requests: usage?.requests?.length });
+        return await store.get(task.id);
     } catch (error) {
-        return await store.update(task.id, { status: 'failed', note: error instanceof Error ? error.message : String(error) });
+        await put({ status: 'failed', note: error instanceof Error ? error.message : String(error) });
+        return await store.get(task.id);
     } finally {
         clearInterval(beat);
         agent.backgroundListener = undefined;

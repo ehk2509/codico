@@ -2134,7 +2134,7 @@
     d.innerHTML =
       '<div class="msg-label">You' + _timeHtml(meta && meta.at || Date.now()) +
         '<span class="msg-actions">' +
-          '<button class="msg-act msg-rewind" title="Rewind to here: remove this message and what followed, and put back the files Codico changed since">\u21BA</button>' +
+          '<button class="msg-act msg-rewind" title="Rewind to here: remove this message and what followed, and put back the files as they were when it was sent">\u21BA</button>' +
           '<button class="msg-act msg-edit" title="Edit and resend">\u270E</button>' +
           '<button class="msg-act msg-del" title="Delete this message and everything after it">\uD83D\uDDD1</button>' +
         '</span></div>' +

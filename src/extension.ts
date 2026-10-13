@@ -1,3 +1,4 @@
+import { clearCheckpoints, undoLastRewind } from './rewind';
 import { WEB_SEARCH_KEY } from './externalToolRuntime';
 import { BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
@@ -163,6 +164,8 @@ export function activate(context: vscode.ExtensionContext): void {
             if (key.trim()) { await context.secrets.store(WEB_SEARCH_KEY, key.trim()); } else { await context.secrets.delete(WEB_SEARCH_KEY); }
             void vscode.window.showInformationMessage(key.trim() ? 'Codico: web search key saved.' : 'Codico: web search key removed.');
         }),
+        vscode.commands.registerCommand('codico.undoRewind', () => undoLastRewind(provider.checkpoints)),
+        vscode.commands.registerCommand('codico.clearCheckpoints', () => clearCheckpoints(provider.checkpoints)),
         vscode.commands.registerCommand('codico.backgroundTasks', () => backgroundTasks.manage()),
         vscode.commands.registerCommand('codico.startBackgroundTask', (text?: string) => backgroundTasks.start(typeof text === 'string' ? text : undefined)),
         vscode.commands.registerCommand('codico.openChat', () => {

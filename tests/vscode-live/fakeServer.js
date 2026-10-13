@@ -116,7 +116,7 @@ const SCRIPTS = (port) => ({
   steer: [tool('run_terminal', 'command: sleep 2; echo STEER-STEP-DONE'), 'Understood, changing course.'],
   // Rewind: three turns of changes, then back to before the second
   rw_first: [tool('edit_file', 'filepath: fixtures/rewind-kept.txt\nold_str:\nk1\nnew_str:\nk2'), 'Done.'],
-  rw_second: [tool('edit_file', 'filepath: fixtures/rewind.txt\nold_str:\nv1\nnew_str:\nv2'), tool('write_file', 'filepath: live/rw-new.txt\ncontent:\nmade in the second turn'), 'Done.'],
+  rw_second: [tool('edit_file', 'filepath: fixtures/rewind.txt\nold_str:\nv1\nnew_str:\nv2'), tool('write_file', 'filepath: live/rw-new.txt\ncontent:\nmade in the second turn'), tool('run_terminal', 'command: echo made-by-a-command > live/rw-cmd.txt && echo appended-by-a-command >> fixtures/rewind-kept.txt'), 'Done.'],
   rw_third: [tool('edit_file', 'filepath: fixtures/rewind.txt\nold_str:\nv2\nnew_str:\nv3'), 'Done.'],
   rw_after: ['Starting again from before.'],
   // Project hooks: a refused edit, a check after an edit, a refused command
