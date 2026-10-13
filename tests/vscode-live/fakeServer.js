@@ -97,6 +97,8 @@ const SCRIPTS = (port) => ({
   rr_changed: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 2\nend_line: 40'), 'Read.'],
   rr_declined: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
   rr_insist: [tool('read_file', 'filepath: fixtures/long.txt\nstart_line: 41\nend_line: 60'), 'Read.'],
+  // Command sandbox: a write in the workspace works, one outside it is stopped by the system
+  sandbox: [tool('run_terminal', `command: node -e "const fs=require('fs');fs.writeFileSync('live/sandbox-in.txt','inside');fs.writeFileSync(require('path').join(require('os').homedir(),'codico-sandbox-escaped.txt'),'outside')"`), 'It was blocked.'],
   // Project memory: a note saved in one turn is in the system prompt of the next
   mem_save: [tool('remember', 'note: MEMORY-MARKER the tests run with node --test\ntopic: Commands'), 'Noted.'],
   mem_recall: ['I remember.'],

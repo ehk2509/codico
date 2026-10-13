@@ -21,6 +21,7 @@ import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
 import { rewindFiles, turnsFrom, workspaceCheckpoints } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
+import { commandSandbox } from './commandSandboxService';
 import { loadRepoInstructions, projectMemorySection, rememberTool } from './projectMemoryStore';
 import { MEMORY_FILE } from './projectMemory';
 import { untilStopped } from './stopRace';
@@ -2130,6 +2131,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             ? tool.command.slice(0, 80) + '\u2026'
             : tool.command;
 
+        // Confined by the operating system when the user asked for it; where that is required and not possible, not run at all
+        const sandbox = await commandSandbox();
+        if (sandbox.refusal) { this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'No sandbox' }); return `[run_terminal: ${tool.command}] ${sandbox.refusal}`; }
         // After the agent has read external content this turn, Allow All no longer covers
         // commands: a prompt-injected page must not be able to run them unattended.
         const askAgain = this._allowAllTerminal && !this._evaluationMode && this._external.untrustedContentSeen;
@@ -2163,7 +2167,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             command: tool.command,
             cwd,
             timeoutMs: timeoutSec * 1000,
-            signal,
+            signal, sandbox: sandbox.wrap,
             onChunk: (text) => this._post({ type: 'terminalChunk', id: msgId, text }),
         });
 
@@ -2196,7 +2200,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}`;
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */

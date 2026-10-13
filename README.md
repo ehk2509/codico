@@ -356,6 +356,25 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Command Sandbox
+Approvals decide *whether* a command runs. The sandbox decides *what it can touch* once it does, enforced by the operating system and not by reading the command.
+
+Set `codico.commandSandbox` to `auto` or `required`. A sandboxed command:
+
+| | |
+|---|---|
+| Can read | the machine: tools, compilers, libraries, other projects |
+| Can write | the workspace folders (and the repository a git worktree belongs to), package caches such as `~/.npm` and `~/.cache`, temporary folders, and anything in `codico.commandSandboxWritablePaths` |
+| Cannot read | credential folders and files: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.azure`, `~/.netrc`, `~/.config/gh`, `~/.config/gcloud`, `~/.docker/config.json`, `~/.git-credentials` |
+| Network | allowed, unless `codico.commandSandboxNetwork` is `false` |
+
+- **Where it works.** Linux with [bubblewrap](https://github.com/containers/bubblewrap) installed (`bwrap`), and macOS with its built-in sandbox. Windows has none: `auto` then runs commands as before, and `required` refuses them.
+- **What the agent is told.** When a command fails in a way that looks like the sandbox's doing, the result says so, and tells the agent to report what the command needed, not to look for a way around.
+- **Differences you may notice.** `git push` over SSH fails (the key is hidden); a command's background processes end with the command; temporary files are private to each command.
+- **Settings are per machine.** A project's own settings file cannot switch the sandbox off or widen it.
+
+The sandbox applies to the agent's terminal commands. Approvals, remembered commands and hooks work as before on top of it.
+
 ### Checkpoints
 When you send a message, Codico records the workspace as it is, before the agent does anything. Rewinding to that message restores exactly that.
 
@@ -817,6 +836,9 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
+| `codico.commandSandbox` | `string` | `"off"` | Confine terminal commands with an OS sandbox: `off`, `auto` (when available) or `required` |
+| `codico.commandSandboxNetwork` | `boolean` | `true` | Whether sandboxed commands may use the network |
+| `codico.commandSandboxWritablePaths` | `string[]` | `[]` | Further folders sandboxed commands may write to |
 | `codico.memory` | `boolean` | `true` | Let the agent keep notes about the project in `.codico/memory.md` and read them at the start of each session |
 | `codico.checkpoints` | `boolean` | `true` | Take a checkpoint of the workspace with each message, so rewinding restores every file and works after a restart |
 | `codico.webSearch` | `string` | `"duckduckgo"` | Search engine of the `web_search` tool: `duckduckgo`, `brave` (needs a key) or `off` |
@@ -947,6 +969,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Command sandbox** (optional) — terminal commands run under bubblewrap (Linux) or the macOS sandbox with the machine read-only except the workspace, package caches and private temporary folders, credential folders unreadable, and optionally no network; the command is passed as a single argument to the wrapper; the settings are machine-scoped so a repository cannot disable them; a configured writable path can never uncover a credential folder
 - **Project memory** — notes are a file in the workspace, written only through the approved file-change path and visible in the diff; they reach the model as reminders to verify, not as instructions; text that looks like a secret is refused; after web or MCP content was read in a turn, saving a note always asks, so a page cannot plant an instruction for later sessions unseen; not loaded in an untrusted workspace
 - **Checkpoints** — snapshots are stored in Codico's own git repository outside the project and never sent anywhere; files excluded by `.gitignore` (typically secrets) are not copied into it; the snapshot commands run with hooks, signing and the user's git configuration switched off; only a commit id is accepted as a checkpoint
 - **Web search** — a search sends only its query, to the engine named in the consent dialog; the Brave key is kept in `SecretStorage`, sent in a header to Brave only and never passed on through a redirect to another host; result addresses other than `http(s)` are dropped; results are wrapped as untrusted content

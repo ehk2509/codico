@@ -487,6 +487,26 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
+  // ── Command sandbox: with it on, a command cannot write outside the workspace, and the agent is told why ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    // In the home folder: the workspace's own parent is a temporary folder, which a sandboxed command gets a private copy of
+    const escaped = path.join(require('os').homedir(), 'codico-sandbox-escaped.txt');
+    await set('commandSandbox', 'auto');
+    await vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:sandbox] please do the task');
+    await set('commandSandbox', undefined);
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'sandbox' && e.stream);
+    const text = (reqs[1] || {}).lastUser || '';
+    const confined = /\[Sandbox\] This command ran in Codico's sandbox/.test(text);
+    const inside = read('live/sandbox-in.txt') === 'inside';
+    // Where this machine has no sandbox, "auto" runs the command as before: the file is then written, and that is the expected result there
+    const ok = confined ? inside && !fs.existsSync(escaped) && /Exit: [1-9]/.test(text) : inside && fs.existsSync(escaped);
+    try { fs.rmSync(escaped, { force: true }); } catch { /* not there */ }
+    results.push({ name: 'sandbox', ms: Date.now() - t0, requests: reqs.length, ok,
+      why: confined ? `the write in the workspace happened: ${inside}; the write outside it was stopped by the system and the agent was told it ran in the sandbox: ${!fs.existsSync(escaped)}` : `no sandbox is available on this machine: the command ran unconfined, as "auto" says (${inside})` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Project memory: a note the agent saves is a file in the project, and the next turn starts with it ──
   {
     const t0 = Date.now(); const before = (await getLog()).length;
