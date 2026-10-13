@@ -9,6 +9,8 @@ export interface TurnToRedo {
     plan?: string;
     /** Images attached to the turn. */
     parts?: MessageContentPart[];
+    /** The workspace as it was when the turn was sent, when a checkpoint was taken. */
+    checkpoint?: Record<string, string>;
     /** What the panel showed instead of the text (an approved plan's execution prompt); not editable. */
     shownAs?: string;
 }
@@ -39,6 +41,7 @@ export function cutAtTurn(display: DisplayMessage[], history: ChatMessage[], tur
             plan: message.plan,
             parts: parts.length > 0 ? parts : undefined,
             shownAs: message.prompt !== undefined ? message.text : undefined,
+            ...(message.checkpoint ? { checkpoint: message.checkpoint } : {}),
         },
     };
 }

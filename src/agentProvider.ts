@@ -19,7 +19,7 @@ import { HookRunner } from './hookRunner';
 import { buildPrContext } from './prContextProvider';
 import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
-import { rewindFiles, turnsFrom } from './rewind';
+import { rewindFiles, turnsFrom, workspaceCheckpoints } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
 import { untilStopped } from './stopRace';
 import { CommandApprovalStore } from './commandApprovalStore';
@@ -89,7 +89,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const { turn } = cut;
         if (msg.type === 'editMessage' && turn.shownAs) { this._post({ type: 'error', message: 'This message cannot be edited.' }); return; }
         // A rewind also puts back the files these turns changed; cancelled there, nothing is cut
-        if (msg.type === 'rewind' && !await rewindFiles(this._undoRedo, turnsFrom(this._displayMessages, msg.turnId), this._evaluationMode)) { return; }
+        if (msg.type === 'rewind' && !await rewindFiles(this._undoRedo, turnsFrom(this._displayMessages, msg.turnId), this._evaluationMode, this.checkpoints, turn.checkpoint)) { return; }
         this._history = cut.history;
         this._displayMessages = cut.display;
         this._planAwaitingAnswer = null;
@@ -171,6 +171,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
     private _allowAllWrites = false;
     private _allowAllTerminal = false;
+    /** The workspace as it was at each message, kept on disk: what rewinding restores. */
+    public readonly checkpoints = workspaceCheckpoints(this._context.globalStorageUri.fsPath);
     /** Commands the user always allows in this workspace. */
     public readonly approvedCommands = new CommandApprovalStore(() => this._context.workspaceState);
     /** Auto-commit: when true, stage+commit all changes after each agent turn */
@@ -1001,6 +1003,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             const shown = this._planGoal !== null ? `\uD83D\uDCCB Plan: ${this._planGoal}` : shownAs ?? rawText.slice(0, 20_000);
             this._displayMessages.push({ role: 'user', text: shown, id: turnId, at: Date.now(), plan: this._planGoal ?? undefined,
                 prompt: this._planGoal === null && shown !== rawText ? rawText : undefined });
+            { const sent = this._displayMessages[this._displayMessages.length - 1]; void this.checkpoints.begin(shown.slice(0, 80)).then(taken => { sent.checkpoint = taken; }, () => undefined); }
         }
 
         // Auto-name the thread immediately from the first user message so the sidebar updates right away
@@ -1884,6 +1887,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Dispatches a single tool call immediately, stores result in _lastInlineResult */
     private async _dispatchTool(tool: ToolCall, msgId: string, signal: AbortSignal): Promise<void> {
         if (signal.aborted) { return; }
+        await this.checkpoints.ready; // the turn's checkpoint is taken before anything can change a file
 
         if (tool.type.startsWith('browser_')) {
             const allowPrivate = vscode.workspace.getConfiguration('codico')

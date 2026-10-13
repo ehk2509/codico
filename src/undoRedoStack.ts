@@ -138,6 +138,13 @@ export class UndoRedoStack {
         }
     }
 
+    /** Drops what was recorded for these turns without touching any file (the files were restored another way). */
+    forget(turnIds: readonly string[]): void {
+        const turns = new Set(turnIds);
+        this._undo = this._undo.filter(snap => !snap.turnId || !turns.has(snap.turnId));
+        this._redo = [];
+    }
+
     /** The newest recorded change to a file that can still be undone. */
     latestFor(uri: vscode.Uri): FileSnapshot | undefined {
         const key = uri.toString();

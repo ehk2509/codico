@@ -345,6 +345,15 @@ description: Use when adding or changing a database migration
 - **Rules:** names are lowercase letters, digits and hyphens, and cannot reuse a built-in name (`@workspace`, `/fix`, …); instructions are limited to 20,000 characters; at most 50 of each are loaded. A file that breaks a rule is skipped and you are told which and why.
 - **Trust:** these files are instructions to the model, like `.codico-instructions.md`. They are not loaded in a folder VS Code has not been told to trust, and they only add instructions — Codico's approvals for file changes and commands still apply.
 
+### Checkpoints
+When you send a message, Codico records the workspace as it is, before the agent does anything. Rewinding to that message restores exactly that.
+
+- **Where they are kept.** In a git repository of Codico's own, in the extension's storage, one per workspace folder. Your project's `.git` is never read or written, your branches and history are untouched, and nothing is added to the project folder. Git must be installed; without it, rewind falls back to the edits Codico itself made in the current session.
+- **What they hold.** Every file your `.gitignore` does not exclude. Dependencies, build output and local settings such as `.env` are therefore neither copied nor restored (and `node_modules`, virtual environments and the like are left out even in a project with no `.gitignore`).
+- **What runs.** Nothing of your git setup: no hooks, no commit signing, no line-ending conversion. Files come back byte for byte.
+- **Cost.** The first checkpoint of a workspace reads every file once; later ones only what changed. Storage grows with what changes between messages.
+- **Commands:** **Codico: Undo Last Rewind**, and **Codico: Clear Checkpoints** to free the space (earlier messages can then rewind the conversation but not the files). `codico.checkpoints: false` turns them off.
+
 ### Remembered Commands
 The approval card of a terminal command has a second row, **Always allow in this workspace**, with the command itself and, for well-known build and test tools, the command with any arguments:
 
@@ -402,7 +411,7 @@ Manage multiple independent conversations per project:
 ### Rewinding, Editing, Deleting and Regenerating Messages
 Each of your messages has its actions next to its time:
 
-- **↺ Rewind to here** — takes the conversation back to just before that message *and* puts back every file Codico changed since, over as many turns as that covers. A dialog lists the files first and also offers to rewind the conversation only. A file you have edited by hand since is asked about, and kept unless you agree; a file Codico created is deleted again. The message returns to the input box so you can change it and send it again, and **Redo** reapplies the rewound changes one at a time. Not restored: what terminal commands changed on disk, and changes from before VS Code was last restarted (the record of changes is kept in memory, for the newest 300).
+- **↺ Rewind to here** — takes the conversation back to just before that message *and* puts the files back as they were when it was sent. Codico takes a checkpoint of the workspace with every message, so this covers everything that changed since: its own edits, what terminal commands created, changed or deleted, and your own edits. A dialog lists the files first and also offers to rewind the conversation only. The message returns to the input box so you can change it and send it again. **Codico: Undo Last Rewind** brings back the files as they were just before the rewind. Checkpoints are kept on disk, so rewinding still works after VS Code is restarted. See *Checkpoints* below for what they hold.
 - **✎ Edit and resend** (or press `↑` in an empty input to edit your last one) — the conversation is cut back to that message and the edited text is sent. For a Plan-mode message you edit the goal.
 - **🗑 Delete** — removes the message and everything after it, after a confirmation.
 - **↻ Regenerate** on the latest reply runs its message again and replaces the reply.
@@ -459,6 +468,8 @@ Type `/` in the input box to see the autocomplete popup.
 | `codico.newHooks` | Create `.codico/hooks.json` for project hooks |
 | `codico.rememberedCommands` | Review and remove the terminal commands always allowed in this workspace |
 | `codico.startBackgroundTask` | Start a task in its own git worktree and window |
+| `codico.undoRewind` | Put the files back as they were just before the last rewind |
+| `codico.clearCheckpoints` | Delete this workspace's checkpoints to free disk space |
 | `codico.setWebSearchKey` | Store or remove the Brave Search API key used by `web_search` |
 | `codico.backgroundTasks` | List background tasks: review, merge or discard their work |
 | `codico.setOllamaUrl` | Set the Ollama server base URL |
@@ -794,6 +805,7 @@ Or click the Codico icon in the Activity Bar.
 | `codico.browserAllowPrivateNetwork` | `boolean` | `false` | Allow browser automation to access localhost/private/internal destinations |
 | `codico.inlineCompletionsEnabled` | `boolean` | `true` | Enable ghost-text inline completions |
 | `codico.inlineCompletionsDebounceMs` | `number` | `600` | Debounce delay (ms) before requesting a completion |
+| `codico.checkpoints` | `boolean` | `true` | Take a checkpoint of the workspace with each message, so rewinding restores every file and works after a restart |
 | `codico.webSearch` | `string` | `"duckduckgo"` | Search engine of the `web_search` tool: `duckduckgo`, `brave` (needs a key) or `off` |
 | `codico.backgroundTasksDirectory` | `string` | `""` | Folder for the worktrees of background tasks (empty: `~/.codico/worktrees`) |
 | `codico.openTabsContext` | `boolean` | `true` | Tell the agent which other files are open in tabs (their names; contents are read only when the task needs them) |
@@ -922,6 +934,7 @@ codico/
 - **Workspace trust** — Codico declares untrusted workspaces unsupported and will not start workspace-defined MCP servers without explicit approval
 - **MCP trust boundary** — `.mcp.json` / `mcp.json` servers require first-run approval; persistent approval is tied to the exact command/config fingerprint, and MCP child processes inherit only a minimal runtime environment unless variables are explicitly configured
 - **Project hooks** — commands in `.codico/hooks.json` run only in a trusted workspace and only after you approved that exact command; they get the reduced terminal environment, a timeout, and no way to widen what the agent may do: a hook can refuse a call or add text to its result, never approve one
+- **Checkpoints** — snapshots are stored in Codico's own git repository outside the project and never sent anywhere; files excluded by `.gitignore` (typically secrets) are not copied into it; the snapshot commands run with hooks, signing and the user's git configuration switched off; only a commit id is accepted as a checkpoint
 - **Web search** — a search sends only its query, to the engine named in the consent dialog; the Brave key is kept in `SecretStorage`, sent in a header to Brave only and never passed on through a redirect to another host; result addresses other than `http(s)` are dropped; results are wrapped as untrusted content
 - **Network SSRF protection** — `fetch_url` rejects private/loopback/link-local/reserved DNS answers (including IPv6 forms that embed such an IPv4 address, such as `[::ffff:127.0.0.1]`), pins the socket to the validated address set to resist DNS rebinding, and repeats validation on every redirect hop
 - **Browser network boundary** — browser automation rejects malformed and non-HTTP(S) schemes and validates every HTTP(S) navigation, redirect, subresource and WebSocket against the public-network policy by default. Set `codico.browserAllowPrivateNetwork=true` only when you intentionally need localhost/internal apps
