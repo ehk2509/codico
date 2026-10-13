@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.3.17",
+  "version": "0.4.0",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -478,8 +478,16 @@
         },
         "codico.webSearch": {
           "type": "string",
-          "enum": ["duckduckgo", "brave", "off"],
-          "enumDescriptions": ["DuckDuckGo, no key needed. It sometimes declines automated searches.", "Brave Search API. Needs a key: run \"Codico: Set Web Search Key\".", "The agent cannot search the web."],
+          "enum": [
+            "duckduckgo",
+            "brave",
+            "off"
+          ],
+          "enumDescriptions": [
+            "DuckDuckGo, no key needed. It sometimes declines automated searches.",
+            "Brave Search API. Needs a key: run \"Codico: Set Web Search Key\".",
+            "The agent cannot search the web."
+          ],
           "default": "duckduckgo",
           "description": "Search engine of the agent's web_search tool. Each search is asked about first, like any request to the outside, and sends the query to that engine."
         },
@@ -495,8 +503,16 @@
         },
         "codico.commandSandbox": {
           "type": "string",
-          "enum": ["off", "auto", "required"],
-          "enumDescriptions": ["Commands run as your user, limited only by approvals.", "Commands run in an operating-system sandbox when one is available (Linux with bubblewrap, macOS); otherwise as with \"off\".", "Commands run only in the sandbox; where none is available they are refused."],
+          "enum": [
+            "off",
+            "auto",
+            "required"
+          ],
+          "enumDescriptions": [
+            "Commands run as your user, limited only by approvals.",
+            "Commands run in an operating-system sandbox when one is available (Linux with bubblewrap, macOS); otherwise as with \"off\".",
+            "Commands run only in the sandbox; where none is available they are refused."
+          ],
           "default": "off",
           "scope": "machine",
           "description": "Confine the agent's terminal commands with an operating-system sandbox: they can read the machine but write only in the workspace, package caches and temporary folders, and cannot read credential folders such as ~/.ssh. Set per machine; a project cannot change it."
@@ -509,7 +525,9 @@
         },
         "codico.commandSandboxWritablePaths": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "scope": "machine",
           "description": "Further folders sandboxed commands may write to, besides the workspace, package caches and temporary folders. Credential folders stay hidden whatever is listed here."
