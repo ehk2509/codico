@@ -181,10 +181,12 @@ test('the task\'s window runs the task it was opened for, once, and reports how 
   const seen = [];
   const agent = fakeAgent(async (emit) => {
     emit({ type: 'toolStart', id: 'm', tool: 'run_terminal', label: 'npm test' });
+    // The registry is written to disk: wait for the state to appear there, however long the disk takes
+    const reaches = async (status) => { for (let i = 0; i < 200; i++) { const now = await store.get('aaaaaaaaaaaaaaaa'); if (now && now.status === status) { return now; } await new Promise(r => setTimeout(r, 15)); } return (await store.get('aaaaaaaaaaaaaaaa')) || {}; };
     emit({ type: 'terminalPermissionRequest', id: 'm', permId: 'p', command: 'npm test' });
-    await new Promise(r => setTimeout(r, 30)); seen.push((await store.get('aaaaaaaaaaaaaaaa')).status + ':' + (await store.get('aaaaaaaaaaaaaaaa')).note);
+    const waiting = await reaches('waiting'); seen.push(waiting.status + ':' + waiting.note);
     emit({ type: 'toolResult', id: 'm', tool: 'run_terminal', label: 'npm test', success: true });
-    await new Promise(r => setTimeout(r, 30)); seen.push((await store.get('aaaaaaaaaaaaaaaa')).status);
+    seen.push((await reaches('running')).status);
   });
   let waited = 0;
   const done = await runTaskOfThisWindow(store, agent, async () => { waited++; if (waited === 3) { agent.ready = true; } });
