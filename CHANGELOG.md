@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.4.1 - 2026-10-13
 
 ### Security
 - Checkpoints (0.4.0) copied every file that `.gitignore` did not exclude into Codico's store, so a `.env` or key file in a project that does not ignore it was kept there, in a folder other local users could read, for as long as the store existed. Credential files are now never copied, whatever `.gitignore` says; the store is readable by your user only; checkpoints are deleted after 14 days (`codico.checkpointRetentionDays`); and a store created by 0.4.0 is deleted the first time this version uses it, so nothing it may hold is left behind. Reported in an external review.
