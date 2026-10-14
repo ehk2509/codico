@@ -470,6 +470,16 @@
           "maximum": 3000,
           "description": "Debounce delay in ms before requesting an inline completion"
         },
+        "codico.backgroundTasksRunIn": {
+          "type": "string",
+          "enum": ["panel", "windows"],
+          "enumDescriptions": [
+            "Background tasks (/background) and team workers (/team) run in this window, next to your conversation, each in its own git worktree. You follow them, answer and approve in the Agents view of the Codico panel.",
+            "Each one runs in a VS Code window of its own. Costs more memory; useful to take one over by hand."
+          ],
+          "default": "panel",
+          "description": "Where background tasks and team workers run."
+        },
         "codico.backgroundTasksDirectory": {
           "type": "string",
           "default": "",
@@ -481,17 +491,7 @@
           "default": 3,
           "minimum": 1,
           "maximum": 6,
-          "description": "Agent teams (/team): how many workers may run at once. Each one makes its own model requests; with codico.teamWorkersRunIn set to windows, each is also a VS Code window."
-        },
-        "codico.teamWorkersRunIn": {
-          "type": "string",
-          "enum": ["panel", "windows"],
-          "enumDescriptions": [
-            "Workers run in this window, next to the orchestrator, each in its own git worktree. You follow and answer them in the team view of the Codico panel.",
-            "Each worker runs in a VS Code window of its own, like a background task. Costs more memory; useful to take a worker over by hand."
-          ],
-          "default": "panel",
-          "description": "Agent teams (/team): where workers run."
+          "description": "Agent teams (/team): how many workers may run at once. Each one makes its own model requests; with codico.backgroundTasksRunIn set to windows, each is also a VS Code window."
         },
         "codico.teamWorkerPermissions": {
           "type": "string",

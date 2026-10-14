@@ -52,7 +52,10 @@ export const REPLAY_DIFF_LIMIT = 20_000;
 
 // ─── Message type contracts ──────────────────────────────────────────────────
 
-/** A team worker as the team view shows it. */
+/** A button on an agent in the Agents view. */
+export type TeamWorkerAction = 'stop' | 'open' | 'dismiss' | 'continue' | 'halt' | 'reply';
+
+/** A team worker or background task running in this window, as the Agents view shows it. */
 export interface TeamWorkerView {
     id: string;
     name?: string;
@@ -71,6 +74,8 @@ export interface TeamWorkerView {
     log: Array<{ tool?: string; label?: string; ok?: boolean; error?: string; text?: string }>;
     /** Its change report's verdict, after a reply that changed files. */
     verdict?: string;
+    /** Processes its commands left running. */
+    processes?: number;
 }
 
 export type WebviewMessage =
@@ -112,8 +117,8 @@ export type WebviewMessage =
     /** `/background <task>`: run the task in a worktree and a window of its own. */
     | { type: 'startBackgroundTask'; text: string }
     | { type: 'openBackgroundTasks' }
-    /** A button on a team worker in the panel's team view. */
-    | { type: 'teamWorker'; worker: string; action: 'stop' | 'open' | 'dismiss' | 'continue' | 'halt' }
+    /** A button on a team worker in the panel's Agents view. */
+    | { type: 'teamWorker'; worker: string; action: TeamWorkerAction; /** reply: the text, when it is not asked for (automated tests). */ text?: string }
     | { type: 'threadContextMenu'; id: string }
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }
@@ -185,15 +190,17 @@ export type ExtensionMessage =
     | { type: 'queuedDelivered' }
     /** Background tasks started from this window, for the panel's status row; empty text when there are none. */
     | { type: 'backgroundTasks'; text: string; needsUser: boolean }
-    /** The team's workers running in this window, for the team view. */
+    /** The team's workers running in this window, for the Agents view. */
     | { type: 'teamState'; workers: TeamWorkerView[] }
+    /** Open the Agents view and scroll it into sight. */
+    | { type: 'teamReveal' }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
     | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** After a rewind: the removed message, put back in the input box. */ draftText?: string; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }
     | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
-    | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string; /** Asked by a team worker: shown in its place in the team view. */ worker?: string }
+    | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string; /** Asked by a team worker: shown in its place in the Agents view. */ worker?: string }
     | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Rules the user can choose to always allow (the command itself, and for known tools with any arguments). */ rules?: string[]; /** Set when the request must be shown even under Allow All. */ note?: string ; worker?: string }
     | { type: 'terminalChunk'; id: string; text: string }
     | { type: 'stepProgress'; id: string; step: number }

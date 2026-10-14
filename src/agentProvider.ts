@@ -436,7 +436,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _onWebviewMessage(msg: WebviewMessage): Promise<void> {
         try {
-        // A team worker's question, or a button of the team view
+        // A team worker's question, or a button of the Agents view
         if (await this.workers?.route(msg)) { return; }
         switch (msg.type) {
             case 'sendMessage':
