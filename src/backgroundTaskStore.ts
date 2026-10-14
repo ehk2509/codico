@@ -49,5 +49,9 @@ export class BackgroundTaskStore {
 
     async remove(id: string): Promise<void> {
         try { await fs.promises.unlink(this._file(id)); } catch { /* already gone */ }
+        try { await fs.promises.unlink(this.historyFile(id)); } catch { /* none was kept */ }
     }
+
+    /** Where the conversation of a task run in the window that started it is kept, so it can be resumed later. */
+    historyFile(id: string): string { return path.join(this._dir, `${id}.history`); }
 }

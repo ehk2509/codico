@@ -38,8 +38,10 @@ export interface BackgroundTask {
     requests?: number;
     /** A worker of an agent team: what it was started as, and the team (the orchestrating window's session) it belongs to. */
     role?: WorkerRole;
-    /** A team worker's short name ("backend"). */
+    /** A team worker's short name ("backend"), or an automation job's ("issue-12"). */
     name?: string;
+    /** Started by an automation, from text other people wrote (an issue, a CI log, a review). */
+    automation?: boolean;
     team?: string;
     /** The worker this one started from (a tester checks a developer's branch). */
     basedOn?: string;

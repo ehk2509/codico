@@ -309,6 +309,19 @@ Hand a task to Codico and keep working: the task runs in a git worktree and a br
 
 Things to know: a fresh worktree has no installed dependencies, build output or untracked files such as `.env`, and the agent is told so; a task running in this window ends if the window closes or reloads (its work so far stays on its branch, shown as stopped); and a task whose own window is closed is shown as stopped, not restarted.
 
+### Automations
+Codico can take work from GitHub by itself and see it through: an issue or a CI failure becomes a fix, the fix a pull request, and feedback on that pull request more work, until it is merged.
+
+- **Turn them on per repository** with **Codico: Automations**. Nothing happens until you do, and the choice is kept in this workspace's state, never in a project file, so a repository cannot switch them on for you. While the window is open, Codico reads GitHub every two minutes (`codico.automationPollSeconds`) with your GitHub token.
+- **What starts a job:** an open issue with the label `codico` (any label you choose; only people with triage access can label issues), and a new CI failure on the default branch (a workflow whose latest run failed after a run that passed), with the end of the failing job's log.
+- **A job** is a background task in its own worktree and branch, started from GitHub's branch (fetched first, not what you have checked out), run in this window and followed in the Agents view. It is told to reproduce, fix and verify, and not to push.
+- **Publishing.** When the job finishes, its work is committed, its branch pushed and a **draft** pull request opened that resolves the issue (or names the failed run). By default you are asked first, with its changes to review; choose *Publish without asking* to let it go on by itself. A job that changed nothing ends without a pull request; its report says why.
+- **Following the pull request.** Codico watches its pull requests: when CI fails on the latest commit (once it has finished), a reviewer requests changes, or a new review thread opens, **the same agent resumes with its conversation** — kept on disk, so a reload or a restart does not lose it — given the failing log or the comments. It works on them and the fix is pushed to the same pull request. Merged or closed, the job is done. After five resumes (`maxResumes`) it stops and asks for you.
+- **Safety.** Issues, logs and reviews are other people's words: they are passed to the agent as quoted outside text, and a job's commands run without asking only in the command sandbox (`codico.commandSandbox` set to `required`); otherwise each command waits for you in the Agents view (`codico.automationPermissions`). One job runs at a time by default. The token is sent only to GitHub, never to where it stores logs.
+- **The list.** The status bar shows the jobs; **Codico: Automations** lists them with what happened, and can show a job, open its pull request, publish it, or stop following it.
+
+Not done: GitHub webhooks (a VS Code window has no public address, so GitHub is polled while the window is open) and replies posted to review threads.
+
 ### Agent Teams
 For work that splits into parts, `/team <goal>` makes the agent in your panel the **orchestrator** of a team: it plans the parts, hands each to a worker, follows them, checks what they did, merges it and verifies the result. Everything happens in your window.
 

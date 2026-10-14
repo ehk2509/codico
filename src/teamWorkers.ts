@@ -36,21 +36,38 @@ export class TeamWorkers implements vscode.Disposable {
 
     constructor(
         private readonly _store: BackgroundTaskStore,
-        private readonly _deps: Omit<WorkerDeps, 'post'>,
+        private readonly _deps: Omit<WorkerDeps, 'post' | 'historyFile' | 'untrusted'> & { sandboxRequired?(): boolean },
         /** To the panel: the Agents view, and the questions workers ask. */
         private readonly _post: (message: ExtensionMessage) => void,
         private readonly _openWindow: (task: BackgroundTask) => Promise<void>,
     ) {}
 
-    /** Starts a worker for a task made by the team. */
-    launch(task: BackgroundTask): void {
+    /**
+     * Starts an agent for a task: a team's worker, a background task or an automation's job.
+     * @param first a message to go on from, in place of the task (a resumed job, its conversation reloaded)
+     */
+    launch(task: BackgroundTask, first?: string): void {
         const id = task.id;
-        const view: TeamWorkerView = { id: workerId(task), name: task.name, role: task.role ?? (task.team ? 'developer' : 'background task'), task: task.prompt, branch: task.branch, status: 'starting', steps: 0, tokens: 0, log: [] };
-        const agent = new WorkerAgent(task, { ...this._deps, post: message => this._event(id, message) });
+        this._running.get(id)?.end.abort();
+        const view: TeamWorkerView = { id: workerId(task), name: task.name, role: task.role ?? (task.team ? 'developer' : task.automation ? 'automation' : 'background task'), task: task.prompt, branch: task.branch, status: 'starting', steps: 0, tokens: 0, log: [] };
+        const agent = new WorkerAgent(task, { ...this._deps, post: message => this._event(id, message), historyFile: this._store.historyFile(id),
+            // An automation works from others' words: unattended commands only inside the sandbox
+            untrusted: task.automation ? () => !this._deps.sandboxRequired?.() : undefined });
         const running: Running = { task, agent, end: new AbortController(), view, text: '', tokensBefore: 0, stopped: false };
         this._running.set(id, running);
         this._changed();
-        void runTask(this._store, task, agent, running.end.signal).then(() => this._changed(), () => this._changed());
+        void runTask(this._store, task, agent, running.end.signal, first).then(() => this._changed(), () => this._changed());
+    }
+
+    /**
+     * Gives a task more to do with its conversation so far: told to its agent when it is here,
+     * otherwise its agent is started again from its saved conversation.
+     */
+    async resume(task: BackgroundTask, text: string): Promise<void> {
+        await this._store.update(task.id, { status: 'running', note: undefined, heartbeat: Date.now() });
+        const running = this._running.get(task.id);
+        if (running && !running.stopped) { await running.agent.teamMessage(text); this._changed(); return; }
+        this.launch({ ...task, status: 'running' }, text);
     }
 
     /** What a worker said or did: kept for the Agents view, and its questions passed on to the panel. */

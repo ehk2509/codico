@@ -67,7 +67,7 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
  * team's worker in the window of the team. A team's worker goes on reading the orchestrator's
  * messages after its first reply, until `end` is aborted (or for as long as its window is open).
  */
-export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, agent: BackgroundAgent, end?: AbortSignal): Promise<BackgroundTask | undefined> {
+export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, agent: BackgroundAgent, end?: AbortSignal, first?: string): Promise<BackgroundTask | undefined> {
     if (task.status === 'starting') { await store.update(task.id, { status: 'running', heartbeat: Date.now(), note: undefined }); }
     agent.backgroundPermissions = task.permissions;
     let current: string = 'running';
@@ -113,7 +113,8 @@ export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, 
     const close = () => { clearInterval(beat); if (inbox) { clearInterval(inbox); } agent.backgroundListener = undefined; };
     end?.addEventListener('abort', close, { once: true });
     try {
-        await agent.sendMessage(`${taskPreface(task)}\n\n${task.prompt}`);
+        // A resumed task (its conversation reloaded) goes on from a new message, not from its task again
+        await agent.sendMessage(first ?? `${taskPreface(task)}\n\n${task.prompt}`);
         const usage = agent.lastReplyUsage();
         const outcome = failure ? { status: 'failed' as const, note: failure.slice(0, 200) }
             : question ? { status: 'waiting' as const, note: 'answer its question' }
