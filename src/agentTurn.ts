@@ -50,6 +50,8 @@ export interface TurnHost {
     lastInlineResult: string | undefined;
     lastPromptTokens: number;
     readonly readOnly: boolean;
+    /** This turn leads an agent team: the `team` tool is offered. */
+    readonly team: boolean;
     steer: string;
     subagentHost: SubagentHost | undefined;
     readonly thinkingEffort: 'high' | 'medium' | 'low';
@@ -106,7 +108,7 @@ export class AgentTurn {
         let blockedOnlyIterations = 0;
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
         const nativeTools = !isOllama && !isCli && nativeToolCalling
-            ? getNativeToolDefinitions(this._host.readOnly)
+            ? getNativeToolDefinitions(this._host.readOnly, this._host.team)
             : [];
 
         // Circuit breaker for a model repeating the same call while nothing changes

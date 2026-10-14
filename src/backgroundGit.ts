@@ -29,12 +29,13 @@ export async function repositoryRoot(folder: string): Promise<string | undefined
 export interface NewWorktree { baseCommit: string; baseBranch?: string }
 
 /** Creates the task's branch at the current commit and checks it out in a new folder. */
-export async function createWorktree(repoRoot: string, worktree: string, branch: string): Promise<NewWorktree | { error: string }> {
-    const head = await git(repoRoot, ['rev-parse', 'HEAD']);
+/** @param from where the new branch starts: the last commit, or another task's branch */
+export async function createWorktree(repoRoot: string, worktree: string, branch: string, from = 'HEAD'): Promise<NewWorktree | { error: string }> {
+    const head = await git(repoRoot, ['rev-parse', from]);
     if (!head.ok) { return { error: 'This repository has no commit yet. Commit something first: a background task starts from the last commit.' }; }
     const current = await git(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     await fs.promises.mkdir(path.dirname(worktree), { recursive: true });
-    const added = await git(repoRoot, ['worktree', 'add', '-b', branch, worktree, 'HEAD']);
+    const added = await git(repoRoot, ['worktree', 'add', '-b', branch, worktree, from]);
     if (!added.ok) { return { error: gitReason(added.stderr) || 'git could not create the worktree' }; }
     return { baseCommit: firstLine(head.stdout), baseBranch: current.ok ? firstLine(current.stdout) || undefined : undefined };
 }

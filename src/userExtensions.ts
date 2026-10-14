@@ -38,7 +38,7 @@ export const NO_USER_EXTENSIONS: UserExtensions = { agents: [], skills: [], prob
 
 /** Names Codico uses itself: a project's agent or skill cannot take them. */
 export const BUILT_IN_AGENTS = ['workspace', 'terminal', 'vscode', 'github'];
-export const BUILT_IN_COMMANDS = ['fix', 'explain', 'doc', 'tests', 'plan', 'review', 'pr', 'coverage', 'test', 'new', 'background', 'compact'];
+export const BUILT_IN_COMMANDS = ['fix', 'explain', 'doc', 'tests', 'plan', 'review', 'pr', 'coverage', 'test', 'new', 'background', 'team', 'compact'];
 
 /** More than this is a mistake (a pasted document), and would be paid for on every use. */
 export const MAX_INSTRUCTIONS_CHARS = 20_000;

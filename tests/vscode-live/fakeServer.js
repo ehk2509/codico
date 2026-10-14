@@ -108,6 +108,14 @@ const SCRIPTS = (port) => ({
   ws_native: [{ toolCalls: [{ name: 'web_search', args: { query: 'codico vscode extension' } }] }, 'Could not search.'],
   // A background task: this window is the task's own, and runs it when it opens
   bg_task: [tool('write_file', 'filepath: live/bg-result.txt\ncontent:\nwritten by the background task'), 'The background task is done.'],
+  // An agent team: the orchestrator starts a developer, waits for it, has it reviewed, merges it, then checks the result
+  // A team's worker: its first report, then its answer to the orchestrator's message
+  team_worker: Array(6).fill('Tests pass: 3 of 3.'),   // a text-only reply to a tester's brief is nudged to act a few times
+  team_followup: ['Checked the empty input too: it passes.'],
+  team_lead: ['Planning: one developer writes the file.\n\n' + tool('team', 'action: start\nrole: developer\ntext:\nWrite live/team-result.txt containing TEAM-WORK.'),
+    tool('team', 'action: wait\ntimeout_seconds: 120'),
+    messages => tool('team', 'action: merge\nworker: ' + ((/Started worker ([0-9a-f]{8})/.exec(messages.map(m => textOf(m.content)).join('\n')) || [])[1] || 'unknown')),
+    tool('run_terminal', 'command: cat live/team-result.txt'), 'The team finished: the file is merged and checked.'],
   // Duplicating a thread: refused while a reply runs, then an independent copy
   dup_slow: [tool('run_terminal', 'command: sleep 2; echo dup-slow-done'), 'Done.'],
   dup_after: ['Said in the copy only.'],
@@ -234,6 +242,8 @@ function start(port0) {
       else if (scenario === 'compaction' || scenario === 'bad_summary') { entry = SCRIPTS(port)[scenario][(compactionReplies[scenario] = (compactionReplies[scenario] || 0) + 1) - 1] ?? 'Done.'; }
       else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }
+      // A reply that depends on what the conversation says (an id the extension made up)
+      if (typeof entry === 'function') { entry = entry(messages); }
       const reply = typeof entry === 'string' ? { text: entry, finish: 'stop' } : entry;
       if (reply.status) { res.writeHead(reply.status, { 'content-type': 'application/json' }); return res.end('{"error":"simulated provider failure"}'); }
       res.writeHead(200, { 'content-type': 'text/event-stream' });

@@ -11,7 +11,16 @@ export interface BackgroundAgent {
     backgroundListener?: (message: ExtensionMessage) => void;
     sendMessage(text: string): Promise<void>;
     lastReplyUsage(): { tokens?: number; requests?: unknown[] } | undefined;
+    /** The agent's last reply, for the team's orchestrator. */
+    lastReplyText?(): string;
+    /** A message from the orchestrator: taken in at the next step when the agent is working, otherwise answered as a new message. */
+    teamMessage?(text: string): Promise<'steered' | 'answered'>;
 }
+
+/** How much of a worker's reply the orchestrator is given. */
+export const MAX_REPORT_CHARS = 6000;
+export const INBOX_POLL_MS = 2000;
+const report = (agent: BackgroundAgent) => { const text = agent.lastReplyText?.() ?? ''; return text.length > MAX_REPORT_CHARS ? text.slice(-MAX_REPORT_CHARS) : text; };
 
 /** One spelling per folder: links and short names resolved, and no difference of case where the system has none. */
 const realPath = (folder: string) => {
@@ -58,9 +67,17 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
     const put = (change: Partial<BackgroundTask>) => { writes = writes.then(() => store.update(task.id, change), () => undefined); return writes; };
     let question = false;
     let failure: string | undefined;
+    let firstDone = false;
     agent.backgroundListener = message => {
+        // After the first reply, a team worker's later replies (answers to the orchestrator) update its report too
         // A reply that ends with a question to the user is not finished work, and an error is not either
         if (message.type === 'appendContent' && message.text.includes('<clarify>')) { question = true; }
+        if (firstDone && message.type === 'endMessage') {
+            const after = question ? { status: 'waiting' as const, note: 'answer its question' } : { status: 'finished' as const, note: undefined };
+            current = after.status; question = false;
+            void put({ ...after, heartbeat: Date.now(), report: report(agent) });
+            return;
+        }
         if (message.type === 'error') { failure = message.message; }
         const next = statusFromMessage(message);
         if (!next || next.status === current) { return; }
@@ -68,19 +85,38 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
         void put({ status: next.status, note: next.note, heartbeat: Date.now() });
     };
     const beat = setInterval(() => { void put({ heartbeat: Date.now() }); }, HEARTBEAT_MS);
+    // A team worker reads its inbox for as long as its window is open: messages from the orchestrator
+    let reading = false;
+    const inbox = task.team ? setInterval(() => {
+        if (reading) { return; }
+        reading = true;
+        void (async () => {
+            try {
+                const now = await store.get(task.id);
+                const unread = (now?.inbox ?? []).slice(now?.inboxRead ?? 0);
+                if (!now || unread.length === 0 || !agent.teamMessage) { return; }
+                await put({ inboxRead: (now.inboxRead ?? 0) + unread.length });
+                // Its status and report follow from the replies (see the listener): nothing to wait for here
+                for (const message of unread) { await agent.teamMessage(`[Message from the orchestrator]\n${message.text}`); }
+            } finally { reading = false; }
+        })();
+    }, INBOX_POLL_MS) : undefined;
     try {
         await agent.sendMessage(`${taskPreface(task)}\n\n${task.prompt}`);
         const usage = agent.lastReplyUsage();
         const outcome = failure ? { status: 'failed' as const, note: failure.slice(0, 200) }
             : question ? { status: 'waiting' as const, note: 'answer its question' }
             : { status: 'finished' as const, note: undefined };
-        await put({ ...outcome, heartbeat: Date.now(), tokens: usage?.tokens, requests: usage?.requests?.length });
+        await put({ ...outcome, heartbeat: Date.now(), tokens: usage?.tokens, requests: usage?.requests?.length, report: report(agent) });
+        current = outcome.status;
+        firstDone = true;
         return await store.get(task.id);
     } catch (error) {
         await put({ status: 'failed', note: error instanceof Error ? error.message : String(error) });
         return await store.get(task.id);
     } finally {
-        clearInterval(beat);
-        agent.backgroundListener = undefined;
+        // A team worker keeps beating, listening and reading its inbox after the task: the orchestrator may send
+        // follow-ups. All of it ends with its window
+        if (!task.team) { clearInterval(beat); agent.backgroundListener = undefined; }
     }
 }

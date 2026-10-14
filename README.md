@@ -308,6 +308,17 @@ Hand a task to Codico and keep working: the task runs in a git worktree and a br
 
 Things to know: a fresh worktree has no installed dependencies, build output or untracked files such as `.env`, and the agent is told so; each running task is another VS Code window, which costs memory; and a task whose window is closed is shown as stopped, not restarted.
 
+### Agent Teams
+For work that splits into parts, `/team <goal>` makes the agent in your panel the **orchestrator** of a team: it plans, hands each part to a worker, checks what comes back, merges it and verifies the result.
+
+- **Workers are background tasks.** Each *developer* or *tester* is another Codico agent in a git worktree, a branch and a VS Code window of its own (see Background Tasks), so workers run in parallel without touching your files or each other's. A tester starts from a developer's branch, to test that work.
+- **What the orchestrator can do** (the `team` tool, offered only in a `/team` thread): *start* a worker with a self-contained task; *wait* for workers and read their reports and changed files; look at a worker's *changes*; have a read-only *reviewer* subagent check a worker's patch; send a worker a *message* (a correction, or the answer to its question), which it reads at its next step or answers as a new message; *merge* a worker's branch into your workspace.
+- **Merging asks you.** Each merge is shown as `git merge --no-ff <branch>` for your approval, unless you allowed all commands for the task. A merge that conflicts is undone and the workspace is left as it was; the orchestrator is told to have the worker bring its branch up to date, or to make the fix itself.
+- **Acceptance gate.** After merging, the orchestrator is told to run the project's build and tests in your workspace and to report done only when they pass; the change report shows whether it did.
+- **Limits.** At most `codico.teamMaxWorkers` workers run at once (default 2): each one is a VS Code window and costs memory. What workers may do without asking is `codico.teamWorkerPermissions` (default: edit freely, ask before commands, in the worker's window). A worker waiting for your approval shows as waiting for you, both to the orchestrator and in the background task list, where workers can also be reviewed, merged or discarded by hand.
+
+Things to know: workers start from your last commit, so commit first what they need (the orchestrator is told when there are uncommitted changes); a worker sees nothing of the orchestrator's conversation, only its task and messages; and each worker's tokens are counted in its own window.
+
 ### Subagents
 For a question that needs a lot of reading before anything can be done — how a feature works end to end, every place something is used, what a change would affect — the agent can **delegate** it. A subagent starts with a conversation of its own, reads and searches as much as the question needs, and returns a short report with file paths and line numbers. Only the report enters the main conversation, which stays small however much was read.
 
@@ -1013,6 +1024,7 @@ codico/
 - **Open tabs** — only the names of other open tabs are sent with a message, never their contents, and a tab outside the workspace or excluded by `.codicoignore` is not named
 - **`.codicoignore` enforcement** — per-root gitignore-style rules hide matching paths from Codico file tools and diagnostics; `.copilotignore` remains supported as a compatibility source
 - **Background tasks** — a task's edits are made in its own git worktree, never in the files of the window that started it; nothing is merged without a confirmation that shows the changes, and a conflicting merge is undone. Its window is subject to workspace trust like any other. Commands a task runs are not confined to the worktree, which the choice to run them unattended says
+- **Agent teams** — workers are background tasks with the same confinement: their edits stay in their own worktrees, and merging one into your workspace waits for your approval like a command
 - **Remembered commands** — a terminal command runs without asking only if you chose "Always allow" for it on its approval card. A rule is either one whole command, matched exactly, or a build/test command with any arguments (`npm test *`), which never matches a command that chains, pipes, redirects or substitutes (`npm test; …`, `&&`, `|`, `>`, `$( )`, backticks). Rules live in the workspace's private state, not in a settings file a repository could ship, do not apply in an untrusted folder, and are set aside for the rest of a turn once the agent has read web or MCP content
 - **Permission dialogs** — file writes and terminal commands require approval; network fetches, browser actions, and MCP tool calls are separately gated before they can affect external systems
 - **Terminal secret scrubbing** — approved shell commands inherit only an execution/toolchain allowlist (PATH, HOME, Java/Go/Python/Node toolchain roots, temp/system paths, locale), not arbitrary VS Code process secrets

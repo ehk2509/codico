@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { commitTaskWork, createWorktree, mergeTask, removeWorktree, repositoryRoot, taskChanges, uncommittedCount } from './backgroundGit';
-import { activeSummary, announcement, BackgroundPermissions, BackgroundTask, branchName, isActive, statusIcon, statusLabel, waitingForItsWindow, worktreeFolderName } from './backgroundTasks';
+import { activeSummary, announcement, BackgroundPermissions, BackgroundTask, branchName, isActive, statusIcon, statusLabel, waitingForItsWindow, WorkerRole, worktreeFolderName } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
 
 const POLL_MS = 4_000;
@@ -75,7 +75,7 @@ export class BackgroundTaskManager implements vscode.Disposable {
         }
         for (const task of tasks) {
             // Not what was already so when this window opened
-            const message = this._primed ? announcement(this._known.get(task.id), task) : undefined;
+            const message = this._primed && !task.team ? announcement(this._known.get(task.id), task) : undefined;
             if (message) { void this._announce(message, task); }
         }
         this._known = new Map(tasks.map(task => [task.id, task]));
@@ -112,19 +112,33 @@ export class BackgroundTaskManager implements vscode.Disposable {
             if (go !== 'Start Anyway') { return undefined; }
         }
 
-        const id = nodeCrypto.randomBytes(8).toString('hex');
-        const branch = branchName(prompt, id);
-        const worktree = path.join(worktreesRoot(), path.basename(repo), worktreeFolderName(prompt, id));
-        const made = await createWorktree(repo, worktree, branch);
-        if ('error' in made) { void vscode.window.showErrorMessage(`Codico: the background task could not be started: ${made.error}`); return undefined; }
-        const now = Date.now();
-        const task: BackgroundTask = { id, prompt, repoRoot: repo, worktree, branch, baseCommit: made.baseCommit, baseBranch: made.baseBranch, permissions: pick.value, status: 'starting', createdAt: now, updatedAt: now };
-        await this._store.save(task);
-        await this.refresh();
+        const task = await this.createTask({ prompt, permissions: pick.value });
+        if ('error' in task) { void vscode.window.showErrorMessage(`Codico: the background task could not be started: ${task.error}`); return undefined; }
         await this.openWindow(task);
         void vscode.window.showInformationMessage(
-            `Codico: background task started on branch ${branch}. Its window asks once whether you trust the folder; ` +
+            `Codico: background task started on branch ${task.branch}. Its window asks once whether you trust the folder; ` +
             `trusting the parent folder (${worktreesRoot()}) covers every later task.`);
+        return task;
+    }
+
+    /**
+     * Makes a task's branch, worktree and entry without asking anything; the caller opens its window.
+     * @param options.from a branch to start from instead of the last commit (a tester starts from a developer's work)
+     */
+    async createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; team?: string; from?: string; basedOn?: string }): Promise<BackgroundTask | { error: string }> {
+        const repo = await this._repo();
+        if (!repo) { return { error: 'this folder is not in a git repository' }; }
+        const id = nodeCrypto.randomBytes(8).toString('hex');
+        const branch = branchName(options.prompt, id);
+        const worktree = path.join(worktreesRoot(), path.basename(repo), worktreeFolderName(options.prompt, id));
+        const made = await createWorktree(repo, worktree, branch, options.from);
+        if ('error' in made) { return { error: made.error }; }
+        const now = Date.now();
+        const task: BackgroundTask = { id, prompt: options.prompt, repoRoot: repo, worktree, branch, baseCommit: made.baseCommit, baseBranch: options.from ? undefined : made.baseBranch,
+            permissions: options.permissions, status: 'starting', createdAt: now, updatedAt: now,
+            ...(options.role ? { role: options.role } : {}), ...(options.team ? { team: options.team } : {}), ...(options.basedOn ? { basedOn: options.basedOn } : {}) };
+        await this._store.save(task);
+        await this.refresh();
         return task;
     }
 

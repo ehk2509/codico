@@ -1,11 +1,11 @@
 (function () {
   'use strict';
 
-  var TOOL_FENCE_RE = /`{3,}(?:write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|remember|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code)[\s\S]*/g;
+  var TOOL_FENCE_RE = /`{3,}(?:write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|remember|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code|team)[\s\S]*/g;
 
   var TOOL_LANGS = {
     write_file:1, read_file:1, list_directory:1, run_terminal:1,
-    search_files:1, find_files:1, edit_file:1, get_diagnostics:1, fetch_url:1, web_search:1, remember:1, delegate:1, search_code:1,
+    search_files:1, find_files:1, edit_file:1, get_diagnostics:1, fetch_url:1, web_search:1, remember:1, delegate:1, search_code:1, team:1,
     browser_navigate:1, browser_click:1, browser_type:1, browser_get_text:1,
     browser_screenshot:1, browser_close:1, mcp_call:1, lsp_symbol:1,
     debug_get_variables:1, debug_get_callstack:1, debug_list_breakpoints:1, update_todo:1

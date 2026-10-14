@@ -36,7 +36,21 @@ export interface BackgroundTask {
     note?: string;
     tokens?: number;
     requests?: number;
+    /** A worker of an agent team: what it was started as, and the team (the orchestrating window's session) it belongs to. */
+    role?: WorkerRole;
+    team?: string;
+    /** The worker this one started from (a tester checks a developer's branch). */
+    basedOn?: string;
+    /** The worker's last reply, for the orchestrator. */
+    report?: string;
+    /** Messages to the worker; `inboxRead` of them have been given to it. */
+    inbox?: Array<{ at: number; text: string }>;
+    inboxRead?: number;
+    /** Set once the orchestrator merged the worker's branch. */
+    merged?: boolean;
 }
+
+export type WorkerRole = 'developer' | 'tester';
 
 export const HEARTBEAT_MS = 10_000;
 /** A running task with no heartbeat for this long has lost its window. */
@@ -114,8 +128,15 @@ export function announcement(before: BackgroundTask | undefined, after: Backgrou
 }
 
 /** What the agent is told before the user's own words: where it is and what is different there. */
-export function taskPreface(task: Pick<BackgroundTask, 'branch' | 'baseBranch'>): string {
-    return '[Background task] You are working in a separate git worktree of the project, on its own branch ' +
+const ROLE_BRIEF: Record<WorkerRole, string> = {
+    developer: '[Team: developer] You are the developer in a team led by another Codico agent (the orchestrator). Implement the task below completely, then check it: build it, and run or write the tests that show it works. ' +
+        'Keep to the task; other workers may be changing other parts of the project at the same time. Finish with a short report: what you changed, how you checked it, and anything left open.\n',
+    tester: '[Team: tester] You are the tester in a team led by another Codico agent (the orchestrator). Your branch starts from the work under test. Write the tests that the task below calls for, run them, and report exactly what passes and what fails, with the failing output. ' +
+        'Change the code under test only if the task says so; otherwise report the faults for the developer to fix. Finish with a short report.\n',
+};
+
+export function taskPreface(task: Pick<BackgroundTask, 'branch' | 'baseBranch' | 'role'>): string {
+    return (task.role ? ROLE_BRIEF[task.role] : '') + '[Background task] You are working in a separate git worktree of the project, on its own branch ' +
         `"${task.branch}"${task.baseBranch ? ` (started from "${task.baseBranch}")` : ''}. ` +
         'It is a fresh checkout: files that are not in git (installed dependencies, build output, local settings such as .env) are not here, ' +
         'so install or build what you need before running tests. The user is working elsewhere and will review the result on this branch. ' +

@@ -33,6 +33,9 @@ import { MAX_STEER_CHARS } from './steering';
 import { EditProposalManager } from './editProposalManager';
 import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
+import { TeamService } from './teamService';
+import { teamLabel, teamPromptSection } from './teamTools';
+import { repositoryRoot } from './backgroundGit';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
 import { ExternalToolRuntime, WEB_SEARCH_KEY } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
@@ -125,6 +128,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Goal of a plan whose reply ended with a clarifying question; the answer continues that plan. */
     private _planAwaitingAnswer: string | null = null;
     private get _readOnly(): boolean { return this._chatMode || this._planGoal !== null; }
+    /** Agent teams, when this window may lead one; the thread started with /team leads it. */
+    public team?: TeamService;
+    private _teamThread: string | undefined;
+    private get _teamMode(): boolean { return !!this.team && this._teamThread === this._activeThreadId && !this._readOnly; }
     private _mcpReady = false;
     private _watchersCreated = false;
     private readonly _workspaceIndex: WorkspaceIndex;
@@ -193,6 +200,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             get evaluationMode() { return provider._evaluationMode; },
             get evaluationTokenBudget() { return provider._evaluationTokenBudget; },
             get readOnly() { return provider._readOnly; },
+            get team() { return provider._teamMode; },
             get thinkingEffort() { return provider._thinkingEffort; },
             post: message => provider._post(message), dispatchTool: (tool, msgId, signal) => provider._dispatchTool(tool, msgId, signal),
         };
@@ -465,7 +473,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._steer = this._busy && msg.text.length <= MAX_STEER_CHARS ? msg.text : '';
                 break;
             case 'abortStream':
-                this._steer = '';
+                this._steer = ''; this._teamSteer = false;
                 this._abortController?.abort();
                 // A message waiting for the previous turn to finish is cancelled too; the
                 // panel already shows it as running, so end that state explicitly.
@@ -760,12 +768,33 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
 
     public lastReplyUsage(): DisplayMessage['usage'] { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
+    /** The text of the agent's last reply in full, without its tool calls: what a team's worker reports. */
+    public lastReplyText(): string {
+        const last = [...this._history].reverse().find(m => m.role === 'assistant' && messageText(m).trim());
+        return last ? messageText(last).replace(/(`{3,})[a-z_]+\n[\s\S]*?\1/g, '').trim() : '';
+    }
+    /** A message from a team's orchestrator: given at the next step while working, otherwise answered as a new message. */
+    public async teamMessage(text: string): Promise<'steered' | 'answered'> {
+        if (this._busy) { this._steer = this._steer ? `${this._steer}\n\n${text}` : text; this._teamSteer = true; return 'steered'; }
+        void this.sendMessage(text);
+        return 'answered';
+    }
+    /** The message waiting for the next step came from a team's orchestrator: if the turn ends first, it is sent as a new message, not dropped. */
+    private _teamSteer = false;
     /** Set in the window of a background task: its permissions, and a listener that follows what the agent does. */
     public backgroundPermissions: 'ask' | 'edits' | 'all' = 'ask'; public backgroundListener?: (msg: ExtensionMessage) => void;
     public get ready(): boolean { return !!this._view; }
     /** Declines whatever is waiting for an approval (a run with nobody to ask). */
     public denyPrompts(): void { this._approvals.cancelAll(); }
     public onBackgroundRequest?: (text: string) => void;
+    /** Runs a subagent; its reads run like any other tool call, and show as steps under it. */
+    private _delegate(tool: { type: 'delegate'; task: string; agent?: string }, msgId: string, signal: AbortSignal, agents: Array<{ name: string; instructions: string }>) {
+        this._delegating = true; // a subagent has a conversation of its own: what this one has read says nothing about it
+        return runDelegate(tool, this._subagentHost, agents, {
+            signal, maxSteps: vscode.workspace.getConfiguration('codico').get<number>('subagentMaxSteps', SUBAGENT_DEFAULT_MAX_STEPS),
+            runTool: async nested => { await this._dispatchTool(nested, msgId, signal); const text = this._lastInlineResult ?? ''; this._lastInlineResult = undefined; return text; },
+        }).finally(() => { this._delegating = false; });
+    }
     public showBackgroundTasks(text: string, needsUser: boolean): void { this._post({ type: 'backgroundTasks', text, needsUser }); }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
@@ -888,6 +917,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             text = `You have been provided with the GitHub PR context below. Please review this PR: summarise the changes, identify potential issues, suggest improvements, and note anything that looks risky or incomplete.${extra ? `\n\nAdditional focus: ${extra}` : ''}\n\n${prCtx}`;
         }
 
+        // ── /team <goal>: this thread leads a team of workers from now on ──
+        const teamMatch = text.match(/^\/team(?:\s+([\s\S]*))?$/i);
+        if (teamMatch) {
+            if (!this.team) { this._post({ type: 'error', message: 'Agent teams are not available in this window.' }); return; }
+            if (!(teamMatch[1] ?? '').trim()) { this._post({ type: 'error', message: 'Say what the team should do: /team <goal>.' }); return; }
+            this._teamThread = this._activeThreadId; text = (teamMatch[1] ?? '').trim();
+        }
+
         // The project's own skills and agents (.codico folder): "/name request" runs a skill
         const userExtensions = await this._userExtensions.get();
         text = expandSkillCommand(text, userExtensions.skills)?.text ?? text;
@@ -917,6 +954,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // What goes before Codico's own system prompt. Project memory is read once per turn: a note saved during the task does not change the prompt under it
         let effectivePrefix = systemPrefix({ repoInstructions: this._repoInstructions, customPrefix, mcpSection: this._mcp.buildSystemPromptSection(), skillsSection: skillsPromptSection(userExtensions.skills),
             memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true) });
+        if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(config.get<number>('teamMaxWorkers', 2))].filter(Boolean).join('\n\n'); }
 
         // Detect @agent mention and apply agent-specific context
         const { agent, strippedText } = parseAgentMention(text);
@@ -996,7 +1034,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // The change report: what this turn changed, and what was checked afterwards
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
         if (passport) { this._post({ type: 'patchPassport', id: msgId, passport, markdown: passportMarkdown(passport) }); }
-        this._steer = '';
+        if (this._teamSteer && this._steer) { this._pendingUserMessages.push({ text: this._steer }); }
+        this._steer = ''; this._teamSteer = false;
         this._post({ type: 'endMessage', id: msgId });
         const recording = this._recording;
         this._recording = null;
@@ -1037,7 +1076,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? lastMsg.content
                     : (lastMsg.content as MessageContentPart[]).filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('');
                 const displayText = raw
-                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|remember|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo)[\s\S]*?\1/g, '[tool call]')
+                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|remember|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo|delegate|search_code|team)[\s\S]*?\1/g, '[tool call]')
                     .trim().slice(0, 300);
                 summaryText = displayText;
             }
@@ -1229,14 +1268,21 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 result = await untilStopped(this._external._handleGetDiagnostics(tool, msgId), signal, stopped);
                 break;
             }
+            case 'team': {
+                this._post({ type: 'toolStart', id: msgId, tool: 'team', label: teamLabel(tool) });
+                const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+                result = !this.team || !this._teamMode ? '[team] ERROR: this thread does not lead a team. The user starts one with /team <goal>.'
+                    : await this.team.run(tool, { team: this._activeThreadId || 'team', repoRoot: folder ? await repositoryRoot(folder) : undefined, signal,
+                        // A merge changes the workspace like a command does: it is asked for like one
+                        approveMerge: task => this._approvals.allowAllCommands ? Promise.resolve(true)
+                            : this._approvals.askCommand(permId => ({ type: 'terminalPermissionRequest', id: msgId, permId, command: `git merge --no-ff ${task.branch}`, rules: [] })),
+                        review: async task => (await this._delegate({ type: 'delegate', task }, msgId, signal, [])).text });
+                this._post({ type: 'toolResult', id: msgId, tool: 'team', label: teamLabel(tool), success: !/^\[team(?: \w+)?\] ERROR/.test(result), error: /^\[team(?: \w+)?\] ERROR: (.{0,120})/.exec(result)?.[1] });
+                break;
+            }
             case 'delegate': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'delegate', label: tool.task.split('\n')[0].slice(0, 80) });
-                this._delegating = true; // a subagent has a conversation of its own: what this one has read says nothing about it
-                const delegated = await runDelegate(tool, this._subagentHost, (await this._userExtensions.get()).agents, {
-                    signal, maxSteps: vscode.workspace.getConfiguration('codico').get<number>('subagentMaxSteps', SUBAGENT_DEFAULT_MAX_STEPS),
-                    // The subagent's reads run like any other, and show as steps under the delegation
-                    runTool: async nested => { await this._dispatchTool(nested, msgId, signal); const text = this._lastInlineResult ?? ''; this._lastInlineResult = undefined; return text; },
-                }).finally(() => { this._delegating = false; });
+                const delegated = await this._delegate(tool, msgId, signal, (await this._userExtensions.get()).agents);
                 this._post({ type: 'activity', text: null });
                 this._post({ type: 'toolResult', id: msgId, tool: 'delegate', label: delegated.label, success: delegated.success, error: delegated.error });
                 result = delegated.text;

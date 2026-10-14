@@ -4,6 +4,9 @@ All notable changes to Codico will be documented in this file.
 
 ## Unreleased
 
+### Added
+- Agent teams. `/team <goal>` makes the agent in the panel the orchestrator of a team: it plans, starts developers and testers that work in parallel, each in a git worktree, branch and window of its own, waits for their reports, has a read-only reviewer check their patches, sends them corrections or answers, and merges their branches into the workspace after your approval. A merge that conflicts is undone. After merging, it runs the build and tests as an acceptance gate. A tester starts from a developer's branch. New settings: `codico.teamMaxWorkers` (default 2) and `codico.teamWorkerPermissions` (default: edit freely, ask before commands).
+
 ### Changed
 - Internal: the main agent file (`agentProvider.ts`) is split by responsibility, from 2,895 lines to 1,429. The agent loop now lives in `agentTurn.ts` and reaches the panel only through a narrow interface; the workspace tools, approvals, thread list, compaction, panel commands and turn setup each have a module of their own. Each file has its own size budget in the architecture test, in place of one limit for the main file. No behaviour changes.
 
