@@ -24,6 +24,19 @@ export function probe(url: URL, timeoutMs = 2000): Promise<boolean> {
 
 interface RunningApp { command: string; url: URL; child: cp.ChildProcess; output: string; exited?: number | null }
 
+/**
+ * Apps still running when the editor's extension host ends (a reload, the window closed): each
+ * is a process group of its own, so nothing else would end them and they would hold their port.
+ */
+const live = new Set<number>();
+let exitHook = false;
+function remember(pid: number): void {
+    live.add(pid);
+    if (exitHook) { return; }
+    exitHook = true;
+    process.once('exit', () => { for (const id of live) { if (process.platform === 'win32') { killWindowsTree(id, true); } else { killProcessGroup(id, 'SIGKILL'); } } });
+}
+
 const MAX_LOG = 64 * 1024;
 const tail = (text: string, chars = 3000) => text.length > chars ? '…' + text.slice(-chars) : text;
 
@@ -59,10 +72,11 @@ export class AppRunner {
             detached: process.platform !== 'win32', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
         });
         const app: RunningApp = { command: options.command, url, child, output: '' };
+        if (child.pid) { remember(child.pid); }
         this._apps.set(url.origin, app);
         const collect = (chunk: Buffer) => { app.output = (app.output + chunk.toString()).slice(-MAX_LOG); };
         child.stdout?.on('data', collect); child.stderr?.on('data', collect);
-        child.on('exit', code => { app.exited = code; });
+        child.on('exit', code => { app.exited = code; if (child.pid) { live.delete(child.pid); } });
         child.on('error', error => { app.output += `\n${error.message}`; app.exited = -1; });
 
         const until = Date.now() + options.timeoutMs;
@@ -93,6 +107,7 @@ export class AppRunner {
         let stopped = 0;
         for (const [key, app] of this._apps) {
             if (origin && key !== origin) { continue; }
+            if (app.child.pid) { live.delete(app.child.pid); }
             if (app.exited === undefined && app.child.pid) {
                 if (process.platform === 'win32') { killWindowsTree(app.child.pid, true); }
                 else {

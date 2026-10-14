@@ -9,6 +9,7 @@ import { BackgroundTaskManager, runInPanel } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
 import { TeamWorkers } from './teamWorkers';
+import { AutomationService } from './automationService';
 import { BackgroundPermissions } from './backgroundTasks';
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
@@ -149,11 +150,16 @@ export function activate(context: vscode.ExtensionContext): void {
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
     backgroundTasks.onSummary = (text, needsUser) => provider.showBackgroundTasks(text, needsUser);
     // Agent teams: the panel's agent leads; its workers run here, next to it, or each in a window of its own
-    const teamWorkers = new TeamWorkers(backgroundStore, { context, editProposals: provider.editProposals, approvedCommands: () => provider.approvedCommands, evaluationMode },
+    const teamWorkers = new TeamWorkers(backgroundStore, { context, editProposals: provider.editProposals, approvedCommands: () => provider.approvedCommands, evaluationMode,
+        sandboxRequired: () => vscode.workspace.getConfiguration('codico').get<string>('commandSandbox', 'off') === 'required' },
         message => provider.postToPanel(message), task => backgroundTasks.openWindow(task));
     context.subscriptions.push(teamWorkers);
     provider.workers = teamWorkers;
     const inWindows = () => !runInPanel();
+    // Automations: GitHub issues, CI failures and reviews start and resume jobs (off until turned on for a repository)
+    const automations = new AutomationService(context, backgroundStore, backgroundTasks, teamWorkers, evaluationMode);
+    context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()));
+    if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalAutomations', (action: 'configure' | 'tick' | 'get' | 'publish', value?: unknown) => automations.evaluation(action, value))); }
     // /background tasks run here too, unless the setting says each gets a window
     backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };
     provider.team = new TeamService({

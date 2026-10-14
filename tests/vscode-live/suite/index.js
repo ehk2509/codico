@@ -898,7 +898,7 @@ async function run() {
     const evidence = files.includes('report.md') && files.includes('replay.png') && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 6
       && /### Acceptance — Accepted/.test(fs.readFileSync(path.join(folder, 'report.md'), 'utf8')) && !!ac1.evidence[0]?.screenshot && fs.existsSync(path.join(ws, ac1.evidence[0].screenshot))
       && fs.readFileSync(path.join(ws, '.codico/evidence/.gitignore'), 'utf8') === '*\n';
-    const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${Number(process.env.LIVE_PORT) + 7}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
+    const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${process.env.LIVE_APP_PORT}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
     results.push({ name: 'acceptance_e2e', ms: Date.now() - t0, requests: reqs.length, ok: !error && reproduced && verified && reviewed && consoleSeen && evidence && stopped,
       why: `the bug was reproduced by Codico's own assertion before the fix: ${reproduced}; after the fix AC1 is verified on the final code (${acc.verdict}, ${ac1.status}): ${verified}; an independent reviewer agreed: ${reviewed}; the page's console error was reported and kept: ${consoleSeen}; evidence saved (screenshots, replay, report, git-ignored): ${evidence} (${files.length} files); the app was stopped after the turn: ${stopped}${error ? '; error: ' + error : ''}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
@@ -952,6 +952,52 @@ async function run() {
     results.push({ name: 'background_in_window', ms: Date.now() - bgT0, requests: (await getLog()).length - bgBefore, ok: bgHere && bgReplied,
       why: `a /background task ran in this window, in its own worktree, and finished with its report: ${bgHere} (${bgDone.status}); the user's reply reached it and its answer became the report: ${bgReplied}` });
     try { git('worktree', 'remove', '--force', bg.worktree); } catch { /* reported by the checks */ }
+
+    // Automations: a labelled issue becomes a job in this window and a draft pull request; CI failing on it resumes the same agent from its saved conversation
+    {
+      const a0 = Date.now(); const aBefore = (await getLog()).length;
+      const ghUrl = `http://127.0.0.1:${process.env.LIVE_PORT}`;
+      const ghState = async (set) => new Promise((res, rej) => { const req = require('node:http').request(`${ghUrl}/gh-state`, { method: set ? 'POST' : 'GET', headers: { 'content-type': 'application/json' } }, r => { let b = ''; r.on('data', d => b += d); r.on('end', () => res(JSON.parse(b))); }); req.on('error', rej); req.end(set ? JSON.stringify(set) : undefined); });
+      const bare = path.join(ws, '..', 'origin.git');
+      require('node:child_process').execFileSync('git', ['init', '-q', '--bare', '-b', 'main', bare]);
+      git('remote', 'add', 'origin', 'https://github.com/acme/app.git'); git('config', `url.${bare}.insteadOf`, 'https://github.com/acme/app.git'); git('push', '-q', 'origin', 'HEAD:main');
+      await ghState({ issues: [{ number: 7, state: 'open', title: 'Write the auto file', body: 'Please write live/auto.txt. [SCENARIO:auto_issue]', user: { login: 'ann' }, html_url: 'https://github.com/acme/app/issues/7' }] });
+      const auto = (action, value) => vscode.commands.executeCommand('codico.__evalAutomations', action, value);
+      const job = async () => ((await auto('get')).jobs || [])[0] || {};
+      const taskOf = async (id) => ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === id) || {};
+      const until = async (check, ms = 30000) => { for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 200))) { if (await check()) { return true; } } return false; };
+      await auto('configure', { issueLabel: 'codico', ciFailures: false, publish: 'auto' });
+      await auto('tick');
+      const first = await job();
+      const ranHere = await until(async () => (await taskOf(first.taskId)).status === 'finished');
+      // As if the window had been reloaded: the agent is gone, its conversation is on disk
+      await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'teamWorker', worker: String(first.taskId).slice(0, 8), action: 'dismiss' });
+      await auto('tick');
+      const gh1 = await ghState();
+      const pr = gh1.created[0] || {};
+      const onOrigin = () => { try { return require('node:child_process').execFileSync('git', ['show', `${pr.head}:live/auto.txt`], { cwd: bare, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { return null; } };
+      const afterFirst = await job();
+      const opened = afterFirst.state === 'watching' && pr.draft === true && /^Resolves #7\./.test(pr.body || '') && pr.base === 'main' && onOrigin() === 'AUTO-V1';
+      // CI fails on the pull request
+      await ghState({ pulls: { 100: { state: 'open', merged: false, head: { sha: 'c0ffee1' } } }, checks: { c0ffee1: [{ name: 'test', status: 'completed', conclusion: 'failure', details_url: 'https://github.com/acme/app/actions/runs/1/job/901' }] },
+        logs: { 901: 'npm test\n##[error]expected AUTO-V2 in live/auto.txt [SCENARIO:auto_fix]\nProcess completed with exit code 1.' } });
+      await auto('tick');
+      const resumed = (await job()).state === 'working' && await until(async () => /AUTO-V2/.test((await taskOf(first.taskId)).report || '') && (await taskOf(first.taskId)).status === 'finished');
+      const fixReq = (await getLog()).slice(aBefore).find(e => e.scenario === 'auto_fix') || {};
+      const withContext = fixReq.hasEarlierReply === true && /pull request #100 needs more work[\s\S]*expected AUTO-V2/.test(fixReq.lastUser || '');
+      await auto('tick');
+      const pushed = onOrigin() === 'AUTO-V2' && (await ghState()).created.length === 1;
+      await ghState({ pulls: { 100: { state: 'closed', merged: true, head: { sha: 'c0ffee2' } } } });
+      await auto('tick');
+      const done = (await job()).state === 'done';
+      const tokens = (await ghState()).tokens;
+      const ownToken = tokens.length > 0 && tokens.every(t => t === 'Bearer test-github-token');
+      const problem = (await auto('get')).problem;
+      results.push({ name: 'automation_lifecycle', ms: Date.now() - a0, requests: (await getLog()).length - aBefore, ok: ranHere && opened && resumed && withContext && pushed && done && ownToken,
+        why: `${problem ? 'problem: ' + problem + '; ' : ''}the labelled issue became a job run in this window: ${ranHere}; its work became a draft pull request that resolves the issue, pushed: ${opened} (${afterFirst.state}${afterFirst.note ? ': ' + afterFirst.note : ''}; ${JSON.stringify((afterFirst.log || []).map(l => l.text))}); CI failing on it resumed the job: ${resumed}; the resumed agent had its earlier conversation (reloaded from disk) and the failing log: ${withContext}; the fix was pushed to the same pull request: ${pushed}; merged, the job is done: ${done}; only the test token was sent: ${ownToken}` });
+      fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+      git('remote', 'remove', 'origin');
+    }
     try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }
     fs.rmSync(path.join(ws, '.git'), { recursive: true, force: true });
     await set('backgroundTasksDirectory', undefined);

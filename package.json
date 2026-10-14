@@ -136,6 +136,11 @@
         "title": "Codico: Remembered Commands"
       },
       {
+        "command": "codico.automations",
+        "title": "Codico: Automations",
+        "icon": "$(radio-tower)"
+      },
+      {
         "command": "codico.backgroundTasks",
         "title": "Codico: Background Tasks"
       },
@@ -469,6 +474,23 @@
           "minimum": 200,
           "maximum": 3000,
           "description": "Debounce delay in ms before requesting an inline completion"
+        },
+        "codico.automationPollSeconds": {
+          "type": "number",
+          "default": 120,
+          "minimum": 30,
+          "description": "Automations: how often GitHub is read for new issues, CI failures and feedback on Codico's pull requests, while the window is open."
+        },
+        "codico.automationPermissions": {
+          "type": "string",
+          "enum": ["edits", "all", "ask"],
+          "enumDescriptions": [
+            "Jobs edit files in their worktree freely, and ask in the Agents view before each command.",
+            "Jobs edit and run commands without asking, but only inside the command sandbox (codico.commandSandbox \"required\"); without it, commands are still asked, since jobs work from text other people wrote.",
+            "Jobs ask before every edit and command."
+          ],
+          "default": "edits",
+          "description": "Automations: what a job may do without asking."
         },
         "codico.acceptanceChecks": {
           "type": "boolean",

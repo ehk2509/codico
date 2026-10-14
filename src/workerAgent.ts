@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import * as nodeCrypto from 'crypto';
 import { AgentTurn, TurnHost } from './agentTurn';
@@ -35,6 +36,13 @@ export interface WorkerDeps {
     readonly editProposals: EditProposalManager;
     approvedCommands(): CommandApprovalStore;
     readonly evaluationMode: boolean;
+    /** Where its conversation is kept between replies, so that it can be resumed after a reload. */
+    readonly historyFile?: string;
+    /**
+     * It works from text other people wrote (an issue, a CI log, a review): its commands are not
+     * covered by "allow all" unless they run in the command sandbox.
+     */
+    readonly untrusted?: () => boolean;
     /** Everything the worker shows: its steps and text, and the questions it asks. */
     post(message: ExtensionMessage): void;
 }
@@ -67,8 +75,11 @@ export class WorkerAgent implements BackgroundAgent {
         this._tools = new WorkspaceTools({
             post: message => this._emit(message), approvals: this.approvals, undo, passport: () => this._passport, editProposals: _deps.editProposals,
             fileManager: new FileManager(), approvedCommands: () => _deps.approvedCommands(), evaluationMode: () => _deps.evaluationMode,
-            editsMode: () => false, untrustedContentSeen: () => false, fileWritten: () => undefined,
+            editsMode: () => false, untrustedContentSeen: () => _deps.untrusted?.() ?? false, fileWritten: () => undefined,
         });
+        if (_deps.historyFile) {
+            try { const saved = JSON.parse(fs.readFileSync(_deps.historyFile, 'utf8')); if (Array.isArray(saved)) { this._history = saved; } } catch { /* a new conversation */ }
+        }
         const self = this;
         let compactRetryAt = 0; let lastPromptTokens = 0; let subagentHost: SubagentHost | undefined;
         let evalTrace: EvaluationToolTraceEvent[] = []; const counters = { budget: false, completion: 0, omitted: 0, prompt: 0, steps: 0, calls: 0 };
@@ -167,6 +178,8 @@ export class WorkerAgent implements BackgroundAgent {
         });
         this._lastPassport = this._passport.build();
         this._display.push({ role: 'assistant', text: this.lastReplyText().slice(0, 300), at: Date.now(), usage: taskUsage.record() });
+        // Kept before it is reported finished: whoever resumes it next finds the whole conversation
+        if (this._deps.historyFile) { try { fs.writeFileSync(this._deps.historyFile, JSON.stringify(this._history), { mode: 0o600 }); } catch { /* resumable only while the window is open */ } }
         this._emit({ type: 'endMessage', id: msgId });
     }
 
