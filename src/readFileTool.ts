@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { toolRelativePath } from './toolRoot';
 import { ChatMessage } from './openRouterClient';
 import { ReadFileTool } from './toolParser';
 import { fileOutlineSymbols } from './fileOutline';
@@ -12,7 +13,7 @@ type Report = (outcome: { label: string; success: boolean; error?: string }) => 
 /** Every way the model may have written this file's path. */
 function pathNames(filepath: string, uri: vscode.Uri): Set<string> {
     const clean = (value: string) => value.trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    return new Set([clean(filepath), clean(vscode.workspace.asRelativePath(uri, false)), clean(uri.fsPath)]);
+    return new Set([clean(filepath), clean(toolRelativePath(uri)), clean(uri.fsPath)]);
 }
 
 /**

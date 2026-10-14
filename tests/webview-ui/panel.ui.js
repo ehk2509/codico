@@ -932,6 +932,59 @@ test('background tasks show in the panel\'s own status row, and a click opens th
   assert.deepEqual(errors, []);
 });
 
+test('the team view: each worker with its status, steps, tokens and log; its questions in its place, without "Allow all"', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const view = page.locator('#team-view');
+  assert.equal(await view.isVisible(), false, 'nothing while there is no team');
+  const worker = (over) => ({ id: 'aaaa1111', name: 'backend', role: 'developer', task: 'Build the /health endpoint and its test', branch: 'codico/build-aaaa11', status: 'running', steps: 3, tokens: 12500, log: [], ...over });
+  // The user allows all commands for the orchestrator's task
+  await send({ type: 'startMessage', id: 'm1' }, { type: 'terminalPermissionRequest', id: 'm1', permId: 'p0', command: 'ls', rules: [] });
+  await page.locator('#perm-p0 .allow-all').click();
+  await send({ type: 'teamState', workers: [worker({ activity: 'edit_file src/health.ts', log: [{ tool: 'read_file', label: 'src/app.ts', ok: true }, { text: 'Adding the route.' }] }),
+    worker({ id: 'bbbb2222', name: 'frontend', status: 'finished', steps: 9, tokens: 2_300_000, verdict: 'verified', log: [] })] });
+  assert.equal(await view.isVisible(), true);
+  assert.match(await view.locator('.tv-sum').textContent(), /1 running · 1 finished/);
+  const backend = page.locator('#tv-aaaa1111');
+  assert.match(await backend.locator('.tv-row').textContent(), /backend\s*developer\s*running\s*3 steps · 12\.5k tok/);
+  assert.match(await backend.locator('.tv-activity').textContent(), /edit_file src\/health\.ts/);
+  assert.match(await page.locator('#tv-bbbb2222 .tv-row').textContent(), /frontend.*finished · verified.*2\.3M tok/);
+  // Its log opens on a click on its row
+  assert.equal(await backend.locator('.tv-log').isVisible(), false);
+  await backend.locator('.tv-name').click();
+  assert.match(await backend.locator('.tv-log').textContent(), /✓ read_file src\/app\.ts[\s\S]*Adding the route\./);
+  // A worker's question: in its place, named, and never covered by "Allow all" said to the orchestrator
+  await page.evaluate(() => { window.__posted.length = 0; });
+  await send({ type: 'terminalPermissionRequest', id: 'w1', permId: 'p1', command: 'npm test', rules: ['npm test'], worker: 'aaaa1111' });
+  const card = backend.locator('#perm-p1');
+  assert.equal(await card.isVisible(), true);
+  assert.match(await card.textContent(), /Allow worker backend to run a terminal command\?[\s\S]*npm test/);
+  assert.equal(await card.locator('.allow-all').count(), 0);
+  assert.deepEqual(await posted('allowAllTerminal'), []);
+  // A redraw keeps the question
+  await send({ type: 'teamState', workers: [worker({ status: 'waiting' }), worker({ id: 'bbbb2222', name: 'frontend', status: 'finished' })] });
+  assert.equal(await card.isVisible(), true);
+  await card.locator('.write-perm-btn.allow').click();
+  assert.deepEqual(await posted('terminalPermissionResponse'), [{ type: 'terminalPermissionResponse', permId: 'p1', granted: true }]);
+  await send({ type: 'writePermissionRequest', id: 'w1', permId: 'p2', filepath: 'src/health.ts', preview: '', diff: '+ok', editableContent: 'ok', worker: 'aaaa1111' });
+  assert.match(await backend.locator('#perm-p2').textContent(), /Allow worker backend to write src\/health\.ts/);
+  assert.equal(await backend.locator('#perm-p2 .allow-all').count(), 0);
+  // Buttons: stop a running worker, open its folder, remove a finished one from the view
+  await backend.locator('.tv-btn', { hasText: 'Stop' }).click();
+  await backend.locator('.tv-btn', { hasText: 'Open' }).click();
+  await page.locator('#tv-bbbb2222 .tv-btn', { hasText: '✕' }).click();
+  assert.deepEqual(await posted('teamWorker'), [{ type: 'teamWorker', worker: 'aaaa1111', action: 'stop' }, { type: 'teamWorker', worker: 'aaaa1111', action: 'open' }, { type: 'teamWorker', worker: 'bbbb2222', action: 'dismiss' }]);
+  // A paused worker asks to go on, in its place
+  await send({ type: 'checkpoint', id: 'w1', steps: 40, reason: 'It used 200k tokens.', worker: 'aaaa1111' });
+  await backend.locator('.write-perm-btn', { hasText: 'Continue' }).click();
+  assert.deepEqual((await posted('teamWorker')).at(-1), { type: 'teamWorker', worker: 'aaaa1111', action: 'continue' });
+  // A narrow panel: nothing is pushed out
+  await page.setViewportSize({ width: 240, height: 700 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await send({ type: 'teamState', workers: [] });
+  assert.equal(await view.isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
 test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
   const { page, posted, errors } = await openPanel();
   await page.fill('#msg-input', '/back');

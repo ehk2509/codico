@@ -112,9 +112,14 @@ const SCRIPTS = (port) => ({
   // A team's worker: its first report, then its answer to the orchestrator's message
   team_worker: Array(6).fill('Tests pass: 3 of 3.'),   // a text-only reply to a tester's brief is nudged to act a few times
   team_followup: ['Checked the empty input too: it passes.'],
-  team_lead: ['Planning: one developer writes the file.\n\n' + tool('team', 'action: start\nrole: developer\ntext:\nWrite live/team-result.txt containing TEAM-WORK.'),
+  // The worker: a real agent in the same window, working in its own worktree
+  // It also tries to leave its worktree, and to read a file the workspace excludes: all refused
+  team_dev: ['Looking around first.\n\n' + tool('write_file', 'filepath: ../../ws/live/team-escape.txt\ncontent:\nESCAPED') + tool('write_file', `filepath: ${path.join(process.env.LIVE_WORK_DIR || '', 'ws', 'live', 'team-escape-abs.txt')}\ncontent:\nESCAPED`) +
+    tool('read_file', 'filepath: fixtures/secret.txt') + tool('run_terminal', 'command: pwd'),
+    tool('write_file', 'filepath: live/team-result.txt\ncontent:\nTEAM-WORK'), 'Wrote live/team-result.txt with TEAM-WORK.'],
+  team_lead: ['Planning: one developer writes the file.\n\n' + tool('team', 'action: start\nrole: developer\nname: backend\ntext:\nWrite live/team-result.txt containing TEAM-WORK. [SCENARIO:team_dev]'),
     tool('team', 'action: wait\ntimeout_seconds: 120'),
-    messages => tool('team', 'action: merge\nworker: ' + ((/Started worker ([0-9a-f]{8})/.exec(messages.map(m => textOf(m.content)).join('\n')) || [])[1] || 'unknown')),
+    tool('team', 'action: merge\nworker: backend'),
     tool('run_terminal', 'command: cat live/team-result.txt'), 'The team finished: the file is merged and checked.'],
   // Duplicating a thread: refused while a reply runs, then an independent copy
   dup_slow: [tool('run_terminal', 'command: sleep 2; echo dup-slow-done'), 'Done.'],
@@ -170,7 +175,8 @@ const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     // Phase notes quote the task (and so its scenario tag) but are not the request
-    const text = messages[i].role === 'user' ? textOf(messages[i].content).split('[System Phase]')[0] : '';
+    // Tool results quote other conversations' tasks (a team's workers): they are not this one's request
+    const text = messages[i].role === 'user' && !/^\[Tool Results\]/.test(textOf(messages[i].content)) ? textOf(messages[i].content).split('[System Phase]')[0] : '';
     const m = /\[SCENARIO:(\w+)\]/.exec(text);
     // Verification replies are not part of the scenario script
     if (m) { return { scenario: m[1], step: messages.slice(i + 1).filter(x => x.role === 'assistant' && !/LIVE-VERIFY/.test(textOf(x.content))).length }; }

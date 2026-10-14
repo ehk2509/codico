@@ -878,7 +878,7 @@ async function run() {
   }
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
 
-  // ── Agent team: /team makes this thread the orchestrator; a worker (its window simulated here) is waited for, merged and checked ──
+  // ── Agent team: /team makes this thread the orchestrator; its worker runs in this window, in its own worktree, and is waited for, merged and checked ──
   // Last: it makes the workspace a git repository, and the thread a team's
   {
     const t0 = Date.now(); const before = (await getLog()).length;
@@ -888,31 +888,34 @@ async function run() {
     const worktrees = path.join(ws, '..', 'team-worktrees');
     await set('backgroundTasksDirectory', worktrees);
     const lead = vscode.commands.executeCommand('codico.__evalRunTask', '/team [SCENARIO:team_lead] write the team file');
-    // The worker's own window is not opened in tests: do its work and report as it would
+    // The worker runs in this window: an agent of its own, in its own worktree
     let worker;
     for (let i = 0; i < 100 && !worker; i++) {
       await new Promise(r => setTimeout(r, 200));
       worker = (await vscode.commands.executeCommand('codico.__evalBackground') || []).find(t => t.team && t.role === 'developer');
     }
-    const isolated = !!worker && worker.worktree.startsWith(worktrees) && fs.existsSync(path.join(worker.worktree, 'fixtures/config.txt')) && !fs.existsSync(path.join(ws, 'live/team-result.txt'));
-    if (worker) {
-      fs.writeFileSync(path.join(worker.worktree, 'live/team-result.txt'), 'TEAM-WORK\n');
-      await vscode.commands.executeCommand('codico.__evalBackground', { ...worker, status: 'finished', heartbeat: Date.now(), report: 'Wrote live/team-result.txt; checked it with cat.' });
-    }
+    const isolated = !!worker && worker.worktree.startsWith(worktrees) && worker.name === 'backend';
     let error = null;
     try { await Promise.race([lead, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out after 90 s')), 90000))]); } catch (e) { error = String(e && e.message || e); }
     const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'team_lead' && e.stream);
     const said = reqs.map(r => r.lastUser).join('\n');
-    const started = /\[team start\] Started worker [0-9a-f]{8} \(developer\)/.test(said);
-    const reported = /\[team wait\] All of them have stopped[\s\S]*live\/team-result\.txt[\s\S]*Report:\nWrote live\/team-result\.txt/.test(said);
+    const started = /\[team start\] Started worker backend \([0-9a-f]{8}\) \(developer\) on branch \S+ in this window/.test(said);
+    const reported = /\[team wait\] All of them have stopped[\s\S]*Worker backend \([0-9a-f]{8}\), developer: finished[\s\S]*live\/team-result\.txt[\s\S]*Report:\nWrote live\/team-result\.txt with TEAM-WORK/.test(said);
+    const workerReqs = (await getLog()).slice(before).filter(e => e.scenario === 'team_dev' && e.stream);
+    const workerBriefed = /\[Team: developer\][\s\S]*\[Background task\] You are working in a separate git worktree/.test((workerReqs[0] || {}).lastUser || '');
+    // What it was told when it tried to leave its worktree: refused, and nothing written in the workspace
+    const probe = (workerReqs[1] || {}).lastUser || '';
+    const confined = /\[write_file: \.\.\/\.\.\/ws\/live\/team-escape\.txt\] Error: Unsafe path rejected/.test(probe) && /team-escape-abs\.txt\] Error: Outside your worktree/.test(probe) && /excluded by \.codicoignore: fixtures\/secret\.txt/.test(probe) && !/SECRET-TOKEN/.test(probe)
+      && !!worker && probe.includes(worker.worktree) && read('live/team-escape.txt') === null && read('live/team-escape-abs.txt') === null;
+    const inWorktree = !!worker && (() => { try { return fs.readFileSync(path.join(worker.worktree, 'live/team-result.txt'), 'utf8').trim() === 'TEAM-WORK'; } catch { return false; } })();
     const merged = /\[team merge\] Merged worker [\s\S]*Acceptance gate/.test(said) && (read('live/team-result.txt') || '').trim() === 'TEAM-WORK';
     const checked = /TEAM-WORK/.test((reqs[4] || {}).lastUser || '');
     const listed = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => worker && t.id === worker.id) || {};
     try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }
     fs.rmSync(path.join(ws, '.git'), { recursive: true, force: true });
     await set('backgroundTasksDirectory', undefined);
-    results.push({ name: 'agent_team', ms: Date.now() - t0, requests: reqs.length, ok: !error && started && isolated && reported && merged && listed.merged === true && checked,
-      why: `the worker started in its own worktree, outside the workspace: ${started && isolated}; the wait returned its changes and report: ${reported}; merged into the workspace with the acceptance gate asked for: ${merged}; recorded as merged: ${listed.merged === true}; the result was checked in the workspace: ${checked}${error ? '; error: ' + error : ''}` });
+    results.push({ name: 'agent_team', ms: Date.now() - t0, requests: reqs.length, ok: !error && started && isolated && workerBriefed && confined && inWorktree && reported && merged && listed.merged === true && checked,
+      why: `the worker "backend" started in its own worktree, outside the workspace: ${started && isolated}; it ran in this window, briefed as the team's developer: ${workerBriefed} (${workerReqs.length} requests); it could not write outside its worktree, read an excluded file, and its commands ran in its worktree: ${confined}; it wrote in its worktree: ${inWorktree}; the wait returned its changes and report: ${reported}; merged into the workspace with the acceptance gate asked for: ${merged}; recorded as merged: ${listed.merged === true}; the result was checked in the workspace: ${checked}${error ? '; error: ' + error : ''}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 

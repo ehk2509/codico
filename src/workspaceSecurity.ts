@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ignoreRules } from './ignoreRules';
+import { toolFolderOf, toolFolders, toolRoot } from './toolRoot';
 
 export interface WorkspaceToolTarget {
     folder: vscode.WorkspaceFolder;
@@ -14,7 +15,8 @@ function slash(value: string): string {
 }
 
 function workspaceFolders(): readonly vscode.WorkspaceFolder[] {
-    const folders = vscode.workspace.workspaceFolders;
+    // A team worker's tools reach its own worktree only
+    const folders = toolFolders();
     if (!folders || folders.length === 0) {
         throw new Error('No workspace folder open');
     }
@@ -39,6 +41,11 @@ function selectFolderAndRelativePath(rawPath: string, allowRoot: boolean): {
         }
     }
 
+    // A team worker gave a full path that is not in its worktree: most likely the workspace's, which it must not reach
+    const worker = toolRoot();
+    if (worker && (raw.startsWith('/') || /^[A-Za-z]:\//.test(raw))) {
+        throw new Error(`Outside your worktree (${worker.uri.fsPath}): you work only there. Use paths relative to it.`);
+    }
     raw = raw.replace(/^\/+/, '');
     if (folders.length > 1) {
         const slashIndex = raw.indexOf('/');
@@ -126,7 +133,7 @@ async function assertNoSymlinkEscape(folder: vscode.WorkspaceFolder, uri: vscode
 }
 
 export async function isWorkspaceUriAllowed(uri: vscode.Uri): Promise<boolean> {
-    const folder = vscode.workspace.getWorkspaceFolder(uri);
+    const folder = toolFolderOf(uri);
     if (!folder) { return false; }
     await ignoreRules.ensureLoaded(folder);
     const relativePath = slash(path.relative(folder.uri.fsPath, uri.fsPath));

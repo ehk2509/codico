@@ -15,6 +15,8 @@ export interface TeamTool {
     action: TeamAction;
     /** start: what the worker is. */
     role?: WorkerRole;
+    /** start: a short name for the worker, after its part of the work ("backend"). */
+    name?: string;
     /** start: the worker's task. message: the text sent. review: what to look at most. */
     text?: string;
     /** The worker acted on (its id); start: the worker whose branch the new one starts from. */
@@ -29,12 +31,18 @@ export const MAX_WAIT_SECONDS = 1800;
 /** How much of a worker's patch the orchestrator reads at once. */
 export const MAX_PATCH_CHARS = 30_000;
 
-/** The worker's name for the orchestrator: short, and unique enough within a team. */
+/** The worker's id for the orchestrator: short, and unique enough within a team. */
 export const workerId = (task: Pick<BackgroundTask, 'id'>) => task.id.slice(0, 8);
+/** A worker's name: lowercase letters, digits and dashes, up to 24 characters. */
+export const cleanWorkerName = (name: string | undefined) => (name ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || undefined;
+/** How the orchestrator and the user see a worker: its name and id, or its id. */
+export const workerLabel = (task: Pick<BackgroundTask, 'id' | 'name'>) => task.name ? `${task.name} (${workerId(task)})` : workerId(task);
 
-/** The workers matching a name the model gave: an id, or the start of one. */
+/** The worker a name the model gave stands for: its name, its id, or the start of its id. The newest worker of that name wins. */
 export function findWorker(tasks: readonly BackgroundTask[], name: string | undefined): BackgroundTask | undefined {
-    const wanted = (name ?? '').trim().toLowerCase().replace(/^#/, '');
+    const wanted = (name ?? '').trim().toLowerCase().replace(/^#/, '').replace(/\s*\([0-9a-f]+\)$/, '');
+    const named = tasks.filter(task => task.name && task.name === cleanWorkerName(wanted));
+    if (named.length > 0) { return named.reduce((a, b) => (b.createdAt > a.createdAt ? b : a)); }
     if (wanted.length < 4) { return undefined; }
     const matches = tasks.filter(task => task.id.startsWith(wanted));
     return matches.length === 1 ? matches[0] : undefined;
@@ -55,6 +63,7 @@ export function teamToolFromArgs(args: Record<string, unknown>): TeamTool | null
     return {
         type: 'team', action,
         ...(isRole(role) ? { role } : {}),
+        ...(cleanWorkerName(str('name')) ? { name: cleanWorkerName(str('name')) } : {}),
         ...(str('text') ? { text: str('text') } : {}),
         ...(str('worker') ? { worker: str('worker') } : {}),
         ...(workers && workers.length ? { workers } : {}),
@@ -87,7 +96,7 @@ export function parseTeamFence(body: string): TeamTool | null {
 export function teamLabel(tool: TeamTool): string {
     const first = (tool.text ?? '').split('\n')[0].slice(0, 70);
     switch (tool.action) {
-        case 'start': return `${tool.role ?? 'developer'}: ${first}`;
+        case 'start': return `${tool.name ?? tool.role ?? 'developer'}: ${first}`;
         case 'wait': return tool.workers?.length ? `waiting for ${tool.workers.join(', ')}` : 'waiting for the workers';
         case 'message': return `to ${tool.worker ?? '?'}: ${first}`;
         default: return `${tool.action} ${tool.worker ?? ''}`.trim();
@@ -96,7 +105,7 @@ export function teamLabel(tool: TeamTool): string {
 
 export const TEAM_TOOL_DESCRIPTION = 'Lead a team of workers. Each worker is another Codico agent with its own git worktree, branch and window, working in parallel with you; ' +
     'you plan, hand out parts of the work, read their reports, review and merge their changes, and check the result. Actions: ' +
-    '"start" a worker (role developer or tester, text = its complete task; worker = an existing worker whose branch it starts from, so a tester checks a developer\'s work); ' +
+    '"start" a worker (role developer or tester, name = a short name for its part such as backend or frontend, text = its complete task; worker = an existing worker whose branch it starts from, so a tester checks a developer\'s work); ' +
     '"wait" until workers have finished (workers = ids, all by default); "changes" shows a worker\'s patch; "review" has a read-only reviewer check a worker\'s patch (text = what to look at); ' +
     '"message" sends a worker a follow-up or an answer (text); "merge" merges a worker\'s branch into the workspace after the user approves.';
 
@@ -108,7 +117,7 @@ Each worker is another Codico agent in its own git worktree, branch and editor w
 At most ${maxWorkers} workers run at once. Split the work so that workers change different files: parallel changes to the same lines conflict when merged.
 How to run the team:
 1. Plan: read what you need, then state the parts and which worker does each.
-2. start a developer for each independent part. A tester starts from a developer's branch (worker: <developer id>) once that developer has finished.
+2. start a developer for each independent part, named after it (backend, frontend, docs…); refer to workers by name. A tester starts from a developer's branch (worker: <developer id>) once that developer has finished.
 3. wait, then read each report. Use changes or review to check a worker's patch; use message to send a worker a correction or an answer to its question, then wait again.
 4. merge each accepted worker. A merge that conflicts is undone: message the worker to rebase its work on the current state, or make the fix yourself.
 5. Acceptance gate: after merging, run the project's build and tests in the workspace yourself, and fix or delegate what fails. Report done only when they pass.
@@ -117,6 +126,7 @@ Fenced form, when native tool calls are not available:
 \`\`\`team
 action: start
 role: developer
+name: backend
 text:
 <the complete task>
 \`\`\`
@@ -132,7 +142,7 @@ worker: <id>
 
 /** One worker, as the orchestrator reads it. */
 export function workerSummary(task: BackgroundTask, status: string, stat?: string): string {
-    const lines = [`### Worker ${workerId(task)} (${task.role ?? 'developer'}): ${status}${task.merged ? ', merged' : ''}`,
+    const lines = [`### Worker ${workerLabel(task)}, ${task.role ?? 'developer'}: ${status}${task.merged ? ', merged' : ''}`,
         `Task: ${task.prompt.replace(/\s+/g, ' ').trim().slice(0, 200)}`, `Branch: ${task.branch}`];
     if (task.note && task.status !== 'finished') { lines.push(`Note: ${task.note}`); }
     if (stat !== undefined) { lines.push(stat ? `Changes:\n${stat}` : 'Changes: none'); }

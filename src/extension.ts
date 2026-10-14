@@ -8,6 +8,7 @@ import { BackgroundTaskStore } from './backgroundTaskStore';
 import { BackgroundTaskManager } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
+import { TeamWorkers } from './teamWorkers';
 import { BackgroundPermissions } from './backgroundTasks';
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
@@ -147,14 +148,20 @@ export function activate(context: vscode.ExtensionContext): void {
     const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
     backgroundTasks.onSummary = (text, needsUser) => provider.showBackgroundTasks(text, needsUser);
-    // Agent teams: the panel's agent leads, workers are background tasks. Automated tests open no window
+    // Agent teams: the panel's agent leads; its workers run here, next to it, or each in a window of its own
+    const teamWorkers = new TeamWorkers(backgroundStore, { context, editProposals: provider.editProposals, approvedCommands: () => provider.approvedCommands, evaluationMode },
+        message => provider.postToPanel(message), task => backgroundTasks.openWindow(task));
+    context.subscriptions.push(teamWorkers);
+    provider.workers = teamWorkers;
+    const inWindows = () => vscode.workspace.getConfiguration('codico').get<string>('teamWorkersRunIn', 'panel') === 'windows';
     provider.team = new TeamService({
         store: backgroundStore, createTask: options => backgroundTasks.createTask(options),
-        openWindow: task => evaluationMode ? Promise.resolve() : backgroundTasks.openWindow(task),
+        launch: async task => { if (inWindows()) { await backgroundTasks.openWindow(task); } else { teamWorkers.launch(task); } },
+        where: () => inWindows() ? 'in a window of its own' : 'in this window (the user follows it in the team view of the panel)',
         settings: () => {
             const config = vscode.workspace.getConfiguration('codico');
             const permissions = config.get<string>('teamWorkerPermissions', 'edits');
-            return { maxWorkers: Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 2))), permissions: (['edits', 'all', 'ask'].includes(permissions) ? permissions : 'edits') as BackgroundPermissions };
+            return { maxWorkers: Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 3))), permissions: (['edits', 'all', 'ask'].includes(permissions) ? permissions : 'edits') as BackgroundPermissions };
         },
     });
     // This window may have been opened for a task: start it once the panel is there

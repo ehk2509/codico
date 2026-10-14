@@ -64,6 +64,9 @@ export class Approvals {
         if (resolve) { this._commands.delete(permId); resolve(granted); }
     }
 
+    /** Whether a question with this id is waiting here: a team's workers each have their own. */
+    has(permId: string): boolean { return this._writes.has(permId) || this._commands.has(permId); }
+
     answerCheckpoint(keepGoing: boolean): void {
         this._checkpoint?.(keepGoing);
         this._checkpoint = null;
