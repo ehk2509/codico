@@ -335,7 +335,7 @@ For a question that needs a lot of reading before anything can be done — how a
 ### Change Report
 A reply that changed files ends with a **Change report**: what changed, and what evidence there is that it works.
 
-- **Verdict** — *Verified* (a check passed after the last file change, and none is failing), *Checks failing*, or *Not verified* (nothing was run after the last change). An unverified or failing report says why without being opened.
+- **Verdict** — two separate things. **Acceptance**, when criteria were stated (see End-to-end Verification): *Accepted* only when every criterion is verified on the final code. **Checks**: *Checks pass* (a check passed after the last file change, and none is failing), *Checks failing*, or *Not checked* (nothing was run after the last change). Passing checks alone never make a change accepted: without criteria, the report says the request itself was not shown to be met. A report that is not accepted or not passing says why without being opened.
 - **Files changed** — each file with its lines added and removed over the whole turn; click one to see its diff. A file changed after the last passing check is marked "not checked".
 - **Checks** — the test, build, type-check and lint commands that ran, with their result. For tests the pass and fail counts are read from the runner's summary (node --test, Jest, Vitest, pytest, Mocha, Cargo, Playwright). A check that failed earlier in the turn and passes now is marked "was failing": the before and after of a fix.
 - **Not covered** — stated plainly: no tests run, a check that ran before the last change, a result hidden by a pipe (`npm run build | tail` always exits 0, so it is not counted as a pass).
@@ -825,6 +825,19 @@ The models, by provider:
 Adjust the **thinking effort** (High / Medium / Low) for reasoning models via the header selector. The default is **Medium**: High spends noticeably more reasoning tokens on every step.
 
 ---
+
+### End-to-end Verification
+For a feature or a bug fix, Codico checks that the request is met, not only that the code builds:
+
+1. **Acceptance criteria first.** The agent states what the user will be able to see or do (AC1, AC2…); they are shown in the change report.
+2. **Reproduce, then fix.** For a bug, it shows the failure before changing the code; the report marks the criterion *reproduced*.
+3. **Run the app and use it.** The `app` tool starts the dev server in the background (`npm run dev`, `vite`, `rails s`…), waits until its address answers, and stops it when the task ends. The browser may open that local address (and only that one) without the usual confirmation. The agent clicks, types and navigates as a user would.
+4. **Assertions Codico runs itself.** `browser_expect` checks the page — an element shows a text, is visible, hidden or absent — waiting for the page to update. Its result is recorded as evidence (E1, E2…), as are test, build and type-check commands. Console errors, page errors, failed requests and server errors are reported after each step and kept.
+5. **Each criterion, on its evidence.** The agent names the evidence that shows each criterion. A criterion is *verified* only when that evidence passed after the last code change; evidence from before a change is *stale*, and a criterion with no observed evidence is only *claimed*. While a criterion is not verified, the agent is reminded (twice at most) before it may finish, and told to say plainly what is not met.
+6. **Independent review.** One more model request, with no tools and none of the agent's reasoning, reads the criteria and the recorded evidence (assertions, page text after each step, console errors, files changed) and agrees or disputes each criterion. A disputed criterion is not counted as accepted. Turn it off with `codico.acceptanceReview`.
+7. **Evidence on disk.** `.codico/evidence/<when>/` holds a screenshot of every browser step and assertion, `replay.png` (the steps as an animated image) and `report.md`; the folder is ignored by git. The change report links to the report, the replay and each assertion's screenshot.
+
+Not done: video recording (it needs a separate ffmpeg download with the Chrome Codico uses; the replay is the screenshots in order), and assertions on screenshots' pixels. Turn the whole workflow off with `codico.acceptanceChecks`.
 
 ## Setup
 

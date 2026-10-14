@@ -4,6 +4,7 @@
  * and their results — never from what the model says, and costs no model request.
  */
 import { matchLines } from './lineMatch';
+import { AcceptanceRecorder, AcceptanceReport, acceptanceMarkdown, ACCEPTANCE_TEXT } from './acceptance';
 
 export type CheckKind = 'test' | 'build' | 'typecheck' | 'lint';
 export type CheckOutcome = 'passed' | 'failed' | 'unknown';
@@ -39,6 +40,8 @@ export interface PatchPassport {
     checks: PassportCheck[];
     /** What is not covered, in sentences. */
     notes: string[];
+    /** Whether the request is met: the acceptance criteria and the evidence for each. Absent when no criteria were stated. */
+    acceptance?: AcceptanceReport;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -138,6 +141,8 @@ export class PassportRecorder {
     private _clock = 0;
     private readonly _files = new Map<string, FileRecord>();
     private readonly _checks = new Map<string, CheckRecord>();
+    /** The criteria of the request and the evidence for them, on the same clock as the changes and checks. */
+    readonly acceptance = new AcceptanceRecorder(() => ++this._clock);
 
     /**
      * A file was written.
@@ -150,14 +155,16 @@ export class PassportRecorder {
         else { this._files.set(path, { before, after, edits: 1, lastChange: at }); }
     }
 
-    /** A command finished. Commands that are not checks are ignored. */
-    recordCommand(command: string, exitCode: number | null, output = ''): void {
+    /** A command finished. Commands that are not checks are ignored; a check is also evidence, and its id is returned. */
+    recordCommand(command: string, exitCode: number | null, output = ''): string | undefined {
         const kind = classifyCheck(command);
-        if (!kind) { return; }
+        if (!kind) { return undefined; }
         const key = checkKey(command);
         const record = this._checks.get(key) ?? { command: key, kind, runs: [] };
         this._checks.set(key, record);
-        record.runs.push({ ...this._outcome(command, kind, exitCode, output), at: ++this._clock });
+        const outcome = this._outcome(command, kind, exitCode, output);
+        record.runs.push({ ...outcome, at: ++this._clock });
+        return this.acceptance.addEvidence({ kind: 'check', description: `${kind}: ${key}`, passed: outcome.outcome === 'passed', detail: outcome.detail });
     }
 
     private _outcome(command: string, kind: CheckKind, exitCode: number | null, output: string): { outcome: CheckOutcome; detail: string } {
@@ -172,11 +179,17 @@ export class PassportRecorder {
         return { outcome: 'passed', detail: 'exit 0' };
     }
 
-    /** The report, or undefined when the turn left no file changed. */
+    /** When the code last changed in this turn (0: it did not). */
+    get lastChange(): number {
+        return Math.max(0, ...[...this._files.values()].filter(file => (file.before ?? '') !== file.after || file.before === null).map(file => file.lastChange));
+    }
+
+    /** The report, or undefined when the turn left no file changed and stated no acceptance criteria. */
     build(): PatchPassport | undefined {
         const changed = [...this._files.entries()].filter(([, file]) => (file.before ?? '') !== file.after || file.before === null);
-        if (changed.length === 0) { return undefined; }
-        const lastChange = Math.max(...changed.map(([, file]) => file.lastChange));
+        const lastChange = Math.max(0, ...changed.map(([, file]) => file.lastChange));
+        const acceptance = this.acceptance.build(lastChange);
+        if (changed.length === 0 && !acceptance) { return undefined; }
 
         const checks: PassportCheck[] = [...this._checks.values()].map(record => {
             const latest = record.runs[record.runs.length - 1];
@@ -214,23 +227,31 @@ export class PassportRecorder {
         if (verdict === 'verified' && !current.some(check => check.kind === 'test' && check.outcome === 'passed')) {
             notes.push('No tests were run: only the build, type-check or lint passed.');
         }
-        return { verdict, files, checks, notes };
+        // Passing checks say the code builds and its tests pass; whether the request is met is another question
+        if (!acceptance && files.length > 0 && verdict === 'verified') { notes.push('No acceptance criteria were stated: passing checks do not show that the request itself is met.'); }
+        if (acceptance && acceptance.verdict !== 'accepted') {
+            const open = acceptance.criteria.filter(c => c.status !== 'verified' || c.review?.agrees === false).map(c => c.id);
+            notes.unshift(`${ACCEPTANCE_TEXT[acceptance.verdict]}${open.length ? ` (${open.join(', ')})` : ''}.`);
+        }
+        if (acceptance?.consoleErrors.length) { notes.push(`${acceptance.consoleErrors.length} console error${acceptance.consoleErrors.length === 1 ? '' : 's'} in the browser after the last change.`); }
+        return { verdict, files, checks, notes, ...(acceptance ? { acceptance } : {}) };
     }
 }
 
 // ── Text form ────────────────────────────────────────────────────────────────
 
 const VERDICT_TEXT: Record<Verdict, string> = {
-    verified: 'Verified: checks passed after the last change',
+    verified: 'Checks pass after the last change',
     failing: 'Checks failing',
-    unverified: 'Not verified: no check passed after the last change',
+    unverified: 'No check passed after the last change',
 };
 
 /** The report as Markdown, for a pull request or a commit message. */
 export function passportMarkdown(passport: PatchPassport): string {
     const added = passport.files.reduce((sum, file) => sum + file.added, 0);
     const removed = passport.files.reduce((sum, file) => sum + file.removed, 0);
-    const lines = [`## Change report`, '', `**${VERDICT_TEXT[passport.verdict]}**`, '',
+    const head = passport.acceptance ? `**${ACCEPTANCE_TEXT[passport.acceptance.verdict]}** · ${VERDICT_TEXT[passport.verdict]}` : `**${VERDICT_TEXT[passport.verdict]}** · acceptance not stated`;
+    const lines = [`## Change report`, '', head, '',
         `### Files changed (${passport.files.length}, +${added} −${removed})`,
         ...passport.files.map(file => `- \`${file.path}\` — ${file.status === 'created' ? 'new, ' : ''}+${file.added} −${file.removed}`)];
     if (passport.checks.length > 0) {
@@ -240,6 +261,7 @@ export function passportMarkdown(passport: PatchPassport): string {
             return `- ${mark} \`${check.command}\` (${check.kind}) — ${extras}`;
         }));
     }
+    if (passport.acceptance) { lines.push(...acceptanceMarkdown(passport.acceptance)); }
     if (passport.notes.length > 0) { lines.push('', '### Not covered', ...passport.notes.map(note => `- ${note}`)); }
     return lines.join('\n') + '\n';
 }

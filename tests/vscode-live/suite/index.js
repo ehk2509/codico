@@ -878,6 +878,32 @@ async function run() {
   }
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
 
+  // ── End-to-end verification: criteria, the app started, the bug reproduced in the browser, fixed, verified by Codico's own assertion, reviewed ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'createThread' });
+    let error = null;
+    try { await Promise.race([vscode.commands.executeCommand('codico.__evalRunTask', '[SCENARIO:accept_e2e] fix the counter: Add shows Count: 01'), new Promise((_, rej) => setTimeout(() => rej(new Error('timed out after 120 s')), 120000))]); } catch (e) { error = String(e && e.message || e); }
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'accept_e2e' && e.stream);
+    const said = reqs.map(r => r.lastUser).join('\n');
+    const passport = await vscode.commands.executeCommand('codico.__evalPassport') || {};
+    const acc = passport.acceptance || { criteria: [] };
+    const ac1 = acc.criteria[0] || { evidence: [] };
+    const reproduced = /\[browser_expect: #count shows "Count: 1"\] FAILED: the element shows "Count: 01".*Recorded as evidence E1/.test(said) && ac1.reproduced === true;
+    const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].id === 'E2' && ac1.evidence[0].passed === true;
+    const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => /independent acceptance reviewer/.test(e.lastUser || '') || e.scenario === null);
+    const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
+    const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
+    const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];
+    const evidence = files.includes('report.md') && files.includes('replay.png') && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 6
+      && /### Acceptance — Accepted/.test(fs.readFileSync(path.join(folder, 'report.md'), 'utf8')) && !!ac1.evidence[0]?.screenshot && fs.existsSync(path.join(ws, ac1.evidence[0].screenshot))
+      && fs.readFileSync(path.join(ws, '.codico/evidence/.gitignore'), 'utf8') === '*\n';
+    const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${Number(process.env.LIVE_PORT) + 7}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
+    results.push({ name: 'acceptance_e2e', ms: Date.now() - t0, requests: reqs.length, ok: !error && reproduced && verified && reviewed && consoleSeen && evidence && stopped,
+      why: `the bug was reproduced by Codico's own assertion before the fix: ${reproduced}; after the fix AC1 is verified on the final code (${acc.verdict}, ${ac1.status}): ${verified}; an independent reviewer agreed: ${reviewed}; the page's console error was reported and kept: ${consoleSeen}; evidence saved (screenshots, replay, report, git-ignored): ${evidence} (${files.length} files); the app was stopped after the turn: ${stopped}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Agent team: /team makes this thread the orchestrator; its worker runs in this window, in its own worktree, and is waited for, merged and checked ──
   // Last: it makes the workspace a git repository, and the thread a team's
   {

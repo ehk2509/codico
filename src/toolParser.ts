@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { parseTeamFence, TeamTool } from './teamTools';
+import { parseVerifyFence, VerifyTool } from './verifyTools';
 
 export interface WriteFileTool {
     type: 'write_file';
@@ -149,6 +150,7 @@ export interface DelegateTool {
 
 export type ToolCall =
     | TeamTool
+    | VerifyTool
     | RememberTool
     | WebSearchTool
     | WriteFileTool
@@ -185,7 +187,7 @@ export function toolFingerprint(tool: ToolCall): string {
     return `${tool.type}:${hash}`;
 }
 
-const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|remember|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code|team';
+const TOOL_NAMES = 'write_file|read_file|list_directory|run_terminal|search_files|find_files|edit_file|get_diagnostics|fetch_url|web_search|remember|browser_navigate|browser_click|browser_type|browser_get_text|browser_screenshot|browser_close|mcp_call|lsp_symbol|debug_get_variables|debug_get_callstack|debug_list_breakpoints|update_todo|delegate|search_code|team|app|browser_expect|acceptance';
 const TOOL_FENCE_OPEN_RE = new RegExp('(`{3,})(' + TOOL_NAMES + ')[ \\t]*\\r?\\n', 'g');
 const FENCE_LINE_RE = /^ {0,3}(`{3,})(.*)$/;
 
@@ -369,6 +371,11 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
                 const max = parseInt(extractField(body, 'max_results') ?? '', 10);
                 tools.push({ type: 'search_code', query, ...(pathPrefix ? { path: pathPrefix } : {}), ...(max > 0 ? { maxResults: max } : {}) });
             }
+            break;
+        }
+        case 'app': case 'browser_expect': case 'acceptance': {
+            const tool = parseVerifyFence(toolType, body);
+            if (tool) { tools.push(tool); }
             break;
         }
         case 'team': {

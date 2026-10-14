@@ -1,0 +1,211 @@
+/**
+ * Acceptance: whether the change does what was asked, as opposed to whether it builds. The
+ * agent states the acceptance criteria and says which evidence shows each one; the evidence
+ * itself is what Codico observed — assertions it ran in the browser, test and build commands
+ * and their results, console errors — never what the model says. A criterion counts as
+ * verified only when evidence it names passed after the last change to the code.
+ */
+
+export type EvidenceKind = 'expect' | 'check';
+
+/** One thing Codico checked itself, with its result. */
+export interface Evidence {
+    id: string;
+    kind: EvidenceKind;
+    /** "text "Saved" visible in .toast", "npm test" */
+    description: string;
+    passed: boolean;
+    /** "12 passed, 0 failed", "found 0 matches", … */
+    detail: string;
+    /** The page it was checked on (browser assertions). */
+    url?: string;
+    /** Console and page errors seen on that page before the assertion. */
+    consoleErrors?: string[];
+    /** A screenshot saved as evidence, relative to the evidence folder. */
+    screenshot?: string;
+    at: number;
+}
+
+/** A step in the browser, kept for the evidence trail and the reviewer. */
+export interface BrowserStep {
+    action: string;
+    target: string;
+    url: string;
+    /** The start of the page's visible text after the step. */
+    text?: string;
+    screenshot?: string;
+    at: number;
+}
+
+export type CriterionStatus =
+    | 'verified'   // evidence it names passed after the last change
+    | 'failing'    // evidence it names failed after the last change, or the agent said it fails
+    | 'stale'      // its evidence is from before the last change
+    | 'claimed'    // said to be met, with no evidence Codico observed
+    | 'open';      // never checked
+
+export interface CriterionReport {
+    id: string;
+    text: string;
+    status: CriterionStatus;
+    /** It was shown to fail before the change: the bug or the missing feature was reproduced. */
+    reproduced: boolean;
+    /** What the agent said it did to check it, last time. */
+    how?: string;
+    evidence: Evidence[];
+    /** An independent reviewer's opinion of the evidence, when one was asked. */
+    review?: { agrees: boolean; reason: string };
+}
+
+export type AcceptanceVerdict = 'accepted' | 'partial' | 'disputed' | 'failing' | 'unverified';
+
+export interface AcceptanceReport {
+    verdict: AcceptanceVerdict;
+    criteria: CriterionReport[];
+    /** Console and page errors seen in the browser after the last change. */
+    consoleErrors: string[];
+    steps: number;
+    /** The folder the screenshots and the report were saved in, when any were. */
+    evidenceFolder?: string;
+}
+
+interface Claim { at: number; result: 'pass' | 'fail'; how: string; evidence: string[] }
+interface Criterion { id: string; text: string; claims: Claim[] }
+
+export const MAX_CRITERIA = 12;
+
+/** Records criteria, evidence and claims of one turn, on the clock of its change report. */
+export class AcceptanceRecorder {
+    private _criteria: Criterion[] = [];
+    private readonly _evidence: Evidence[] = [];
+    private readonly _steps: BrowserStep[] = [];
+    private readonly _console: Array<{ at: number; text: string }> = [];
+    private _reviews = new Map<string, { agrees: boolean; reason: string }>();
+    evidenceFolder: string | undefined;
+
+    constructor(private readonly _tick: () => number) {}
+
+    get criteria(): ReadonlyArray<{ id: string; text: string }> { return this._criteria; }
+
+    /** States the criteria; stating them again replaces the list (what was checked of a criterion with the same text is kept). */
+    setCriteria(texts: string[]): string {
+        const clean = texts.map(text => text.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, MAX_CRITERIA);
+        if (clean.length === 0) { return 'ERROR: give at least one criterion.'; }
+        const before = new Map(this._criteria.map(criterion => [criterion.text, criterion]));
+        this._criteria = clean.map((text, i) => ({ id: `AC${i + 1}`, text, claims: before.get(text)?.claims ?? [] }));
+        return this._criteria.map(criterion => `${criterion.id}: ${criterion.text}`).join('\n');
+    }
+
+    /** Something Codico checked; returns its evidence id. */
+    addEvidence(evidence: Omit<Evidence, 'id' | 'at'>): string {
+        const id = `E${this._evidence.length + 1}`;
+        this._evidence.push({ ...evidence, id, at: this._tick() });
+        return id;
+    }
+
+    browserStep(step: Omit<BrowserStep, 'at'>): void { this._steps.push({ ...step, at: this._tick() }); }
+    consoleError(text: string): void { this._console.push({ at: this._tick(), text: text.slice(0, 500) }); }
+    get steps(): readonly BrowserStep[] { return this._steps; }
+    get evidence(): readonly Evidence[] { return this._evidence; }
+
+    /** The agent says what it did to check a criterion, and which evidence shows it. Returns what Codico makes of it. */
+    claim(id: string, result: 'pass' | 'fail', how: string, evidence: string[]): { ok: boolean; text: string } {
+        const criterion = this._criteria.find(c => c.id.toLowerCase() === id.trim().toLowerCase());
+        if (!criterion) {
+            return { ok: false, text: this._criteria.length ? `ERROR: no criterion "${id}". The criteria are ${this._criteria.map(c => c.id).join(', ')}.` : 'ERROR: state the acceptance criteria first (action "criteria").' };
+        }
+        const known = new Set(this._evidence.map(e => e.id));
+        const unknown = evidence.filter(e => !known.has(e.toUpperCase()));
+        if (unknown.length) { return { ok: false, text: `ERROR: no evidence ${unknown.join(', ')}. Evidence ids come from browser_expect results and from test, build and type-check commands (E1, E2…).` }; }
+        criterion.claims.push({ at: this._tick(), result, how: how.trim().slice(0, 1000), evidence: evidence.map(e => e.toUpperCase()) });
+        return { ok: true, text: `${criterion.id} recorded as ${result === 'pass' ? 'met' : 'not met'}${evidence.length ? ` on ${evidence.map(e => e.toUpperCase()).join(', ')}` : ', with no evidence Codico observed: it will count as claimed, not verified'}.` };
+    }
+
+    setReview(id: string, review: { agrees: boolean; reason: string }): void { this._reviews.set(id, review); }
+
+    /**
+     * The acceptance part of the change report.
+     * @param lastChange when the code last changed (0: not in this turn)
+     * @param checks the test, build and type-check runs of the turn, as evidence
+     */
+    build(lastChange: number): AcceptanceReport | undefined {
+        if (this._criteria.length === 0) { return undefined; }
+        const byId = new Map(this._evidence.map(e => [e.id, e]));
+        const criteria = this._criteria.map((criterion): CriterionReport => {
+            const last = criterion.claims[criterion.claims.length - 1];
+            const evidence = last ? last.evidence.map(id => byId.get(id)).filter((e): e is Evidence => !!e) : [];
+            // A failure shown before the code changed is the reproduction of what was to be fixed
+            const reproduced = lastChange > 0 && criterion.claims.some(claim => claim.at < lastChange
+                && (claim.result === 'fail' || claim.evidence.some(id => byId.get(id)?.passed === false)));
+            // Only evidence about the final code counts; what failed before the change is the reproduction
+            const current = evidence.filter(e => e.at > lastChange);
+            let status: CriterionStatus;
+            if (!last) { status = 'open'; }
+            else if ((last.result === 'fail' && last.at > lastChange) || current.some(e => !e.passed)) { status = 'failing'; }
+            else if (last.result === 'fail') { status = 'stale'; }
+            else if (evidence.length === 0) { status = 'claimed'; }
+            else if (current.length === 0) { status = 'stale'; }
+            else { status = 'verified'; }
+            return { id: criterion.id, text: criterion.text, status, reproduced, how: last?.how, evidence, review: this._reviews.get(criterion.id) };
+        });
+        const verified = criteria.filter(c => c.status === 'verified' && c.review?.agrees !== false).length;
+        const disputed = criteria.some(c => c.status === 'verified' && c.review?.agrees === false);
+        const verdict: AcceptanceVerdict = criteria.some(c => c.status === 'failing') ? 'failing'
+            : verified === criteria.length ? 'accepted' : verified > 0 ? 'partial' : disputed ? 'disputed' : 'unverified';
+        const consoleErrors = [...new Set(this._console.filter(entry => entry.at > lastChange).map(entry => entry.text))];
+        return { verdict, criteria, consoleErrors, steps: this._steps.length, evidenceFolder: this.evidenceFolder };
+    }
+}
+
+const STATUS_TEXT: Record<CriterionStatus, string> = {
+    verified: 'verified', failing: 'failing', stale: 'checked before the last change', claimed: 'claimed, no evidence', open: 'not checked',
+};
+
+export const ACCEPTANCE_TEXT: Record<AcceptanceVerdict, string> = {
+    accepted: 'Accepted: every criterion verified on the final code',
+    partial: 'Partly accepted: not every criterion is verified',
+    disputed: 'Not accepted: the reviewer disputes the evidence',
+    failing: 'Not accepted: a criterion fails',
+    unverified: 'Not accepted: no criterion is verified',
+};
+
+/** One criterion for the report, the reviewer and the model. */
+export function criterionLine(criterion: CriterionReport): string {
+    const evidence = criterion.evidence.map(e => `${e.id} ${e.passed ? 'passed' : 'failed'}: ${e.description} (${e.detail})`).join('; ');
+    const review = criterion.review ? ` Reviewer ${criterion.review.agrees ? 'agrees' : 'disputes'}: ${criterion.review.reason}` : '';
+    return `${criterion.id} [${STATUS_TEXT[criterion.status]}${criterion.reproduced ? ', reproduced before the change' : ''}] ${criterion.text}${evidence ? ` — ${evidence}` : ''}${review}`;
+}
+
+/** The acceptance section of the change report, as Markdown. */
+export function acceptanceMarkdown(report: AcceptanceReport): string[] {
+    const mark: Record<CriterionStatus, string> = { verified: '✅', failing: '❌', stale: '⚠️', claimed: '❔', open: '⬜' };
+    const lines = ['', `### Acceptance — ${ACCEPTANCE_TEXT[report.verdict]}`, ...report.criteria.map(c => {
+        const evidence = c.evidence.map(e => `${e.id} ${e.passed ? 'passed' : 'failed'}: ${e.description} (${e.detail})${e.screenshot ? ` [screenshot](${e.screenshot})` : ''}`);
+        return [`- ${mark[c.status]} **${c.id}** ${c.text} — ${STATUS_TEXT[c.status]}${c.reproduced ? '; reproduced before the change' : ''}`,
+            ...evidence.map(line => `  - ${line}`),
+            ...(c.review ? [`  - Reviewer ${c.review.agrees ? 'agrees' : 'disputes'}: ${c.review.reason}`] : [])].join('\n');
+    })];
+    if (report.consoleErrors.length) { lines.push('', `Console errors after the last change (${report.consoleErrors.length}):`, ...report.consoleErrors.slice(0, 10).map(text => `- \`${text.replace(/`/g, "'").slice(0, 200)}\``)); }
+    if (report.evidenceFolder) { lines.push('', `Evidence (screenshots, replay, report): \`${report.evidenceFolder}\``); }
+    return lines;
+}
+
+/** What the reviewer is asked: the criteria, and only what Codico observed. Nothing of the agent's reasoning. */
+export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string): string {
+    const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
+        ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
+    const trail = steps.slice(-25).map(step => `- ${step.action} ${step.target} → ${step.url}${step.text ? `\n  page text: ${step.text.slice(0, 300).replace(/\s+/g, ' ')}` : ''}`).join('\n');
+    return `You review the acceptance of a code change, independently of the agent that made it. For each criterion decide whether the evidence below, which the tool observed itself, actually shows that the criterion is met on the final code. A build or a test that does not exercise the criterion does not show it. An assertion that checks something weaker than the criterion does not show it.\n\n` +
+        `Files changed:\n${diffStat || '(none)'}\n\nCriteria and evidence:\n${evidence}\n\nBrowser steps (most recent last):\n${trail || '(none)'}\n` +
+        `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
+        'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>';
+}
+
+/** The reviewer's answer, criterion by criterion. */
+export function parseReview(text: string): Map<string, { agrees: boolean; reason: string }> {
+    const result = new Map<string, { agrees: boolean; reason: string }>();
+    for (const match of text.matchAll(/^\s*\**\s*(AC\d+)\s*\**\s*[:\-–]\s*(yes|no)\b[\s,.:;—–-]*(.*)$/gim)) {
+        result.set(match[1].toUpperCase(), { agrees: match[2].toLowerCase() === 'yes', reason: match[3].trim().slice(0, 300) || (match[2].toLowerCase() === 'yes' ? 'the evidence shows it' : 'the evidence does not show it') });
+    }
+    return result;
+}

@@ -1742,3 +1742,16 @@ body.hide-reasoning .think-wrap{display:none!important}
 #team-view .tv-step{font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;opacity:.85;overflow-wrap:anywhere}
 #team-view .tv-step.failed{color:var(--vscode-errorForeground,#f14c4c)}
 #team-view .tv-said{white-space:pre-wrap;margin:3px 0;overflow-wrap:anywhere}
+
+/* Acceptance in the change report */
+.passport-badge.passport-checks{opacity:.75;font-weight:400}
+.passport-criterion{margin:2px 0 4px}
+.passport-crit-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.passport-criterion.failing .passport-mark,.passport-criterion.disputed .passport-mark{color:var(--vscode-errorForeground,#f14c4c)}
+.passport-criterion.verified:not(.disputed) .passport-mark{color:var(--vscode-charts-green,#22c55e)}
+.passport-evidence-row{margin-left:22px;font-size:11px;opacity:.85;overflow-wrap:anywhere}
+.passport-evidence-row.failed{color:var(--vscode-errorForeground,#f14c4c)}
+.passport-review{margin-left:22px;font-size:11px;font-style:italic;opacity:.85}
+.passport-review.disputes{color:var(--vscode-editorWarning-foreground,#d4a017)}
+.passport-evidence{font:inherit;font-size:10.5px;padding:0 6px;border-radius:4px;cursor:pointer;background:transparent;color:inherit;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35))}
+.passport-evidence:hover{border-color:var(--vscode-focusBorder,#a78bfa)}

@@ -3,6 +3,7 @@ import {
     UpdateTodoTool,
 } from './toolParser';
 import { TEAM_ACTIONS, TEAM_TOOL_DESCRIPTION, teamToolFromArgs } from './teamTools';
+import { ACCEPTANCE_DESCRIPTION, APP_TOOL_DESCRIPTION, BROWSER_EXPECT_DESCRIPTION, verifyToolFromArgs } from './verifyTools';
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -246,6 +247,52 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         },
     },
     { name: 'browser_screenshot', description: 'Capture the current browser page.', inputSchema: noArgs },
+    {
+        name: 'browser_expect',
+        description: BROWSER_EXPECT_DESCRIPTION,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                selector: { type: 'string', description: 'CSS selector of the element; the whole page when absent.' },
+                text: { type: 'string', description: 'Text the element (or the page) must show.' },
+                state: { type: 'string', enum: ['visible', 'hidden', 'exists', 'absent'] },
+                timeout_ms: { type: 'number' },
+            },
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'app',
+        description: APP_TOOL_DESCRIPTION,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: ['start', 'stop', 'logs'] },
+                command: { type: 'string' },
+                url: { type: 'string', description: 'http://localhost:<port>/…' },
+                timeout_seconds: { type: 'number', description: 'How long to wait for the address to answer (90 by default).' },
+            },
+            required: ['action'],
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'acceptance',
+        description: ACCEPTANCE_DESCRIPTION,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: ['criteria', 'verify'] },
+                criteria: { type: 'array', items: { type: 'string' } },
+                criterion: { type: 'string', description: 'AC1, AC2…' },
+                result: { type: 'string', enum: ['pass', 'fail'] },
+                evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids: E1, E2…' },
+                how: { type: 'string' },
+            },
+            required: ['action'],
+            additionalProperties: false,
+        },
+    },
     { name: 'browser_close', description: 'Close the controlled browser.', inputSchema: noArgs },
     {
         name: 'mcp_call',
@@ -589,6 +636,8 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'team':
             return teamToolFromArgs(args);
+        case 'app': case 'browser_expect': case 'acceptance':
+            return verifyToolFromArgs(call.name, args);
         case 'fetch_url': {
             const url = stringArg(args, 'url');
             return url ? { type: 'fetch_url', url } : null;
