@@ -1,4 +1,4 @@
-import { isHeadless, runHeadless } from './headless';
+import { headlessTask, headlessWriter, isHeadless, runAutomate, runHeadless } from './headless';
 import { addressReviewComments, createPullRequestForCurrentBranch, openPullRequest } from './pullRequestService';
 import { openProjectMemory } from './projectMemoryStore';
 import { clearCheckpoints, undoLastRewind } from './rewind';
@@ -140,25 +140,35 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     // ── Headless: started by the `codico` command with a task and nobody at the screen ──
-    if (isHeadless(context)) {
-        context.subscriptions.push(vscode.commands.registerCommand('codico.__headlessRun', () => runHeadless(context, provider)));
-    }
+    // `codico automate` keeps its tasks, conversations and worktrees in its state folder, so that a later run goes on from them
+    const automateTask = isHeadless(context) ? headlessTask() : undefined;
+    const stateDir = automateTask?.mode === 'automate' ? automateTask.automate?.stateDir : undefined;
 
     // ── Background tasks: started here, run in a window of their own ───────────
-    const backgroundStore = new BackgroundTaskStore(path.join(context.globalStorageUri.fsPath, 'background-tasks'));
+    const backgroundStore = new BackgroundTaskStore(stateDir ? path.join(stateDir, 'tasks') : path.join(context.globalStorageUri.fsPath, 'background-tasks'));
     const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
     backgroundTasks.onSummary = (text, needsUser) => provider.showBackgroundTasks(text, needsUser);
     // Agent teams: the panel's agent leads; its workers run here, next to it, or each in a window of its own
     const teamWorkers = new TeamWorkers(backgroundStore, { context, editProposals: provider.editProposals, approvedCommands: () => provider.approvedCommands, evaluationMode,
-        sandboxRequired: () => vscode.workspace.getConfiguration('codico').get<string>('commandSandbox', 'off') === 'required' },
+        // Headless automations: what jobs may do was decided on the command line (--allow-commands accepts unattended commands)
+        sandboxRequired: () => (stateDir && automateTask?.permissions === 'all') || vscode.workspace.getConfiguration('codico').get<string>('commandSandbox', 'off') === 'required',
+        declineQuestions: !!stateDir },
         message => provider.postToPanel(message), task => backgroundTasks.openWindow(task));
     context.subscriptions.push(teamWorkers);
     provider.workers = teamWorkers;
     const inWindows = () => !runInPanel();
     // Automations: GitHub issues, CI failures and reviews start and resume jobs (off until turned on for a repository)
-    const automations = new AutomationService(context, backgroundStore, backgroundTasks, teamWorkers, evaluationMode);
-    context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()));
+    const automations = new AutomationService(context, backgroundStore, backgroundTasks, teamWorkers, evaluationMode,
+        stateDir && automateTask ? { stateFile: path.join(stateDir, 'automations.json'), githubApi: automateTask.automate?.githubApi, write: headlessWriter(automateTask) } : undefined);
+    if (isHeadless(context)) {
+        context.subscriptions.push(vscode.commands.registerCommand('codico.__headlessRun', () => stateDir
+            ? runAutomate(context, automations, async () => teamWorkers.busy || (await Promise.all(automations.data().jobs.filter(job => job.state === 'working').map(job => backgroundStore.get(job.taskId))))
+                .some(task => task?.status === 'running' || task?.status === 'starting'))
+            : runHeadless(context, provider)));
+    }
+    context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()),
+        vscode.commands.registerCommand('codico.addAutomationWorkflow', () => automations.addWorkflow()));
     if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalAutomations', (action: 'configure' | 'tick' | 'get' | 'publish', value?: unknown) => automations.evaluation(action, value))); }
     // /background tasks run here too, unless the setting says each gets a window
     backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };

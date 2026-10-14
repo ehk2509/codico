@@ -1,5 +1,6 @@
 import * as nodeCrypto from 'crypto';
-import { AutomationConfig, DEFAULT_CONFIG, decide, Job, jobPrompt, JobSource, pullRequestFor, resumePrompt, sourceKey } from './automations';
+import * as fs from 'fs';
+import { AutomationConfig, DEFAULT_CONFIG, decide, Job, jobPrompt, JobSource, pullRequestFor, replies, replyBody, resumePrompt, sourceKey } from './automations';
 import { commitTaskWork, git, taskChanges } from './backgroundGit';
 import { BackgroundPermissions, BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
@@ -108,7 +109,10 @@ export class AutomationEngine {
                 job.handledSha = decision.sha;
                 job.handledReviews.push(...decision.reviews);
                 job.handledThreads.push(...decision.threads);
+                job.pendingReplies = data.config.replyToReviews && decision.replies.length ? decision.replies : undefined;
                 job.resumes++;
+                const missing = await this._ensureWorktree(task);
+                if (missing) { this._set(job, 'needs-you', missing); return; }
                 const prompt = resumePrompt(job.pr, decision);
                 this._set(job, 'working', `resumed (${job.resumes} of ${data.config.maxResumes}) for feedback on pull request #${job.pr.number}`);
                 await this._host.resume(task, `${prompt.task}\n\n${wrapUntrusted(prompt.outsideLabel, prompt.outside)}`);
@@ -145,12 +149,16 @@ export class AutomationEngine {
             const github = await this._host.github();
             if (!task) { this._set(job, 'needs-you', 'its task was discarded'); return job.note ?? ''; }
             if ('error' in github) { this._set(job, 'needs-you', github.error); return github.error; }
+            const missing = await this._ensureWorktree(task);
+            if (missing) { this._set(job, 'needs-you', missing); return missing; }
             const committed = await commitTaskWork(task.worktree, `Codico: ${job.source.kind === 'issue' ? `fix #${job.source.number}` : `fix ${job.source.workflow}`}${job.resumes ? ` (after feedback ${job.resumes})` : ''}`);
             if ('error' in committed) { this._set(job, 'needs-you', committed.error); return committed.error; }
             const pushed = await git(task.worktree, ['-c', 'credential.interactive=false', 'push', '--set-upstream', 'origin', task.branch], 120_000);
             if (!pushed.ok) { const why = `the branch could not be pushed: ${pushed.stderr.trim().split('\n').pop() ?? 'git push failed'}`; this._set(job, 'needs-you', why); this._host.tell(`Codico automation: ${why}`, job); return why; }
             if (job.pr) {
-                this._set(job, 'watching', committed.committed ? `pushed to pull request #${job.pr.number}` : `no new change for pull request #${job.pr.number}`);
+                // The answers to the review comments go in their threads once the change they describe is pushed
+                const answered = await this._reply(job, task, github);
+                this._set(job, 'watching', `${committed.committed ? `pushed to pull request #${job.pr.number}` : `no new change for pull request #${job.pr.number}`}${answered ? `; answered ${answered} review comment${answered === 1 ? '' : 's'}` : ''}`);
                 this._host.tell(`Codico automation: ${committed.committed ? `pushed the changes to pull request #${job.pr.number}` : `nothing changed for the feedback on pull request #${job.pr.number}; see its report`}.`, job);
                 return job.note ?? '';
             }
@@ -169,6 +177,35 @@ export class AutomationEngine {
             this._publishing.delete(jobId);
             if (!given) { await this._host.save(data); }
         }
+    }
+
+    /**
+     * The job's worktree, made again from its pushed branch when it is gone (a fresh checkout,
+     * as in each run of a CI workflow). Returns what went wrong, or undefined.
+     */
+    private async _ensureWorktree(task: BackgroundTask): Promise<string | undefined> {
+        if (fs.existsSync(task.worktree)) { return undefined; }
+        const root = await this._host.repoRoot();
+        if (!root) { return 'its worktree is gone, and this folder is not a git repository to make it again'; }
+        await git(root, ['worktree', 'prune']);
+        const fetched = await git(root, ['-c', 'credential.interactive=false', 'fetch', 'origin', `+${task.branch}:refs/remotes/origin/${task.branch}`], 120_000);
+        if (!fetched.ok) { return `its worktree is gone and its branch ${task.branch} could not be fetched`; }
+        const added = await git(root, ['worktree', 'add', '-B', task.branch, task.worktree, `origin/${task.branch}`], 120_000);
+        return added.ok ? undefined : `its worktree could not be made again: ${added.stderr.trim().split('\n').pop() ?? 'git worktree add failed'}`;
+    }
+
+    private async _reply(job: Job, task: BackgroundTask, github: GitHubEvents): Promise<number> {
+        const pending = job.pendingReplies ?? [];
+        job.pendingReplies = undefined;
+        if (pending.length === 0) { return 0; }
+        const answers = replies(task.report ?? '');
+        let posted = 0;
+        for (const { threadId, n } of pending) {
+            const text = answers.get(n);
+            if (text && await github.replyToThread(threadId, replyBody(text))) { posted++; }
+        }
+        if (posted < pending.length) { this._log(job, `${pending.length - posted} review comment${pending.length - posted === 1 ? ' was' : 's were'} not answered (no reply for ${pending.length - posted === 1 ? 'it' : 'them'} in the agent's report, or GitHub refused)`); }
+        return posted;
     }
 
     /** The user stops a job: its pull request is no longer followed (it stays open on GitHub). */

@@ -12,9 +12,16 @@ const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const EXIT = { done: 0, failed: 1, needsInput: 2, denied: 3, usage: 64 };
 
 const HELP = `Usage: codico run "<task>" [options]
+       codico automate [options]
 
-Runs one task with the Codico agent, in a VS Code started for it, and prints the result.
-With nobody to approve anything, what the task may do is decided by these options;
+run       Runs one task with the Codico agent, in a VS Code started for it, and prints the result.
+automate  Runs the repository's automations once (or with --watch, on and on): GitHub issues with
+          the label and new CI failures on the default branch become jobs, finished jobs become
+          draft pull requests, and CI failures or requested changes on those resume their job with
+          its conversation. Its state is kept in --state-dir between runs (cache it in CI).
+          The GitHub token is read from GITHUB_TOKEN (or GH_TOKEN).
+
+With nobody to approve anything, what a task may do is decided by these options;
 whatever they do not allow is declined.
 
 Options
@@ -31,18 +38,31 @@ Options
   --ollama-url <url>    Base address of an Ollama server, for ollama/ models
   -h, --help            Show this
 
+Options of automate
+  --state-dir <dir>     Where jobs, their conversations and worktrees are kept (default: ~/.codico/automate/<folder>)
+  --label <name>        Issues with this label become jobs (default: codico)
+  --no-issues           Do not take issues
+  --no-ci               Do not react to CI failures on the default branch
+  --no-pr-feedback      Do not follow the pull requests it opened
+  --publish             Push and open draft pull requests, and push fixes to them, without asking
+                        (without it, finished work waits and the run ends with code 2)
+  --no-replies          Do not answer review comments in their threads
+  --watch <seconds>     Keep running, reading GitHub every so many seconds
+  --github-api <url>    GitHub's API, for GitHub Enterprise (default: https://api.github.com)
+
 Keys are read from the environment: OPENROUTER_API_KEY, DEEPSEEK_API_KEY, OPENAI_API_KEY,
 ANTHROPIC_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY, MISTRAL_API_KEY, XAI_API_KEY, CEREBRAS_API_KEY.
 
 Exit codes
-  0  the task finished          2  the agent asked a question it needs answered
+  0  the task finished          2  the agent asked a question it needs answered (automate: a job needs a person)
   1  the run failed             3  finished, but something it wanted to do was not allowed
 
 On Linux without a display, run it under xvfb-run.`;
 
 /** The command line as a task, or a message about what is wrong with it. */
 function parseArgs(argv) {
-  const options = { cwd: process.cwd(), permissions: 'read', timeout: 1800, json: false };
+  const options = { cwd: process.cwd(), permissions: 'read', timeout: 1800, json: false,
+    automate: { label: 'codico', ci: true, prFeedback: true, publish: false, replies: true } };
   const words = [];
   const value = (name, i) => { if (argv[i + 1] === undefined || argv[i + 1].startsWith('--')) { throw new Error(`${name} needs a value`); } return argv[i + 1]; };
   for (let i = 0; i < argv.length; i++) {
@@ -58,6 +78,19 @@ function parseArgs(argv) {
       case '--json': options.json = true; break;
       case '--vscode': options.vscode = value(arg, i++); break;
       case '--ollama-url': options.ollamaUrl = value(arg, i++); break;
+      case '--state-dir': options.automate.stateDir = path.resolve(value(arg, i++)); break;
+      case '--label': options.automate.label = value(arg, i++); break;
+      case '--no-issues': options.automate.label = ''; break;
+      case '--no-ci': options.automate.ci = false; break;
+      case '--no-pr-feedback': options.automate.prFeedback = false; break;
+      case '--publish': options.automate.publish = true; break;
+      case '--no-replies': options.automate.replies = false; break;
+      case '--github-api': options.automate.githubApi = value(arg, i++); break;
+      case '--watch': {
+        const seconds = Number(value(arg, i++));
+        if (!Number.isFinite(seconds) || seconds < 30) { throw new Error('--watch needs a number of seconds, 30 or more'); }
+        options.automate.watchSeconds = seconds; break;
+      }
       case '--max-steps': case '--timeout': {
         const number = Number(value(arg, i++));
         if (!Number.isFinite(number) || number <= 0) { throw new Error(`${arg} needs a positive number`); }
@@ -69,7 +102,14 @@ function parseArgs(argv) {
         words.push(arg);
     }
   }
-  if (words[0] !== 'run') { throw new Error(words.length ? `Unknown command "${words[0]}". The command is "run".` : 'Nothing to do: give a command, "run".'); }
+  if (words[0] === 'automate') {
+    if (words.length > 1) { throw new Error('automate takes no task: it finds its work on GitHub.'); }
+    options.mode = 'automate';
+    options.automate.stateDir = options.automate.stateDir || path.join(os.homedir(), '.codico', 'automate', path.basename(options.cwd));
+    if (!argv.includes('--timeout')) { options.timeout = options.automate.watchSeconds ? 365 * 24 * 3600 : 3600; }
+    return options;
+  }
+  if (words[0] !== 'run') { throw new Error(words.length ? `Unknown command "${words[0]}". The commands are "run" and "automate".` : 'Nothing to do: give a command, "run" or "automate".'); }
   options.prompt = words.slice(1).join(' ').trim();
   if (!options.prompt) { throw new Error('Give the task after "run", in quotes.'); }
   return options;
@@ -107,6 +147,7 @@ function render(event) {
     case 'denied': return { stream: 'err', text: `  ✗ not allowed: ${event.what} (${event.hint})\n` };
     case 'dialog': return event.answer ? undefined : { stream: 'err', text: `  · declined: ${String(event.message).split('\n')[0]}\n` };
     case 'error': return { stream: 'err', text: `\nerror: ${event.message}\n` };
+    case 'job': return { stream: 'err', text: `◆ ${event.text}\n` };
     case 'end': return { stream: 'err', text: `\n${event.status}${event.message ? ': ' + event.message : ''} · ${event.requests} requests, ${Number(event.tokens).toLocaleString('en-US')} tokens${event.denied ? ` · ${event.denied} not allowed` : ''}\n` };
     default: return undefined;
   }
@@ -122,7 +163,8 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-run-'));
   const out = path.join(work, 'events.jsonl'); const taskFile = path.join(work, 'task.json');
-  fs.writeFileSync(taskFile, JSON.stringify({ prompt: options.prompt, out, model: options.model, permissions: options.permissions, allowWeb: !!options.allowWeb, allowHooks: !!options.allowHooks, maxSteps: options.maxSteps, ollamaUrl: options.ollamaUrl }), { mode: 0o600 });
+  fs.writeFileSync(taskFile, JSON.stringify({ mode: options.mode || 'run', prompt: options.prompt || '', out, model: options.model, permissions: options.permissions, allowWeb: !!options.allowWeb, allowHooks: !!options.allowHooks, maxSteps: options.maxSteps, ollamaUrl: options.ollamaUrl,
+    ...(options.mode === 'automate' ? { automate: options.automate } : {}) }), { mode: 0o600 });
   const env = { ...process.env, CODICO_HEADLESS: '1', CODICO_HEADLESS_TASK: taskFile };
   delete env.ELECTRON_RUN_AS_NODE;
 

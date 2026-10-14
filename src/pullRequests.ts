@@ -26,10 +26,10 @@ export function pullRequestBody(prompt: string, stat: string): string {
         '---\nWritten by the Codico agent from the task above. Review it as you would any contribution.';
 }
 
-export interface ReviewComment { author: string; body: string }
-export interface ReviewThread { path: string; line?: number; outdated: boolean; comments: ReviewComment[] }
+export interface ReviewComment { author: string; body: string; /** OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE…: what the author is to the repository. */ association?: string }
+export interface ReviewThread { id?: string; path: string; line?: number; outdated: boolean; comments: ReviewComment[] }
 
-export const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved isOutdated path line originalLine comments(first:30){nodes{author{login} body}}}}}}}`;
+export const REVIEW_THREADS_QUERY = `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id isResolved isOutdated path line originalLine comments(first:30){nodes{author{login} authorAssociation body}}}}}}}`;
 
 /** The unresolved review threads from GitHub's answer to REVIEW_THREADS_QUERY. */
 export function unresolvedThreads(answer: unknown): ReviewThread[] {
@@ -41,10 +41,11 @@ export function unresolvedThreads(answer: unknown): ReviewThread[] {
         const raw = (node.comments as { nodes?: unknown } | undefined)?.nodes;
         const comments = (Array.isArray(raw) ? raw as Array<Record<string, unknown>> : [])
             .filter(comment => typeof comment?.body === 'string' && (comment.body as string).trim())
-            .map(comment => ({ author: String((comment.author as { login?: unknown } | null)?.login ?? 'someone'), body: (comment.body as string).trim() }));
+            .map(comment => ({ author: String((comment.author as { login?: unknown } | null)?.login ?? 'someone'), body: (comment.body as string).trim(),
+                ...(typeof comment.authorAssociation === 'string' ? { association: comment.authorAssociation } : {}) }));
         if (comments.length === 0) { continue; }
         const line = typeof node.line === 'number' ? node.line : typeof node.originalLine === 'number' ? node.originalLine : undefined;
-        threads.push({ path: node.path, line, outdated: node.isOutdated === true, comments });
+        threads.push({ ...(typeof node.id === 'string' ? { id: node.id } : {}), path: node.path, line, outdated: node.isOutdated === true, comments });
     }
     return threads;
 }

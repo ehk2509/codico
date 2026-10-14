@@ -141,6 +141,10 @@
         "icon": "$(radio-tower)"
       },
       {
+        "command": "codico.addAutomationWorkflow",
+        "title": "Codico: Add GitHub Actions Workflow for Automations"
+      },
+      {
         "command": "codico.backgroundTasks",
         "title": "Codico: Background Tasks"
       },

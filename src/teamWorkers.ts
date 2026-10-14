@@ -36,7 +36,7 @@ export class TeamWorkers implements vscode.Disposable {
 
     constructor(
         private readonly _store: BackgroundTaskStore,
-        private readonly _deps: Omit<WorkerDeps, 'post' | 'historyFile' | 'untrusted'> & { sandboxRequired?(): boolean },
+        private readonly _deps: Omit<WorkerDeps, 'post' | 'historyFile' | 'untrusted'> & { sandboxRequired?(): boolean; /** Headless: every question is answered no. */ declineQuestions?: boolean },
         /** To the panel: the Agents view, and the questions workers ask. */
         private readonly _post: (message: ExtensionMessage) => void,
         private readonly _openWindow: (task: BackgroundTask) => Promise<void>,
@@ -92,8 +92,15 @@ export class TeamWorkers implements vscode.Disposable {
                 view.verdict = running.agent.passport?.verdict;
                 break;
             }
-            // Its questions are asked in the panel, in its place in the Agents view
+            // Its questions are asked in the panel, in its place in the Agents view; with nobody at the screen, declined
             case 'writePermissionRequest': case 'terminalPermissionRequest': case 'checkpoint':
+                if (this._deps.declineQuestions) {
+                    if (message.type === 'checkpoint') { running.agent.approvals.answerCheckpoint(false); }
+                    else if (message.type === 'writePermissionRequest') { running.agent.approvals.answerWrite(message.permId, { granted: false }); }
+                    else { running.agent.approvals.answerCommand(message.permId, false); }
+                    pushLog(view, { error: `declined (nobody to ask): ${message.type === 'terminalPermissionRequest' ? message.command : message.type === 'writePermissionRequest' ? message.filepath : 'continue past the token budget'}` });
+                    break;
+                }
                 view.status = 'waiting';
                 this._post({ ...message, worker: id });
                 break;
@@ -143,6 +150,9 @@ export class TeamWorkers implements vscode.Disposable {
 
     /** A button on a worker in the Agents view. */
     has(id: string): boolean { return this._running.has(id); }
+
+    /** Whether any agent here is still working on its turn. */
+    get busy(): boolean { return [...this._running.values()].some(running => running.agent.busy); }
 
     /** Brings the Agents view forward in the panel. */
     async show(): Promise<void> {

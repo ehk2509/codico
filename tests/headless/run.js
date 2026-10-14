@@ -34,6 +34,7 @@ function codico(args, env) {
   const workspace = () => { const ws = fs.mkdtempSync(path.join(work, 'ws-')); fs.mkdirSync(path.join(ws, 'live')); fs.mkdirSync(path.join(ws, 'fixtures')); fs.writeFileSync(path.join(ws, 'fixtures/config.txt'), 'host=localhost\nport=80\n'); return ws; };
   const base = (ws) => ['--cwd', ws, '--model', 'ollama/fake-model', '--ollama-url', url, '--timeout', '120'];
   const env = { CODICO_VSCODE: vscode };
+  const fetchLog = () => new Promise((resolve, reject) => require('node:http').get(`${url}/log`, r => { let b = ''; r.on('data', d => b += d); r.on('end', () => resolve(JSON.parse(b))); }).on('error', reject));
   const results = [];
   const check = (name, ok, why) => { results.push({ name, ok, why }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name.padEnd(22)} | ${why}`); };
 
@@ -75,6 +76,44 @@ function codico(args, env) {
   run = await codico(['run'], env);
   const bad = await codico(['run', 'x', '--cwd', path.join(work, 'nowhere')], env);
   check('usage errors', run.code === 64 && /Give the task after "run"/.test(run.stderr) && bad.code === 64, `exit ${run.code} and ${bad.code}`);
+
+  // 7. codico automate, as a CI workflow runs it: three runs sharing a state folder, the job's worktree gone between runs
+  {
+    const http = require('node:http');
+    const ghState = (set) => new Promise((resolve, reject) => { const req = http.request(`${url}/gh-state`, { method: set ? 'POST' : 'GET', headers: { 'content-type': 'application/json' } }, r => { let b = ''; r.on('data', d => b += d); r.on('end', () => resolve(JSON.parse(b))); }); req.on('error', reject); req.end(set ? JSON.stringify(set) : undefined); });
+    const git = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    ws = workspace(); const bare = path.join(work, 'origin-auto.git'); const state = path.join(work, 'automate-state');
+    git(work, 'init', '-q', '--bare', '-b', 'main', bare);
+    git(ws, 'init', '-q', '-b', 'main'); git(ws, 'config', 'user.email', 't@example.com'); git(ws, 'config', 'user.name', 'T'); git(ws, 'config', 'core.autocrlf', 'false');
+    git(ws, 'remote', 'add', 'origin', 'https://github.com/acme/app.git'); git(ws, 'config', `url.${bare}.insteadOf`, 'https://github.com/acme/app.git');
+    git(ws, 'add', '-A'); git(ws, 'commit', '-q', '-m', 'start'); git(ws, 'push', '-q', 'origin', 'main');
+    await ghState({ issues: [{ number: 7, state: 'open', title: 'Write the auto file', body: 'Please write live/auto.txt. [SCENARIO:auto_issue]', user: { login: 'ann' } }], created: [], pulls: {}, checks: {}, logs: {}, tokens: [] });
+    const automate = (...extra) => codico(['automate', '--state-dir', state, '--no-ci', '--publish', '--allow-edits', '--github-api', url, ...base(ws), ...extra], { ...env, GITHUB_TOKEN: 'test-gh-token' });
+    const onOrigin = (branch) => { try { return git(bare, 'show', `${branch}:live/auto.txt`).trim(); } catch { return null; } };
+    const before = (await fetchLog()).length;
+
+    run = await automate();
+    let gh = await ghState(); const pr = gh.created[0] || {};
+    check('automate: issue to PR', run.code === 0 && pr.draft === true && /^Resolves #7\./.test(pr.body || '') && onOrigin(pr.head) === 'AUTO-V1' && /opened draft pull request #100/.test(run.stderr),
+      `exit ${run.code}; draft PR resolving #7: ${pr.draft === true && /^Resolves #7/.test(pr.body || '')}; pushed: ${onOrigin(pr.head)}; ${run.stderr.trim().split('\n').filter(l => l.startsWith('◆')).join(' / ').slice(0, 200)}`);
+
+    // The next run is on a fresh checkout: the job's worktree is gone; CI failed on the pull request meanwhile
+    const tasks = fs.readdirSync(path.join(state, 'tasks')).filter(f => f.endsWith('.json')).map(f => JSON.parse(fs.readFileSync(path.join(state, 'tasks', f), 'utf8')));
+    fs.rmSync(tasks[0].worktree, { recursive: true, force: true });
+    await ghState({ pulls: { 100: { state: 'open', merged: false, head: { sha: 'c0ffee1' } } }, checks: { c0ffee1: [{ name: 'test', status: 'completed', conclusion: 'failure', details_url: 'https://github.com/acme/app/actions/runs/1/job/901' }] },
+      logs: { 901: 'npm test\n##[error]expected AUTO-V2 in live/auto.txt [SCENARIO:auto_fix]\nProcess completed with exit code 1.' } });
+    run = await automate();
+    const fixReq = (await fetchLog()).slice(before).find(e => e.scenario === 'auto_fix') || {};
+    check('automate: resumed, fixed', run.code === 0 && fixReq.hasEarlierReply === true && onOrigin(pr.head) === 'AUTO-V2' && (await ghState()).created.length === 1 && fs.existsSync(tasks[0].worktree),
+      `exit ${run.code}; resumed with its saved conversation: ${fixReq.hasEarlierReply === true}; worktree made again: ${fs.existsSync(tasks[0].worktree)}; fix pushed to the same PR: ${onOrigin(pr.head)}`);
+
+    await ghState({ pulls: { 100: { state: 'closed', merged: true, head: { sha: 'c0ffee2' } } } });
+    run = await automate();
+    const saved = JSON.parse(fs.readFileSync(path.join(state, 'automations.json'), 'utf8'));
+    gh = await ghState();
+    check('automate: merged, done', run.code === 0 && saved.jobs[0].state === 'done' && gh.tokens.length > 0 && gh.tokens.every(t => t === 'Bearer test-gh-token'),
+      `exit ${run.code}; job ${saved.jobs[0].state} (${saved.jobs[0].note}); token from GITHUB_TOKEN only: ${gh.tokens.every(t => t === 'Bearer test-gh-token')}`);
+  }
 
   server.close();
   const failed = results.filter(r => !r.ok).length;
