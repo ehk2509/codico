@@ -58,6 +58,29 @@ export class ExternalToolRuntime {
         this._browser.setAllowPrivateNetwork(allow);
     }
 
+    /** The browser itself, for the checks of end-to-end verification. */
+    public get browser(): BrowserManager { return this._browser; }
+
+    /**
+     * Told of each browser step with its screenshot (the verification evidence). Set for a task;
+     * returns a line for the model (where the screenshot was saved), or nothing.
+     */
+    public onBrowserStep?: (step: { action: string; target: string; url: string; screenshot: Buffer; text: string }) => void;
+
+    /** After a step: the screenshot for the chat and the evidence, and the errors the page logged meanwhile. */
+    private async _afterStep(msgId: string, action: string, target: string): Promise<string> {
+        const shot = await this._sendBrowserScreenshot(msgId).catch(() => undefined);
+        if (shot && this.onBrowserStep) {
+            const text = await this._browser.getText().catch(() => '');
+            this.onBrowserStep({ action, target, url: this._browser.currentUrl, screenshot: shot, text: text.slice(0, 600) });
+        }
+        const errors = this._browser.takeErrors();
+        return errors.length ? `\nErrors in the page since the last step (${errors.length}):\n${errors.slice(0, 8).map(e => `- ${e}`).join('\n')}` : '';
+    }
+
+    /** An app Codico started on this machine: browsing it needs no confirmation, it touches nothing outside. */
+    private _ownApp(url: string): boolean { return this._browser.isAllowedOrigin(url); }
+
     public async closeBrowser(): Promise<void> {
         await this._browser.close();
     }
@@ -83,15 +106,15 @@ export class ExternalToolRuntime {
     }
 
     public async _handleBrowserNavigate(tool: BrowserNavigateTool, msgId: string): Promise<string> {
-        if (!await this._confirmExternalAction('navigate the browser', tool.url)) {
+        if (!this._ownApp(tool.url) && !await this._confirmExternalAction('navigate the browser', tool.url)) {
             return `[browser_navigate: ${tool.url}] Denied by user`;
         }
         try {
             const result = await this._browser.navigate(tool.url);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_navigate', label: result.title || tool.url, success: true });
             // Take and send a screenshot automatically after navigation
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_navigate] ${result.text}. Page title: "${result.title}"\nCurrent URL: ${result.currentUrl}`;
+            const after = await this._afterStep(msgId, 'navigate', tool.url);
+            return `[browser_navigate] ${result.text}. Page title: "${result.title}"\nCurrent URL: ${result.currentUrl}${after}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_navigate', label: tool.url, success: false, error: message });
@@ -100,14 +123,13 @@ export class ExternalToolRuntime {
     }
 
     public async _handleBrowserClick(tool: BrowserClickTool, msgId: string): Promise<string> {
-        if (!await this._confirmExternalAction('click in the browser', tool.selector)) {
+        if (!this._ownApp(this._browser.currentUrl) && !await this._confirmExternalAction('click in the browser', tool.selector)) {
             return `[browser_click: ${tool.selector}] Denied by user`;
         }
         try {
             const result = await this._browser.click(tool.selector);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_click', label: tool.selector, success: true });
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_click] ${result}`;
+            return `[browser_click] ${result}${await this._afterStep(msgId, 'click', tool.selector)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_click', label: tool.selector, success: false, error: message });
@@ -117,14 +139,13 @@ export class ExternalToolRuntime {
 
     public async _handleBrowserType(tool: BrowserTypeTool, msgId: string): Promise<string> {
         const preview = tool.text.length > 120 ? tool.text.slice(0, 120) + '…' : tool.text;
-        if (!await this._confirmExternalAction('type into the browser', `${tool.selector} → "${preview}"`)) {
+        if (!this._ownApp(this._browser.currentUrl) && !await this._confirmExternalAction('type into the browser', `${tool.selector} → "${preview}"`)) {
             return `[browser_type: ${tool.selector}] Denied by user`;
         }
         try {
             const result = await this._browser.typeText(tool.selector, tool.text, tool.submit ?? false);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_type', label: `${tool.selector} → "${tool.text}"`, success: true });
-            await this._sendBrowserScreenshot(msgId).catch(() => null);
-            return `[browser_type] ${result}`;
+            return `[browser_type] ${result}${await this._afterStep(msgId, 'type', `${tool.selector} → "${preview}"`)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._post({ type: 'toolResult', id: msgId, tool: 'browser_type', label: tool.selector, success: false, error: message });
@@ -156,10 +177,11 @@ export class ExternalToolRuntime {
         }
     }
 
-    private async _sendBrowserScreenshot(msgId: string): Promise<void> {
+    private async _sendBrowserScreenshot(msgId: string): Promise<Buffer> {
         const buf = await this._browser.screenshot();
         const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
         this._post({ type: 'browserScreenshot', id: msgId, dataUrl, url: this._browser.currentUrl });
+        return buf;
     }
 
     /** Where the key of a search engine that needs one is kept (the editor's secret storage). */

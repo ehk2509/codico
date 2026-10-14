@@ -35,6 +35,7 @@ import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
 import { TeamService } from './teamService';
 import { TeamWorkers } from './teamWorkers';
+import { VerifyRuntime } from './verifyRuntime';
 import { teamLabel, teamPromptSection } from './teamTools';
 import { repositoryRoot } from './backgroundGit';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
@@ -201,7 +202,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             get evaluationMode() { return provider._evaluationMode; },
             get evaluationTokenBudget() { return provider._evaluationTokenBudget; },
             get readOnly() { return provider._readOnly; },
-            get team() { return provider._teamMode; },
+            get team() { return provider._teamMode; }, acceptanceGuidance: () => provider._verify.guidance(),
             get thinkingEffort() { return provider._thinkingEffort; },
             post: message => provider._post(message), dispatchTool: (tool, msgId, signal) => provider._dispatchTool(tool, msgId, signal),
         };
@@ -225,6 +226,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         fileManager: this._fileManager, approvedCommands: () => this.approvedCommands, evaluationMode: () => this._evaluationMode,
         editsMode: () => this._editsMode, untrustedContentSeen: () => this._external.untrustedContentSeen, fileWritten: () => { this._filesWrittenThisTurn++; },
     });
+    /** End-to-end verification: the app, browser assertions, acceptance criteria and their evidence. */
+    private readonly _verify = new VerifyRuntime({ post: message => this._post(message), passport: () => this._passport, tools: this._tools, external: this._external });
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
     /** The workspace as it was at each message, kept on disk: what rewinding restores. */
     public readonly checkpoints = workspaceCheckpoints(this._context.globalStorageUri.fsPath);
@@ -437,7 +440,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private async _onWebviewMessage(msg: WebviewMessage): Promise<void> {
         try {
         // A team worker's question, or a button of the Agents view
-        if (await this.workers?.route(msg)) { return; }
+        if (await this.workers?.route(msg) || await this._verify.route(msg)) { return; }
         switch (msg.type) {
             case 'sendMessage':
                 this._planAwaitingAnswer = null;
@@ -946,7 +949,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
-        this._passport = new PassportRecorder();
+        this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
@@ -959,7 +962,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // What goes before Codico's own system prompt. Project memory is read once per turn: a note saved during the task does not change the prompt under it
         let effectivePrefix = systemPrefix({ repoInstructions: this._repoInstructions, customPrefix, mcpSection: this._mcp.buildSystemPromptSection(), skillsSection: skillsPromptSection(userExtensions.skills),
-            memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true) });
+            memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true), acceptance: !this._readOnly && config.get<boolean>('acceptanceChecks', true) });
         if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 3))))].filter(Boolean).join('\n\n'); }
 
         // Detect @agent mention and apply agent-specific context
@@ -1037,9 +1040,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // The agent loop: requests, tools, recovery and stop rules, until the reply is complete
         await new AgentTurn(AgentProvider._turnHost(this)).run({ accoOptimizer, apiKey, config, directApiKey, directParsed, displayRollbackLen, effectivePrefix, historyRollbackLen, isCli, isDirect, isOllama, maxIterations, model, msgId, mutationGraceIterations, nativeToolCalling, ollamaBaseUrl, ollamaModel, rawText, taskUsage, verificationGraceIterations, signal });
 
-        // The change report: what this turn changed, and what was checked afterwards
+        // The change report: what this turn changed, what was checked afterwards, and whether the request is met
+        await this._verify.endTurn(this._subagentHost, config.get<boolean>('acceptanceReview', true), signal);
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
-        if (passport) { this._post({ type: 'patchPassport', id: msgId, passport, markdown: passportMarkdown(passport) }); }
+        if (passport) { const markdown = passportMarkdown(passport); this._post({ type: 'patchPassport', id: msgId, passport, markdown }); this._verify.finish(markdown); }
         if (this._teamSteer && this._steer) { this._pendingUserMessages.push({ text: this._steer }); }
         this._steer = ''; this._teamSteer = false;
         this._post({ type: 'endMessage', id: msgId });
@@ -1082,7 +1086,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     ? lastMsg.content
                     : (lastMsg.content as MessageContentPart[]).filter(p => p.type === 'text').map(p => (p as { type: 'text'; text: string }).text).join('');
                 const displayText = raw
-                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|remember|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo|delegate|search_code|team)[\s\S]*?\1/g, '[tool call]')
+                    .replace(/(`{3,})(?:write_file|read_file|edit_file|run_terminal|search_files|find_files|list_directory|get_diagnostics|fetch_url|web_search|remember|browser_\w+|mcp_call|lsp_symbol|debug_\w+|update_todo|delegate|search_code|team|app|browser_expect|acceptance)[\s\S]*?\1/g, '[tool call]')
                     .trim().slice(0, 300);
                 summaryText = displayText;
             }
@@ -1325,6 +1329,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 result = await untilStopped(this._external._handleBrowserType(tool, msgId), signal, stopped);
                 break;
             }
+            case 'app': case 'browser_expect': case 'acceptance':
+                result = await this._verify.run(tool, msgId, signal);
+                break;
             case 'browser_get_text': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'browser_get_text', label: tool.selector ?? 'page' });
                 result = await untilStopped(this._external._handleBrowserGetText(tool, msgId), signal, stopped);

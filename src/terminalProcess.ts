@@ -72,7 +72,7 @@ export function killProcessGroup(pgid: number, signal: NodeJS.Signals = 'SIGTERM
     try { process.kill(-pgid, signal); } catch { /* already exited */ }
 }
 
-function killWindowsTree(pid: number, force: boolean): void {
+export function killWindowsTree(pid: number, force: boolean): void {
     const args = ['/PID', String(pid), '/T'];
     if (force) { args.push('/F'); }
     try {

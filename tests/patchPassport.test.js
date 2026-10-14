@@ -77,7 +77,8 @@ test('verified: a check passed after the last change, and a check that failed fi
     { command: 'npm test', kind: 'test', outcome: 'passed', detail: '10 passed, 0 failed', stale: false, fixed: true, runs: 2 },
     { command: 'npm run compile', kind: 'build', outcome: 'passed', detail: 'exit 0', stale: false, fixed: false, runs: 1 },
   ]);
-  assert.deepEqual(p.notes, []);
+  // Passing checks are not acceptance: the report says the request itself was not shown to be met
+  assert.deepEqual(p.notes, ['No acceptance criteria were stated: passing checks do not show that the request itself is met.']);
 });
 
 test('a file changed after the last passing check is called out', () => {
@@ -143,7 +144,7 @@ test('only a build passed: verified, with a note that no tests ran', () => {
   r.recordCommand('npx tsc --noEmit', 0, '');
   const p = r.build();
   assert.equal(p.verdict, 'verified');
-  assert.deepEqual(p.notes, ['No tests were run: only the build, type-check or lint passed.']);
+  assert.deepEqual(p.notes, ['No tests were run: only the build, type-check or lint passed.', 'No acceptance criteria were stated: passing checks do not show that the request itself is met.']);
 });
 
 test('several writes to one file count once, from its first state to its last', () => {
@@ -163,7 +164,7 @@ test('the Markdown form', () => {
   r.recordChange('README.md', 'a\n', 'b\n');
   assert.equal(passportMarkdown(r.build()), [
     '## Change report', '',
-    '**Not verified: no check passed after the last change**', '',
+    '**No check passed after the last change** · acceptance not stated', '',
     '### Files changed (3, +4 −2)',
     '- `README.md` — +1 −1',
     '- `src/a.ts` — +1 −1',

@@ -112,6 +112,16 @@ const SCRIPTS = (port) => ({
   // A team's worker: its first report, then its answer to the orchestrator's message
   team_worker: Array(6).fill('Tests pass: 3 of 3.'),   // a text-only reply to a tester's brief is nudged to act a few times
   team_followup: ['Checked the empty input too: it passes.'],
+  // End-to-end verification of a web app: criteria, reproduce the bug, fix it, verify, with Codico's own assertions
+  accept_e2e: [
+    tool('acceptance', 'action: criteria\ncriteria:\n- Clicking Add once shows "Count: 1"'),
+    tool('app', `action: start\ncommand: node webapp/server.js ${port + 7}\nurl: http://127.0.0.1:${port + 7}/`),
+    tool('browser_navigate', `url: http://127.0.0.1:${port + 7}/`) + tool('browser_click', 'selector: #add') + tool('browser_expect', 'selector: #count\ntext: Count: 1\ntimeout_ms: 1500'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: fail\nevidence: E1\nhow: clicked Add once before the fix; it showed Count: 01'),
+    tool('edit_file', 'filepath: webapp/app.js\nold_str:\nlet count = \'0\';\nnew_str:\nlet count = 0;'),
+    tool('browser_navigate', `url: http://127.0.0.1:${port + 7}/`) + tool('browser_click', 'selector: #add') + tool('browser_expect', 'selector: #count\ntext: Count: 1'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: reloaded, clicked Add once; it showed Count: 1'),
+    'Fixed: the count was a string. AC1 is verified in the browser.'],
   // A /background task run in this window, then answered by the user
   bg_panel: [tool('write_file', 'filepath: live/bg-panel.txt\ncontent:\nBG-PANEL'), 'Wrote live/bg-panel.txt.'],
   bg_panel_reply: ['The panel task got the reply.'],
@@ -246,8 +256,11 @@ function start(port0) {
         return res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] }));
       }
       let entry;
+      // The independent acceptance reviewer: no scenario, its own system prompt
+      if (/independent acceptance reviewer/.test(system)) { entry = /E2 PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
-      if (needsVerify && !scenario.startsWith('stuck_')) { entry = VERIFY; }
+      if (entry) { /* the reviewer's answer */ }
+      else if (needsVerify && !(scenario || '').startsWith('stuck_')) { entry = VERIFY; }
       else if (scenario === 'compaction' || scenario === 'bad_summary') { entry = SCRIPTS(port)[scenario][(compactionReplies[scenario] = (compactionReplies[scenario] || 0) + 1) - 1] ?? 'Done.'; }
       else if (scenario === 'plan_clarify') { entry = SCRIPTS(port).plan_clarify[planClarifyReplies++] ?? 'Done.'; }
       else { entry = (SCRIPTS(port)[scenario] || [])[step] ?? 'Done.'; }

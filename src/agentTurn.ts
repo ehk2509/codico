@@ -52,6 +52,8 @@ export interface TurnHost {
     readonly readOnly: boolean;
     /** This turn leads an agent team: the `team` tool is offered. */
     readonly team: boolean;
+    /** Before a reply may end: what is left of the acceptance criteria, as a reminder (undefined: nothing). */
+    acceptanceGuidance?(): string | undefined;
     /** Only these tools are offered (a team worker's); all of them when absent. */
     readonly allowedTools?: ReadonlySet<string>;
     steer: string;
@@ -558,6 +560,12 @@ export class AgentTurn {
                         }
                         verificationNudges++;
                         this._host.history.push({ role: 'user', content: verificationGuidance });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
+                    }
+                    // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
+                    const acceptanceGuidance = this._host.acceptanceGuidance?.();
+                    if (acceptanceGuidance) {
+                        this._host.history.push({ role: 'user', content: acceptanceGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
                     // Some models announce an action ("I'll locate the file.") and end the

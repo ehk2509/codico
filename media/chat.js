@@ -773,6 +773,34 @@
 
   // ── Change report: what a reply changed and what was checked afterwards ──────────
   // Built by the extension from the files it wrote and the commands it ran, not by the model.
+  /** The acceptance part of a change report: each criterion, its status and the evidence Codico observed. */
+  function _acceptanceSection(acc) {
+    var mark = { verified: '✓', failing: '✗', stale: '!', claimed: '?', open: '–' };
+    var word = { verified: 'verified', failing: 'failing', stale: 'checked before the last change', claimed: 'claimed, no evidence', open: 'not checked' };
+    var html = '<div class="passport-section">Acceptance criteria</div>' + acc.criteria.map(function (c) {
+      var disputed = c.review && !c.review.agrees;
+      return '<div class="passport-criterion ' + esc(c.status) + (disputed ? ' disputed' : '') + '">' +
+        '<div class="passport-row"><span class="passport-mark">' + mark[c.status] + '</span><strong>' + esc(c.id) + '</strong><span class="passport-crit-text">' + esc(c.text) + '</span>' +
+        '<span class="passport-tag' + (c.status === 'verified' && !disputed ? ' ok' : ' warn') + '">' + esc(word[c.status]) + '</span>' +
+        (c.reproduced ? '<span class="passport-tag" title="It was shown to fail before the change">reproduced</span>' : '') + '</div>' +
+        c.evidence.map(function (e) {
+          return '<div class="passport-evidence-row ' + (e.passed ? 'passed' : 'failed') + '">' + esc(e.id) + ' ' + (e.passed ? '✓' : '✗') + ' ' + esc(e.description) + ' — ' + esc(e.detail) +
+            (e.screenshot ? ' <button class="passport-evidence" data-path="' + esc(e.screenshot) + '" title="Open the screenshot taken for this check">screenshot</button>' : '') + '</div>';
+        }).join('') +
+        (c.review ? '<div class="passport-review ' + (c.review.agrees ? 'agrees' : 'disputes') + '">Reviewer ' + (c.review.agrees ? 'agrees' : 'disputes') + ': ' + esc(c.review.reason) + '</div>' : '') +
+        '</div>';
+    }).join('');
+    if (acc.consoleErrors && acc.consoleErrors.length) {
+      html += '<div class="passport-section">Console errors after the last change</div>' + acc.consoleErrors.slice(0, 8).map(function (t) { return '<div class="passport-note"><code>' + esc(t) + '</code></div>'; }).join('');
+    }
+    if (acc.evidenceFolder) {
+      html += '<div class="passport-actions"><button class="passport-evidence" data-path="' + esc(acc.evidenceFolder + '/report.md') + '">Open evidence report</button>' +
+        (acc.steps > 1 ? '<button class="passport-evidence" data-path="' + esc(acc.evidenceFolder + '/replay.png') + '" title="The screenshots of the browser steps, animated">Replay</button>' : '') +
+        '<span class="passport-origin">' + esc(acc.evidenceFolder) + '</span></div>';
+    }
+    return html;
+  }
+
   function _renderPassport(id, passport, markdown) {
     var wrap = document.getElementById('msg-' + id);
     if (!wrap || !passport || !passport.files) { return; }
@@ -782,19 +810,24 @@
     passport.files.forEach(function (f) { added += f.added; removed += f.removed; });
     var current = passport.checks.filter(function (c) { return !c.stale; });
     var passed = current.filter(function (c) { return c.outcome === 'passed'; }).length;
-    var badge = { verified: '✓ Verified', failing: '✗ Checks failing', unverified: '! Not verified' }[passport.verdict] || passport.verdict;
+    var acc = passport.acceptance;
+    var accBadge = acc ? { accepted: '✓ Accepted', partial: '! Partly accepted', disputed: '! Disputed', failing: '✗ Not accepted', unverified: '! Not accepted' }[acc.verdict] : '';
+    var badge = { verified: '✓ Checks pass', failing: '✗ Checks failing', unverified: '! Not checked' }[passport.verdict] || passport.verdict;
     var summary = passport.files.length + ' file' + (passport.files.length === 1 ? '' : 's') + ' · +' + added + ' −' + removed +
       (current.length ? ' · ' + passed + ' of ' + current.length + ' check' + (current.length === 1 ? '' : 's') + ' passed' : ' · no checks run');
     var mark = { passed: '✓', failed: '✗', unknown: '?' };
     var card = document.createElement('div');
-    card.className = 'passport passport-' + passport.verdict;
+    // The headline is whether the request is met when criteria were stated, and whether the checks pass otherwise
+    card.className = 'passport passport-' + (acc ? { accepted: 'verified', partial: 'unverified', disputed: 'unverified', failing: 'failing', unverified: 'unverified' }[acc.verdict] : passport.verdict);
     card.id = 'passport-' + id;
     card.innerHTML =
       '<button class="passport-head" aria-expanded="false"><span class="passport-title">Change report</span>' +
-        '<span class="passport-badge">' + esc(badge) + '</span><span class="passport-sum">' + esc(summary) + '</span><span class="passport-arrow">▸</span></button>' +
-      (passport.verdict !== 'verified' && passport.notes.length ? '<div class="passport-alert">' + esc(passport.notes[0]) + '</div>' : '') +
+        (acc ? '<span class="passport-badge passport-acc">' + esc(accBadge) + '</span>' : '') +
+        '<span class="passport-badge' + (acc ? ' passport-checks' : '') + '">' + esc(badge) + '</span><span class="passport-sum">' + esc(summary) + '</span><span class="passport-arrow">▸</span></button>' +
+      ((acc ? acc.verdict !== 'accepted' : passport.verdict !== 'verified') && passport.notes.length ? '<div class="passport-alert">' + esc(passport.notes[0]) + '</div>' : '') +
       '<div class="passport-body">' +
-        '<div class="passport-section">Files changed</div>' +
+        (acc ? _acceptanceSection(acc) : '') +
+        (passport.files.length ? '<div class="passport-section">Files changed</div>' : '') +
         passport.files.map(function (f) {
           return '<div class="passport-row"><button class="passport-file" data-path="' + esc(f.path) + '" title="Show what changed in this file">' + esc(f.path) + '</button>' +
             (f.status === 'created' ? '<span class="passport-tag">new</span>' : '') +
@@ -817,6 +850,9 @@
     });
     Array.prototype.forEach.call(card.querySelectorAll('.passport-file'), function (b) {
       b.addEventListener('click', function () { vscode.postMessage({ type: 'openChangeDiff', path: b.dataset.path }); });
+    });
+    Array.prototype.forEach.call(card.querySelectorAll('.passport-evidence'), function (b) {
+      b.addEventListener('click', function () { vscode.postMessage({ type: 'openEvidence', path: b.dataset.path }); });
     });
     var copy = card.querySelector('.passport-copy');
     copy.addEventListener('click', function () {
@@ -1775,7 +1811,7 @@
     search_files: ['searched'], find_files: ['looked for', 'file', 'files'], get_diagnostics: ['checked problems'],
     run_terminal: ['ran', 'command', 'commands'], edit_file: ['edited', 'file', 'files'], write_file: ['wrote', 'file', 'files'],
     fetch_url: ['fetched', 'page', 'pages'], web_search: ['searched the web'], lsp_symbol: ['looked up', 'symbol', 'symbols'], mcp_call: ['called', 'MCP tool', 'MCP tools'],
-    update_todo: ['updated the task list'], delegate: ['delegated', 'task', 'tasks'], search_code: ['searched the code'], team: ['led the team']
+    update_todo: ['updated the task list'], delegate: ['delegated', 'task', 'tasks'], search_code: ['searched the code'], team: ['led the team'], app: ['ran the app'], browser_expect: ['checked', 'page', 'pages'], acceptance: ['recorded acceptance']
   };
   var _stepRunSeq = 0;
   function _stepSummary(pills) {
@@ -3058,7 +3094,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65', app: '\u25B6\uFE0F', browser_expect: '\u2611\uFE0F', acceptance: '\uD83C\uDFAF',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',
@@ -3074,7 +3110,7 @@
       '<span class="step-pill-verb pending">' + ({
         read_file: 'Reading', list_directory: 'Listing', run_terminal: 'Running',
         search_files: 'Searching', find_files: 'Finding', edit_file: 'Editing',
-        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', web_search: 'Searching the web', write_file: 'Writing', delegate: 'Delegating', search_code: 'Searching code', team: 'Team',
+        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', web_search: 'Searching the web', write_file: 'Writing', delegate: 'Delegating', search_code: 'Searching code', team: 'Team', app: 'App', browser_expect: 'Checking the page', acceptance: 'Acceptance',
         browser_navigate: 'Navigating', browser_click: 'Clicking',
         browser_type: 'Typing', browser_get_text: 'Reading', browser_screenshot: 'Capturing',
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
@@ -3171,7 +3207,7 @@
     var verbs = {
       read_file: 'Read', list_directory: 'Listed', run_terminal: 'Ran',
       search_files: 'Searched', find_files: 'Found', edit_file: 'Edited',
-      get_diagnostics: 'Analyzed', fetch_url: 'Fetched', web_search: 'Searched the web', delegate: 'Subagent reported', search_code: 'Searched code', team: 'Team',
+      get_diagnostics: 'Analyzed', fetch_url: 'Fetched', web_search: 'Searched the web', delegate: 'Subagent reported', search_code: 'Searched code', team: 'Team', app: 'App', browser_expect: 'Checked the page', acceptance: 'Acceptance',
       browser_navigate: 'Navigated', browser_click: 'Clicked',
       browser_type: 'Typed', browser_get_text: 'Read page',
       browser_screenshot: 'Screenshot', browser_close: 'Closed browser',
@@ -3181,7 +3217,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65', app: '\u25B6\uFE0F', browser_expect: '\u2611\uFE0F', acceptance: '\uD83C\uDFAF',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',

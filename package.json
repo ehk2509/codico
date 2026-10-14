@@ -470,6 +470,16 @@
           "maximum": 3000,
           "description": "Debounce delay in ms before requesting an inline completion"
         },
+        "codico.acceptanceChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "End-to-end verification: the agent states the acceptance criteria of a feature or a fix, starts the app, checks it in the browser with assertions Codico runs itself, and records which evidence shows each criterion. The change report says whether the request is met, apart from whether the checks pass. Evidence (screenshots, a replay and a report) is saved in .codico/evidence."
+        },
+        "codico.acceptanceReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a reply that verified acceptance criteria, one more model request, without tools and without the agent's reasoning, reviews whether the recorded evidence really shows each criterion. A criterion it disputes is not counted as accepted."
+        },
         "codico.backgroundTasksRunIn": {
           "type": "string",
           "enum": ["panel", "windows"],

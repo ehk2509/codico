@@ -117,6 +117,8 @@ export type WebviewMessage =
     /** `/background <task>`: run the task in a worktree and a window of its own. */
     | { type: 'startBackgroundTask'; text: string }
     | { type: 'openBackgroundTasks' }
+    /** A file of a change report's evidence (its report, its replay or a screenshot), by its path in the project. */
+    | { type: 'openEvidence'; path: string }
     /** A button on a team worker in the panel's Agents view. */
     | { type: 'teamWorker'; worker: string; action: TeamWorkerAction; /** reply: the text, when it is not asked for (automated tests). */ text?: string }
     | { type: 'threadContextMenu'; id: string }

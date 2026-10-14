@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { VERIFY_PROMPT_SECTION } from './verifyTools';
 import { directSecretKey, getDirectProvider, parseDirectModelId } from './directProviderClient';
 import { isCliModel } from './cliProviders';
 import { usableModel } from './modelFallback';
@@ -53,11 +54,11 @@ export const SUMMARY_NOTE = 'Only at the very end of the entire task — in your
  * instructions, the user's own prompt, the MCP tools, the project's skills, the project memory,
  * and the notes for Edits Mode and for the closing summary. Undefined when there is none.
  */
-export function systemPrefix(parts: { repoInstructions?: string | null; customPrefix?: string; mcpSection?: string; skillsSection?: string; memorySection?: string; editsMode?: boolean; summary?: boolean }): string | undefined {
+export function systemPrefix(parts: { repoInstructions?: string | null; customPrefix?: string; mcpSection?: string; skillsSection?: string; memorySection?: string; editsMode?: boolean; summary?: boolean; acceptance?: boolean }): string | undefined {
     const sections = [
         parts.repoInstructions ? `[Repository Instructions]\n${parts.repoInstructions}` : '',
         parts.customPrefix ?? '', parts.mcpSection ?? '', parts.skillsSection ?? '', parts.memorySection ?? '',
-        parts.editsMode ? EDITS_MODE_NOTE : '', parts.summary ? SUMMARY_NOTE : '',
+        parts.editsMode ? EDITS_MODE_NOTE : '', parts.acceptance ? VERIFY_PROMPT_SECTION : '', parts.summary ? SUMMARY_NOTE : '',
     ].filter(Boolean);
     return sections.length > 0 ? sections.join('\n\n') : undefined;
 }

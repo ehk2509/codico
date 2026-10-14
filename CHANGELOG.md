@@ -5,11 +5,13 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Added
+- End-to-end verification. For a feature or a fix the agent states acceptance criteria, reproduces a bug before fixing it, starts the app (`app` tool: a dev server in the background, stopped when the task ends), uses it in the browser, and checks it with `browser_expect`, an assertion Codico runs itself and records as evidence along with test and build results. Console errors, page errors and failed requests are reported and kept. A criterion is verified only on evidence observed after the last code change; the agent is reminded of criteria it has not verified. An independent review (one request without tools or the agent's reasoning) agrees or disputes each criterion. Screenshots, an animated replay and a report are saved in `.codico/evidence/`. Settings: `codico.acceptanceChecks`, `codico.acceptanceReview`.
 - Agent teams, in one window. `/team <goal>` makes the agent in the panel the orchestrator of a team: it plans, starts named developers and testers (`backend`, `frontend`…) that work in parallel, each an agent with its own conversation in a git worktree and branch of its own, waits for their reports, has a read-only reviewer check their patches, sends them corrections or answers, and merges their branches into the workspace after your approval. A merge that conflicts is undone. After merging, it runs the build and tests as an acceptance gate. A tester starts from a developer's branch.
 - The Agents view in the panel: each worker's or background task's status, steps, tokens, current step, change-report verdict, processes left running and log, with Reply, Stop and Open (its worktree in a separate window). Their approval cards appear in their place there, named after them, and "Allow all" given to the orchestrator never covers them.
 - New settings: `codico.teamMaxWorkers` (default 3), `codico.teamWorkerPermissions` (default: edit freely, ask before commands) and `codico.backgroundTasksRunIn`.
 
 ### Changed
+- The change report separates acceptance from checks: its headline is *Accepted*, *Partly accepted*, *Disputed* or *Not accepted* when criteria were stated, and *Checks pass* (formerly "Verified") otherwise, with a note that passing checks do not show that the request is met.
 - Background tasks (`/background`) run in this window by default, next to your conversation, in their own git worktree as before, and are followed and answered in the Agents view. A task can be answered or given more to do after it has finished. Set `codico.backgroundTasksRunIn` to `windows` for the previous behaviour (a VS Code window per task).
 
 ### Changed

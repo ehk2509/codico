@@ -105,19 +105,7 @@ export class WorkspaceTools {
         // Confined by the operating system when the user asked for it; where that is required and not possible, not run at all
         const sandbox = await commandSandbox();
         if (sandbox.refusal) { this._host.post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'No sandbox' }); return `[run_terminal: ${tool.command}] ${sandbox.refusal}`; }
-        // After the agent has read external content this turn, Allow All no longer covers
-        // commands: a prompt-injected page must not be able to run them unattended.
-        const askAgain = this._host.approvals.allowAllCommands && !this._host.evaluationMode() && this._host.untrustedContentSeen();
-        // A remembered command is not asked about, with the same exception
-        const remembered = this._host.untrustedContentSeen() ? undefined : this._host.approvedCommands().allows(tool.command);
-        let granted: boolean;
-        if ((this._host.approvals.allowAllCommands && !askAgain) || remembered) {
-            granted = true;
-        } else {
-            granted = await this._host.approvals.askCommand(permId => ({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command, rules: askAgain ? [] : this._host.approvedCommands().offer(permId, tool.command),
-                note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined }));
-        }
-
+        const granted = await this.askToRun(tool.command, msgId);
         if (!granted) {
             this._host.post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'Denied' });
             return `[run_terminal] Denied by user:\n${tool.command}`;
@@ -158,7 +146,9 @@ export class WorkspaceTools {
             ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
             : '';
         const success = result.exitCode === 0;
-        this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
+        const evidence = this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
+        // Once there are acceptance criteria, a check's result can be named as evidence for them
+        const evidenceNote = evidence && this._host.passport().acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})` : '';
         this._host.post({
             type: 'toolResult',
             id: msgId,
@@ -167,7 +157,19 @@ export class WorkspaceTools {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}`;
+    }
+
+    /** Whether a command may run: asked on a card, unless allowed for the task or remembered. */
+    async askToRun(command: string, msgId: string): Promise<boolean> {
+        // After the agent has read external content this turn, Allow All no longer covers
+        // commands: a prompt-injected page must not be able to run them unattended.
+        const askAgain = this._host.approvals.allowAllCommands && !this._host.evaluationMode() && this._host.untrustedContentSeen();
+        // A remembered command is not asked about, with the same exception
+        const remembered = this._host.untrustedContentSeen() ? undefined : this._host.approvedCommands().allows(command);
+        if ((this._host.approvals.allowAllCommands && !askAgain) || remembered) { return true; }
+        return this._host.approvals.askCommand(permId => ({ type: 'terminalPermissionRequest', id: msgId, permId, command, rules: askAgain ? [] : this._host.approvedCommands().offer(permId, command),
+            note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined }));
     }
 
     /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */

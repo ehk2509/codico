@@ -29,6 +29,12 @@ export function evaluationToolTarget(tool: ToolCall): string {
             return tool.filepath ?? 'workspace';
         case 'delegate':
             return clip(tool.task);
+        case 'app':
+            return clip(`${tool.action} ${tool.url ?? ''}`);
+        case 'browser_expect':
+            return clip(`${tool.selector ?? 'page'} ${tool.text ?? tool.state ?? ''}`);
+        case 'acceptance':
+            return clip(tool.action === 'criteria' ? `${tool.criteria?.length ?? 0} criteria` : `${tool.criterion} ${tool.result}`);
         case 'team':
             return clip(`${tool.action} ${tool.worker ?? tool.text ?? ''}`);
         case 'search_code':

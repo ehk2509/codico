@@ -1415,12 +1415,42 @@ const PASSPORT = {
   notes: [],
 };
 
+test('a change report with acceptance: the headline is whether the request is met, apart from the checks, with the evidence of each criterion', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const acceptance = {
+    verdict: 'partial', steps: 4, evidenceFolder: '.codico/evidence/2026-10-15_10-00-00', consoleErrors: ['console: TypeError: total is undefined'],
+    criteria: [
+      { id: 'AC1', text: 'Changing the quantity updates the total', status: 'verified', reproduced: true, evidence: [{ id: 'E2', kind: 'expect', description: '.total shows "$42.00"', passed: true, detail: 'the element shows "$42.00"', screenshot: '.codico/evidence/2026-10-15_10-00-00/03-expect.png', at: 5 }], review: { agrees: true, reason: 'the assertion reads the total after the change' } },
+      { id: 'AC2', text: 'An empty cart says so', status: 'verified', reproduced: false, evidence: [{ id: 'E3', kind: 'check', description: 'test: npm test', passed: true, detail: '12 passed, 0 failed', at: 6 }], review: { agrees: false, reason: 'no test covers the empty cart' } },
+      { id: 'AC3', text: 'The total keeps two decimals', status: 'claimed', reproduced: false, evidence: [] },
+    ],
+  };
+  await send({ type: 'startMessage', id: 'a1' }, { type: 'patchPassport', id: 'a1', passport: { ...PASSPORT, acceptance, notes: ['Partly accepted: not every criterion is verified (AC2, AC3).'] }, markdown: '## Change report\n' }, { type: 'endMessage', id: 'a1' });
+  const card = page.locator('#passport-a1');
+  assert.deepEqual(await card.locator('.passport-badge').allTextContents(), ['! Partly accepted', '✓ Checks pass']);
+  assert.match(await card.locator('.passport-alert').textContent(), /Partly accepted.*AC2, AC3/);
+  await card.locator('.passport-head').click();
+  const rows = card.locator('.passport-criterion');
+  assert.equal(await rows.count(), 3);
+  assert.match(await rows.nth(0).textContent(), /AC1\s*Changing the quantity updates the total\s*verified\s*reproduced[\s\S]*E2 ✓ \.total shows "\$42\.00"[\s\S]*Reviewer agrees/);
+  assert.equal(await rows.nth(1).evaluate(e => e.classList.contains('disputed')), true);
+  assert.match(await rows.nth(1).textContent(), /Reviewer disputes: no test covers the empty cart/);
+  assert.match(await rows.nth(2).textContent(), /claimed, no evidence/);
+  assert.match(await card.locator('.passport-body').textContent(), /Console errors after the last change\s*console: TypeError: total is undefined/);
+  await rows.nth(0).locator('.passport-evidence').click();
+  await card.locator('.passport-evidence', { hasText: 'Open evidence report' }).click();
+  await card.locator('.passport-evidence', { hasText: 'Replay' }).click();
+  assert.deepEqual(await posted('openEvidence'), [{ type: 'openEvidence', path: '.codico/evidence/2026-10-15_10-00-00/03-expect.png' },
+    { type: 'openEvidence', path: '.codico/evidence/2026-10-15_10-00-00/report.md' }, { type: 'openEvidence', path: '.codico/evidence/2026-10-15_10-00-00/replay.png' }]);
+  assert.deepEqual(errors, []);
+});
+
 test('a reply that changed files ends with a change report: verdict, files and checks', async () => {
   const { page, send, posted } = await openPanel();
   await send({ type: 'startMessage', id: 'p1' }, { type: 'appendContent', id: 'p1', text: 'Fixed the parser.' },
     { type: 'patchPassport', id: 'p1', passport: PASSPORT, markdown: '## Change report\n' }, { type: 'endMessage', id: 'p1' });
   const card = page.locator('#passport-p1');
-  assert.equal(await card.locator('.passport-badge').textContent(), '✓ Verified');
+  assert.equal(await card.locator('.passport-badge').textContent(), '✓ Checks pass');
   assert.equal(await card.locator('.passport-sum').textContent(), '2 files · +42 −4 · 2 of 2 checks passed');
   // Collapsed until asked for
   assert.equal(await card.locator('.passport-body').evaluate(e => getComputedStyle(e).display), 'none');
@@ -1454,7 +1484,7 @@ test('an unverified or failing change says so without being opened, and saved re
   ] });
   const cards = page.locator('.passport');
   assert.equal(await cards.count(), 2);
-  assert.equal(await cards.nth(0).locator('.passport-badge').textContent(), '! Not verified');
+  assert.equal(await cards.nth(0).locator('.passport-badge').textContent(), '! Not checked');
   assert.equal(await cards.nth(0).locator('.passport-sum').textContent(), '1 file · +3 −1 · no checks run');
   assert.equal(await cards.nth(0).locator('.passport-alert').textContent(), 'No test, build, type-check or lint command was run in this turn.');
   assert.equal(await cards.nth(1).locator('.passport-badge').textContent(), '✗ Checks failing');

@@ -62,6 +62,11 @@ async function main() {
     { event: 'beforeCommand', match: '*hook-forbidden*', command: 'node -e "process.exit(2)"' },
   ] }));
   fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
+  // A small web app with a bug, for end-to-end verification: "Add" shows "Count: 01" instead of "Count: 1"
+  fs.mkdirSync(path.join(ws, 'webapp'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'webapp/server.js'), "const http = require('http'), fs = require('fs'), path = require('path');\nhttp.createServer((q, s) => { const f = q.url === '/app.js' ? 'app.js' : 'index.html'; s.setHeader('content-type', f.endsWith('.js') ? 'text/javascript' : 'text/html'); s.end(fs.readFileSync(path.join(__dirname, f))); }).listen(Number(process.argv[2]), '127.0.0.1', () => console.log('webapp ready on ' + process.argv[2]));\n");
+  fs.writeFileSync(path.join(ws, 'webapp/index.html'), '<!doctype html><html><body><h1>Counter</h1><p id="count">Count: 0</p><button id="add">Add</button><script src="/app.js"></script></body></html>\n');
+  fs.writeFileSync(path.join(ws, 'webapp/app.js'), "let count = '0';\nconsole.error('WEBAPP-CONSOLE-ERROR: legacy counter in use');\ndocument.getElementById('add').onclick = () => { count = count + 1; document.getElementById('count').textContent = 'Count: ' + count; };\n");
   fs.writeFileSync(path.join(ws, 'fixtures/dirty.txt'), 'one\ntwo\n');
   fs.writeFileSync(path.join(ws, 'fixtures/undo.txt'), 'v1\n');
   fs.writeFileSync(path.join(ws, 'fixtures/abs.txt'), 'v1\n');
