@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import * as http from 'http';
 import * as https from 'https';
-import { CiEvent, checksState, failedJobs, Feedback, IssueEvent, labelledIssues, logTail, newCiFailures, pullState, reviews } from './automations';
+import { CiEvent, TRUSTED_ASSOCIATIONS, checksState, failedJobs, Feedback, IssueEvent, labelledIssues, logTail, newCiFailures, pullState, reviews } from './automations';
 import { GitHubApi, githubRequest } from './githubApi';
 import { Repo, REVIEW_THREADS_QUERY, reviewThreadsText, unresolvedThreads } from './pullRequests';
 
@@ -77,13 +77,15 @@ export class GitHubEvents {
         const pull = pullState(await this._get(`${this._base}/pulls/${number}`));
         if (!pull) { return undefined; }
         const checks = checksState(await this._get(`${this._base}/commits/${pull.headSha}/check-runs?per_page=100`));
-        const list = reviews(await this._get(`${this._base}/pulls/${number}/reviews?per_page=100`));
+        // Feedback counts only from people with write access to the repository
+        const list = reviews(await this._get(`${this._base}/pulls/${number}/reviews?per_page=100`)).filter(review => TRUSTED_ASSOCIATIONS.has(review.association ?? ''));
         let threads: Feedback['threads'] = [];
         try {
             const answer = await githubRequest(this._api, 'POST', '/graphql', this._token, { query: REVIEW_THREADS_QUERY, variables: { owner: this._repo.owner, repo: this._repo.repo, number } });
-            threads = unresolvedThreads(answer.json).map(thread => ({
-                key: crypto.createHash('sha1').update(`${thread.path}\n${thread.comments[0]?.author}\n${thread.comments[0]?.body}`).digest('hex').slice(0, 16),
+            threads = unresolvedThreads(answer.json).filter(thread => TRUSTED_ASSOCIATIONS.has(thread.comments[0]?.association ?? '')).map(thread => ({
+                key: thread.id ?? crypto.createHash('sha1').update(`${thread.path}\n${thread.comments[0]?.author}\n${thread.comments[0]?.body}`).digest('hex').slice(0, 16),
                 text: reviewThreadsText([thread]).replace(/^1\. /, ''),
+                ...(thread.id ? { id: thread.id } : {}),
             }));
         } catch { /* review threads are read again next time */ }
         const logs = new Map<string, string>();
@@ -95,6 +97,18 @@ export class GitHubEvents {
             }
         }
         return { pull, checks, reviews: list, threads, logs };
+    }
+
+    /** Answers in a review thread; true when GitHub took it. */
+    async replyToThread(threadId: string, body: string): Promise<boolean> {
+        try {
+            const answer = await githubRequest(this._api, 'POST', '/graphql', this._token, {
+                query: 'mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}',
+                variables: { thread: threadId, body },
+            });
+            const json = answer.json as { data?: { addPullRequestReviewThreadReply?: { comment?: { id?: unknown } } } } | null;
+            return answer.status === 200 && typeof json?.data?.addPullRequestReviewThreadReply?.comment?.id === 'string';
+        } catch { return false; }
     }
 
     /** Opens a pull request; returns its number and address, or GitHub's reason. */

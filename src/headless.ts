@@ -1,7 +1,10 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { ExtensionMessage } from './chatProtocol';
 import { directSecretKey } from './directProviderClient';
+import { AutomationService } from './automationService';
+import { jobLine } from './automations';
 
 /**
  * Headless runs: Codico working on one task with nobody at the screen (a script, CI, a
@@ -11,6 +14,8 @@ import { directSecretKey } from './directProviderClient';
  * what the task may do is given on the command line, and every other prompt is declined.
  */
 export interface HeadlessTask {
+    /** One task (codico run), or the repository's automations (codico automate). */
+    mode?: 'run' | 'automate';
     prompt: string;
     /** Where progress and the result are written, one JSON object per line. */
     out: string;
@@ -21,6 +26,19 @@ export interface HeadlessTask {
     allowHooks?: boolean;
     maxSteps?: number;
     ollamaUrl?: string;
+    /** codico automate: what it reacts to and may publish, and where its state is kept between runs. */
+    automate?: {
+        stateDir: string;
+        label: string;
+        ci: boolean;
+        prFeedback: boolean;
+        publish: boolean;
+        replies: boolean;
+        /** Keep reading GitHub every this many seconds, instead of doing what is due and stopping. */
+        watchSeconds?: number;
+        /** GitHub's API (GitHub Enterprise, or a stand-in in tests). */
+        githubApi?: string;
+    };
 }
 
 export const HEADLESS_ENV = 'CODICO_HEADLESS';
@@ -42,7 +60,12 @@ export function parseHeadlessTask(text: string): HeadlessTask | undefined {
     let value: unknown;
     try { value = JSON.parse(text); } catch { return undefined; }
     const task = value as Partial<HeadlessTask> | null;
-    if (!task || typeof task.prompt !== 'string' || !task.prompt.trim() || typeof task.out !== 'string' || !task.out) { return undefined; }
+    if (!task || typeof task.out !== 'string' || !task.out) { return undefined; }
+    if (task.mode === 'automate') {
+        const a = task.automate;
+        if (!a || typeof a.stateDir !== 'string' || !a.stateDir || typeof a.label !== 'string') { return undefined; }
+        task.prompt = '';
+    } else if (typeof task.prompt !== 'string' || !task.prompt.trim()) { return undefined; }
     if (task.permissions !== 'read' && task.permissions !== 'edits' && task.permissions !== 'all') { return undefined; }
     return task as HeadlessTask;
 }
@@ -74,12 +97,20 @@ export interface HeadlessAgent {
     lastReplyUsage(): { tokens?: number; requests?: unknown[] } | undefined;
 }
 
-/** Runs the task of this headless session and returns its exit code. */
-export async function runHeadless(context: vscode.ExtensionContext, agent: HeadlessAgent): Promise<number> {
-    const task = parseHeadlessTask(fs.readFileSync(process.env[HEADLESS_TASK_ENV] ?? '', 'utf8'));
-    if (!task) { throw new Error('The headless task file is missing or not valid.'); }
-    const write = (event: Record<string, unknown>) => { try { fs.appendFileSync(task.out, JSON.stringify(event) + '\n'); } catch { /* the reader has gone */ } };
-    let denied = 0; let failed: string | undefined; let question = false;
+/** The task this headless session was started for (read once; undefined in a normal window). */
+export function headlessTask(): HeadlessTask | undefined {
+    try { return parseHeadlessTask(fs.readFileSync(process.env[HEADLESS_TASK_ENV] ?? '', 'utf8')); } catch { return undefined; }
+}
+
+/** Writes one event for the `codico` command to read. */
+export const headlessWriter = (task: HeadlessTask) => (event: Record<string, unknown>) => { try { fs.appendFileSync(task.out, JSON.stringify(event) + '\n'); } catch { /* the reader has gone */ } };
+
+/**
+ * What every headless session does first: dialogs answered by the rules of the run, keys from
+ * the environment, the model, and nothing that is only for a person at the screen.
+ * @param onDenied told each time a dialog that asked for a decision was declined
+ */
+async function prepareHeadless(context: vscode.ExtensionContext, task: HeadlessTask, write: (event: Record<string, unknown>) => void, onDenied: () => void): Promise<void> {
     const windowApi = vscode.window as unknown as Record<string, unknown>;
 
     // Nobody can answer a dialog. Each is answered by the rules of the run and reported, so that none can hold the run up
@@ -88,7 +119,7 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
             const options = rest[0] && typeof rest[0] === 'object' && !Array.isArray(rest[0]) ? rest[0] as { modal?: boolean } : undefined;
             const buttons = rest.slice(options ? 1 : 0).map(item => typeof item === 'string' ? item : (item as { title?: string })?.title ?? '');
             const answer = dialogAnswer(message, buttons, task);
-            if (options?.modal && !answer) { denied++; }
+            if (options?.modal && !answer) { onDenied(); }
             write({ type: 'dialog', message, answer: answer ?? null });
             return answer;
         };
@@ -107,6 +138,15 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
     // Nothing that is only for a person at the screen
     for (const off of ['followUpSuggestionsEnabled', 'completionNotificationsEnabled', 'responseSummaryEnabled', 'autoIndex']) { await set(off, false); }
     await set('notifications', 'never');
+}
+
+/** Runs the task of this headless session and returns its exit code. */
+export async function runHeadless(context: vscode.ExtensionContext, agent: HeadlessAgent): Promise<number> {
+    const task = headlessTask();
+    if (!task) { throw new Error('The headless task file is missing or not valid.'); }
+    const write = headlessWriter(task);
+    let denied = 0; let failed: string | undefined; let question = false;
+    await prepareHeadless(context, task, write, () => { denied++; });
 
     await vscode.commands.executeCommand('workbench.view.extension.codico-container');
     for (let tries = 0; tries < 200 && !agent.ready; tries++) { await new Promise(resolve => setTimeout(resolve, 150)); }
@@ -137,4 +177,41 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
     const status = failed ? 'failed' : question ? 'needs-input' : denied > 0 ? 'denied' : 'done';
     write({ type: 'end', status, ...(failed ? { message: failed } : {}), denied, tokens: usage?.tokens ?? 0, requests: usage?.requests?.length ?? 0 });
     return failed ? EXIT.failed : question ? EXIT.needsInput : denied > 0 ? EXIT.denied : EXIT.done;
+}
+
+/**
+ * `codico automate`: the repository's automations with nobody at the screen (GitHub Actions, a
+ * cron job, a server). Each round reads GitHub, starts or resumes jobs, waits for their agents
+ * and publishes what is ready, until nothing is left to do now (or, with a watch interval,
+ * for as long as it runs). Its state stays in the state folder between runs.
+ * @param busy whether any job's agent is still working
+ */
+export async function runAutomate(context: vscode.ExtensionContext, automations: AutomationService, busy: () => Promise<boolean>): Promise<number> {
+    const task = headlessTask();
+    if (!task?.automate) { throw new Error('The headless task file is missing or not valid.'); }
+    const write = headlessWriter(task);
+    await prepareHeadless(context, task, write, () => undefined);
+    const config = vscode.workspace.getConfiguration('codico');
+    await config.update('backgroundTasksDirectory', path.join(task.automate.stateDir, 'worktrees'), vscode.ConfigurationTarget.Global);
+    await config.update('backgroundTasksRunIn', 'panel', vscode.ConfigurationTarget.Global);
+    await config.update('automationPermissions', task.permissions === 'read' ? 'ask' : task.permissions, vscode.ConfigurationTarget.Global);
+    const a = task.automate;
+    await automations.evaluation('configure', { issueLabel: a.label, ciFailures: a.ci, prFeedback: a.prFeedback, publish: a.publish ? 'auto' : 'ask', replyToReviews: a.replies });
+    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const snapshot = () => JSON.stringify(automations.data().jobs.map(job => [job.id, job.state, job.note, job.resumes]));
+    for (;;) {
+        const before = snapshot();
+        await automations.check();
+        if (automations.engine.lastProblem) { write({ type: 'end', status: 'failed', message: automations.engine.lastProblem }); return EXIT.failed; }
+        while (await busy()) { await sleep(2000); }
+        if (snapshot() !== before) { continue; }
+        if (!a.watchSeconds) { break; }
+        await sleep(a.watchSeconds * 1000);
+    }
+    const jobs = automations.data().jobs;
+    for (const job of jobs.filter(j => j.state !== 'done' || j.updatedAt > Date.now() - 3_600_000)) { write({ type: 'job', text: jobLine(job) }); }
+    // Anything not done or followed (a question, an approval, something to publish) needs a person
+    const waiting = jobs.some(job => job.state !== 'done' && job.state !== 'watching');
+    write({ type: 'end', status: waiting ? 'needs-input' : 'done', message: waiting ? 'a job needs a person (see the lines above)' : undefined, tokens: 0, requests: 0, denied: 0 });
+    return waiting ? EXIT.needsInput : EXIT.done;
 }
