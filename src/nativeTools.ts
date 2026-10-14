@@ -2,6 +2,7 @@ import {
     ToolCall,
     UpdateTodoTool,
 } from './toolParser';
+import { TEAM_ACTIONS, TEAM_TOOL_DESCRIPTION, teamToolFromArgs } from './teamTools';
 
 export type JsonSchema = Record<string, unknown>;
 
@@ -147,6 +148,23 @@ const ALL_TOOLS: NativeToolDefinition[] = [
                 agent: { type: 'string', description: 'Optional name of a project agent (.codico/agents) whose instructions the subagent follows.' },
             },
             required: ['task'],
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'team',
+        description: TEAM_TOOL_DESCRIPTION,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: [...TEAM_ACTIONS] },
+                role: { type: 'string', enum: ['developer', 'tester'], description: 'start: what the worker is (developer by default).' },
+                text: { type: 'string', description: 'start: the worker\'s complete, self-contained task. message: the text sent. review: what to look at most.' },
+                worker: { type: 'string', description: 'The worker\'s id. start: an existing worker whose branch the new one starts from.' },
+                workers: { type: 'array', items: { type: 'string' }, description: 'wait: the ids waited for; every unmerged worker when absent.' },
+                timeout_seconds: { type: 'number', description: 'wait: how long at most (600 by default, 1800 at most).' },
+            },
+            required: ['action'],
             additionalProperties: false,
         },
     },
@@ -301,8 +319,9 @@ const READ_ONLY = new Set<ToolCall['type']>([
     'lsp_symbol',
 ]);
 
-export function getNativeToolDefinitions(readOnly = false): NativeToolDefinition[] {
-    return ALL_TOOLS.filter(tool => !readOnly || READ_ONLY.has(tool.name));
+/** @param team the orchestrator of an agent team: only then is the `team` tool offered */
+export function getNativeToolDefinitions(readOnly = false, team = false): NativeToolDefinition[] {
+    return ALL_TOOLS.filter(tool => (!readOnly || READ_ONLY.has(tool.name)) && (team || tool.name !== 'team'));
 }
 
 /**
@@ -567,6 +586,8 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
             const agent = stringArg(args, 'agent');
             return task ? { type: 'delegate', task, ...(agent ? { agent } : {}) } : null;
         }
+        case 'team':
+            return teamToolFromArgs(args);
         case 'fetch_url': {
             const url = stringArg(args, 'url');
             return url ? { type: 'fetch_url', url } : null;

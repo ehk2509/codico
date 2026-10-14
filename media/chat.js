@@ -348,6 +348,7 @@
     { cmd: '/new',      desc: 'Create a new file or project scaffold from a description' },
     { cmd: '/compact',  desc: 'Summarize conversation history to reduce context size' },
     { cmd: '/background', desc: 'Run a task in its own git worktree and window while you keep working here' },
+    { cmd: '/team',     desc: 'Lead a team: developers and testers work in parallel worktrees, then are reviewed and merged' },
   ];
 
   // The project's own agents and skills (.codico folder), sent by the extension
@@ -1774,7 +1775,7 @@
     search_files: ['searched'], find_files: ['looked for', 'file', 'files'], get_diagnostics: ['checked problems'],
     run_terminal: ['ran', 'command', 'commands'], edit_file: ['edited', 'file', 'files'], write_file: ['wrote', 'file', 'files'],
     fetch_url: ['fetched', 'page', 'pages'], web_search: ['searched the web'], lsp_symbol: ['looked up', 'symbol', 'symbols'], mcp_call: ['called', 'MCP tool', 'MCP tools'],
-    update_todo: ['updated the task list'], delegate: ['delegated', 'task', 'tasks'], search_code: ['searched the code']
+    update_todo: ['updated the task list'], delegate: ['delegated', 'task', 'tasks'], search_code: ['searched the code'], team: ['led the team']
   };
   var _stepRunSeq = 0;
   function _stepSummary(pills) {
@@ -2963,7 +2964,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',
@@ -2979,7 +2980,7 @@
       '<span class="step-pill-verb pending">' + ({
         read_file: 'Reading', list_directory: 'Listing', run_terminal: 'Running',
         search_files: 'Searching', find_files: 'Finding', edit_file: 'Editing',
-        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', web_search: 'Searching the web', write_file: 'Writing', delegate: 'Delegating', search_code: 'Searching code',
+        get_diagnostics: 'Analyzing', fetch_url: 'Fetching', web_search: 'Searching the web', write_file: 'Writing', delegate: 'Delegating', search_code: 'Searching code', team: 'Team',
         browser_navigate: 'Navigating', browser_click: 'Clicking',
         browser_type: 'Typing', browser_get_text: 'Reading', browser_screenshot: 'Capturing',
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
@@ -3076,7 +3077,7 @@
     var verbs = {
       read_file: 'Read', list_directory: 'Listed', run_terminal: 'Ran',
       search_files: 'Searched', find_files: 'Found', edit_file: 'Edited',
-      get_diagnostics: 'Analyzed', fetch_url: 'Fetched', web_search: 'Searched the web', delegate: 'Subagent reported', search_code: 'Searched code',
+      get_diagnostics: 'Analyzed', fetch_url: 'Fetched', web_search: 'Searched the web', delegate: 'Subagent reported', search_code: 'Searched code', team: 'Team',
       browser_navigate: 'Navigated', browser_click: 'Clicked',
       browser_type: 'Typed', browser_get_text: 'Read page',
       browser_screenshot: 'Screenshot', browser_close: 'Closed browser',
@@ -3086,7 +3087,7 @@
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
       search_files: '\uD83D\uDD0D', find_files: '\uD83D\uDD0D', edit_file: '\u270F\uFE0F',
-      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E',
+      get_diagnostics: '\uD83D\uDD0D', fetch_url: '\uD83C\uDF10', web_search: '\uD83C\uDF10', delegate: '\uD83E\uDDED', search_code: '\uD83D\uDD0E', team: '\uD83D\uDC65',
       browser_navigate: '\uD83C\uDF10', browser_click: '\uD83D\uDDB1\uFE0F',
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',

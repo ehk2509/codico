@@ -476,6 +476,24 @@
           "scope": "machine",
           "description": "Folder in which background tasks get their git worktrees. Empty: ~/.codico/worktrees. Trusting this folder once in VS Code covers every task's window."
         },
+        "codico.teamMaxWorkers": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "maximum": 6,
+          "description": "Agent teams (/team): how many workers may run at once. Each worker is a VS Code window of its own, so each one costs memory."
+        },
+        "codico.teamWorkerPermissions": {
+          "type": "string",
+          "enum": ["edits", "all", "ask"],
+          "enumDescriptions": [
+            "Workers edit files in their own worktree freely, and ask in their window before each terminal command.",
+            "Workers edit files and run commands without asking. Commands are not confined to the worktree: they run with your user's rights.",
+            "Workers ask in their window before every edit and command."
+          ],
+          "default": "edits",
+          "description": "Agent teams (/team): what a worker may do without asking. A worker waiting for an approval shows as waiting for you to the orchestrator."
+        },
         "codico.webSearch": {
           "type": "string",
           "enum": [

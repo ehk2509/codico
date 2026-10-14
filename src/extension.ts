@@ -7,6 +7,8 @@ import { BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
 import { BackgroundTaskManager } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
+import { TeamService } from './teamService';
+import { BackgroundPermissions } from './backgroundTasks';
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
 import { createUserExtension } from './userExtensionsLoader';
@@ -145,6 +147,16 @@ export function activate(context: vscode.ExtensionContext): void {
     const backgroundTasks = new BackgroundTaskManager(backgroundStore, input => openPullRequest(context, input));
     provider.onBackgroundRequest = text => { void backgroundTasks.start(text); };
     backgroundTasks.onSummary = (text, needsUser) => provider.showBackgroundTasks(text, needsUser);
+    // Agent teams: the panel's agent leads, workers are background tasks. Automated tests open no window
+    provider.team = new TeamService({
+        store: backgroundStore, createTask: options => backgroundTasks.createTask(options),
+        openWindow: task => evaluationMode ? Promise.resolve() : backgroundTasks.openWindow(task),
+        settings: () => {
+            const config = vscode.workspace.getConfiguration('codico');
+            const permissions = config.get<string>('teamWorkerPermissions', 'edits');
+            return { maxWorkers: Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 2))), permissions: (['edits', 'all', 'ask'].includes(permissions) ? permissions : 'edits') as BackgroundPermissions };
+        },
+    });
     // This window may have been opened for a task: start it once the panel is there
     if (!evaluationMode) { void runTaskOfThisWindow(backgroundStore, provider); }
     else {

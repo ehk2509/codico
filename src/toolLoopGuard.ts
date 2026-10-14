@@ -18,6 +18,8 @@ export class ToolLoopGuard {
 
     /** Registers a call; `loop` is true once the same call exceeds the allowed repeats. */
     check(tool: ToolCall): { count: number; loop: boolean } {
+        // Waiting for a team's workers again, or looking at their work again, follows work done elsewhere
+        if (tool.type === 'team' && tool.action !== 'start' && tool.action !== 'message') { return { count: 1, loop: false }; }
         const key = toolFingerprint(tool);
         const count = (this._counts.get(key)?.count ?? 0) + 1;
         this._counts.set(key, { type: tool.type, count });
@@ -28,7 +30,7 @@ export class ToolLoopGuard {
     ran(tool: ToolCall): void {
         const stale = WRITES.has(tool.type)
             ? (type: ToolCall['type']) => !WRITES.has(type)
-            : tool.type === 'run_terminal'
+            : tool.type === 'run_terminal' || (tool.type === 'team' && tool.action === 'merge')
                 ? (type: ToolCall['type']) => WORKSPACE_READS.has(type)
                 : null;
         if (!stale) { return; }

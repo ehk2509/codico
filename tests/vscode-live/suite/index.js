@@ -877,5 +877,69 @@ async function run() {
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+
+  // ── Agent team: /team makes this thread the orchestrator; a worker (its window simulated here) is waited for, merged and checked ──
+  // Last: it makes the workspace a git repository, and the thread a team's
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    const git = (...args) => require('node:child_process').execFileSync('git', args, { cwd: ws, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    git('init', '-q', '-b', 'main'); git('config', 'core.autocrlf', 'false'); git('config', 'user.email', 'live@example.com'); git('config', 'user.name', 'Live');
+    git('add', '-A'); git('commit', '-q', '-m', 'workspace');
+    const worktrees = path.join(ws, '..', 'team-worktrees');
+    await set('backgroundTasksDirectory', worktrees);
+    const lead = vscode.commands.executeCommand('codico.__evalRunTask', '/team [SCENARIO:team_lead] write the team file');
+    // The worker's own window is not opened in tests: do its work and report as it would
+    let worker;
+    for (let i = 0; i < 100 && !worker; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      worker = (await vscode.commands.executeCommand('codico.__evalBackground') || []).find(t => t.team && t.role === 'developer');
+    }
+    const isolated = !!worker && worker.worktree.startsWith(worktrees) && fs.existsSync(path.join(worker.worktree, 'fixtures/config.txt')) && !fs.existsSync(path.join(ws, 'live/team-result.txt'));
+    if (worker) {
+      fs.writeFileSync(path.join(worker.worktree, 'live/team-result.txt'), 'TEAM-WORK\n');
+      await vscode.commands.executeCommand('codico.__evalBackground', { ...worker, status: 'finished', heartbeat: Date.now(), report: 'Wrote live/team-result.txt; checked it with cat.' });
+    }
+    let error = null;
+    try { await Promise.race([lead, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out after 90 s')), 90000))]); } catch (e) { error = String(e && e.message || e); }
+    const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'team_lead' && e.stream);
+    const said = reqs.map(r => r.lastUser).join('\n');
+    const started = /\[team start\] Started worker [0-9a-f]{8} \(developer\)/.test(said);
+    const reported = /\[team wait\] All of them have stopped[\s\S]*live\/team-result\.txt[\s\S]*Report:\nWrote live\/team-result\.txt/.test(said);
+    const merged = /\[team merge\] Merged worker [\s\S]*Acceptance gate/.test(said) && (read('live/team-result.txt') || '').trim() === 'TEAM-WORK';
+    const checked = /TEAM-WORK/.test((reqs[4] || {}).lastUser || '');
+    const listed = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => worker && t.id === worker.id) || {};
+    try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }
+    fs.rmSync(path.join(ws, '.git'), { recursive: true, force: true });
+    await set('backgroundTasksDirectory', undefined);
+    results.push({ name: 'agent_team', ms: Date.now() - t0, requests: reqs.length, ok: !error && started && isolated && reported && merged && listed.merged === true && checked,
+      why: `the worker started in its own worktree, outside the workspace: ${started && isolated}; the wait returned its changes and report: ${reported}; merged into the workspace with the acceptance gate asked for: ${merged}; recorded as merged: ${listed.merged === true}; the result was checked in the workspace: ${checked}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
+  // ── A team's worker, in its own window: it reports, then answers a message from the orchestrator and reports again ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length; const now = Date.now();
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'createThread' });
+    const task = { id: 'fe12cd34ab567890', prompt: '[SCENARIO:team_worker] what do the tests of the parser say?', repoRoot: path.join(ws, '..', 'origin-repo'), worktree: ws,
+      branch: 'codico/test-the-parser-fe12cd', baseCommit: '0123456789abcdef', permissions: 'edits', status: 'starting', createdAt: now, updatedAt: now, role: 'tester', team: 'lead-thread' };
+    const done = await vscode.commands.executeCommand('codico.__evalBackground', task) || {};
+    const first = done.status === 'finished' && /Tests pass: 3 of 3/.test(done.report || '');
+    const briefed = /\[Team: tester\]/.test(((await getLog()).slice(before).find(e => e.scenario === 'team_worker') || {}).lastUser || '');
+    // The orchestrator's message, as its team tool writes it
+    const listed = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === task.id);
+    const saveOnly = { ...listed, worktree: path.join(ws, '..', 'not-this-window'), inbox: [{ at: Date.now(), text: '[SCENARIO:team_followup] Check the empty input too.' }], status: 'running' };
+    await vscode.commands.executeCommand('codico.__evalBackground', saveOnly);
+    let after;
+    for (let i = 0; i < 100; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      after = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === task.id) || {};
+      if (/empty input/.test(after.report || '') && after.status === 'finished') { break; }
+    }
+    const answered = after.status === 'finished' && /Checked the empty input too/.test(after.report || '') && after.inboxRead === 1;
+    const sent = /\[Message from the orchestrator\]\n\[SCENARIO:team_followup\]/.test(((await getLog()).slice(before).find(e => e.scenario === 'team_followup') || {}).lastUser || '');
+    results.push({ name: 'team_worker', ms: Date.now() - t0, requests: (await getLog()).length - before, ok: first && briefed && answered && sent,
+      why: `told it is the team's tester: ${briefed}; finished with its reply as the report: ${first}; the orchestrator's message reached it as a new message: ${sent}; its answer became the report, and the message counts as read: ${answered} (${after.status}, read ${after.inboxRead}, first report ${JSON.stringify(done.report)}, last ${JSON.stringify(after.report)})` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
 }
 module.exports = { run };
