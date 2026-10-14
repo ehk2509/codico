@@ -17,6 +17,8 @@ import { looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
 import { renderSearchMatches } from './leanContext';
 import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
+import { findFilesInRoot, toolFolders, toolRelativePath, toolRoot } from './toolRoot';
+import { globToRegex } from './ignoreRules';
 
 /**
  * The tools that change the workspace or look through it on the agent's behalf: writing and
@@ -121,7 +123,7 @@ export class WorkspaceTools {
             return `[run_terminal] Denied by user:\n${tool.command}`;
         }
 
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        const cwd = toolFolders()?.[0]?.uri.fsPath;
         const timeoutSec = Math.max(
             10,
             vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300)
@@ -213,7 +215,7 @@ export class WorkspaceTools {
     }
 
     async searchFiles(tool: SearchFilesTool, msgId: string): Promise<string> {
-        const folders = vscode.workspace.workspaceFolders;
+        const folders = toolFolders();
         if (!folders || folders.length === 0) {
             this._host.post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
             return '[search_files] ERROR: No workspace folder open';
@@ -232,9 +234,7 @@ export class WorkspaceTools {
 
         const include = tool.glob?.trim() || '**/*';
         const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-        const uris = await filterAllowedWorkspaceUris(
-            await vscode.workspace.findFiles(include, exclude, 600)
-        );
+        const uris = await filterAllowedWorkspaceUris(await this._findFiles(include, exclude, 600));
         const scan = async (test: (line: string) => boolean): Promise<string[]> => {
             const found: string[] = [];
             for (const uri of uris) {
@@ -244,7 +244,7 @@ export class WorkspaceTools {
                     if (bytes.byteLength > 1_000_000) { continue; }
                     const text = new TextDecoder().decode(bytes);
                     if (text.includes('\x00')) { continue; }
-                    const rel = vscode.workspace.asRelativePath(uri);
+                    const rel = toolRelativePath(uri);
                     const lines = text.split('\n');
                     for (let i = 0; i < lines.length && found.length < 1000; i++) {
                         if (test(lines[i])) { found.push(`${rel}:${i + 1}:${lines[i].slice(0, 300)}`); }
@@ -274,7 +274,7 @@ export class WorkspaceTools {
     async findFiles(tool: FindFilesTool, msgId: string): Promise<string> {
         try {
             const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
-            let include: vscode.GlobPattern = `**/${cleanPattern}`;
+            let include: string | vscode.RelativePattern = `**/${cleanPattern}`;
             const requestedDir = (tool.dirpath ?? '').trim();
             if (requestedDir && requestedDir !== '.') {
                 const target = await resolveWorkspaceToolPath(requestedDir, true);
@@ -285,10 +285,8 @@ export class WorkspaceTools {
             }
 
             const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-            const uris = await filterAllowedWorkspaceUris(
-                await vscode.workspace.findFiles(include, exclude, 200)
-            );
-            const result = uris.map(uri => vscode.workspace.asRelativePath(uri));
+            const uris = await filterAllowedWorkspaceUris(await this._findFiles(include, exclude, 200));
+            const result = uris.map(uri => toolRelativePath(uri));
             this._host.post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${tool.pattern} — ${result.length} file(s)`, success: true });
             return result.length > 0
                 ? `[find_files: ${tool.pattern}]\n${result.join('\n')}${result.length >= 200 ? '\n… (truncated at 200)' : ''}`
@@ -399,6 +397,14 @@ export class WorkspaceTools {
             this._host.post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });
             return `[edit_file: ${tool.filepath}] ERROR: ${message}`;
         }
+    }
+
+    /** The editor's file search, or for a team worker (a folder the editor has not opened) a walk of its folder. */
+    private async _findFiles(include: string | vscode.RelativePattern, exclude: string, max: number): Promise<vscode.Uri[]> {
+        const root = toolRoot();
+        if (!root) { return vscode.workspace.findFiles(include, exclude, max); }
+        const glob = typeof include === 'string' ? include : include.pattern;
+        return findFilesInRoot(root, globToRegex(glob), /^(?:node_modules|\.git|out|dist|coverage|\.next|target)$/, max);
     }
 
     // ── Line diff (LCS-based) ─────────────────────────────────────────────────

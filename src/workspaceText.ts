@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { toolRoot } from './toolRoot';
 
 /**
  * File access that respects the editor. A file open with unsaved changes is read
@@ -52,6 +53,8 @@ export function sameBytes(a: Uint8Array | null, b: Uint8Array | null): boolean {
 
 /** Shows the file; best-effort (some files cannot be opened as text, and the write already happened). */
 export async function revealFile(uri: vscode.Uri): Promise<void> {
+    // A team worker's files are not opened in the editor: it works in a folder of its own, out of sight
+    if (toolRoot()) { return; }
     try {
         const doc = await vscode.workspace.openTextDocument(uri);
         await vscode.window.showTextDocument(doc, { preview: true });

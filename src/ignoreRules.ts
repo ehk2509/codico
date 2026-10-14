@@ -8,12 +8,15 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { extraRuleFolders, toolFolders } from './toolRoot';
 
 interface CompiledRule {
     negate: boolean;
     anchored: boolean;
     re: RegExp;
 }
+
+export function globToRegex(glob: string): RegExp { return _globToRegex(glob); }
 
 function _globToRegex(glob: string): RegExp {
     let s = glob.replace(/[.+^$\{\}()|[\]\\]/g, '\\$&');
@@ -70,7 +73,10 @@ export class IgnoreRules {
         for (const current of folders) {
             const legacy = await this._readRules(current, '.copilotignore');
             const codico = await this._readRules(current, '.codicoignore');
-            this._rulesByFolder.set(this._key(current), [...legacy, ...codico]);
+            // A worker's worktree: the workspace's rules apply too, committed or not
+            const inherited: CompiledRule[] = [];
+            for (const other of extraRuleFolders(current)) { inherited.push(...await this._readRules(other, '.copilotignore'), ...await this._readRules(other, '.codicoignore')); }
+            this._rulesByFolder.set(this._key(current), [...inherited, ...legacy, ...codico]);
             this._loadedFolders.add(this._key(current));
         }
     }
@@ -82,7 +88,7 @@ export class IgnoreRules {
     }
 
     shouldIgnore(relativePath: string, folder?: vscode.WorkspaceFolder): boolean {
-        const current = folder ?? vscode.workspace.workspaceFolders?.[0];
+        const current = folder ?? toolFolders()?.[0];
         if (!current) { return false; }
         const rules = this._rulesByFolder.get(this._key(current)) ?? [];
         const rel = relativePath.split(path.sep).join('/').replace(/^\.\//, '');

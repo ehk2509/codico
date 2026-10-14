@@ -1,6 +1,7 @@
 import * as cp from 'child_process';
 import * as os from 'os';
 import * as vscode from 'vscode';
+import { toolFolders } from './toolRoot';
 import { hitTheSandbox, sandboxedCommand, sandboxExplanation, SandboxPolicy, sandboxPolicy, SandboxTool, sandboxToolFor } from './commandSandbox';
 
 export type SandboxMode = 'off' | 'auto' | 'required';
@@ -40,7 +41,7 @@ export async function commandSandbox(): Promise<CommandSandbox> {
         return { ...none, refusal: `Not run: commands must be sandboxed (the codico.commandSandbox setting is "required") and ${why}. Tell the user; do not look for another way to run it.` };
     }
     const policy: SandboxPolicy = sandboxPolicy({
-        workspaceFolders: (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath),
+        workspaceFolders: (toolFolders() ?? []).filter(folder => folder.uri.scheme === 'file').map(folder => folder.uri.fsPath),
         home: os.homedir(), tmp: os.tmpdir(),
         extraWritable: config.get<string[]>('commandSandboxWritablePaths', []).map(item => item.replace(/^~(?=$|[\\/])/, os.homedir())),
         network: config.get<boolean>('commandSandboxNetwork', true),

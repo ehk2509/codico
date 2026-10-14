@@ -34,6 +34,7 @@ import { EditProposalManager } from './editProposalManager';
 import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
 import { TeamService } from './teamService';
+import { TeamWorkers } from './teamWorkers';
 import { teamLabel, teamPromptSection } from './teamTools';
 import { repositoryRoot } from './backgroundGit';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
@@ -129,7 +130,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _planAwaitingAnswer: string | null = null;
     private get _readOnly(): boolean { return this._chatMode || this._planGoal !== null; }
     /** Agent teams, when this window may lead one; the thread started with /team leads it. */
-    public team?: TeamService;
+    public team?: TeamService; public workers?: TeamWorkers;
     private _teamThread: string | undefined;
     private get _teamMode(): boolean { return !!this.team && this._teamThread === this._activeThreadId && !this._readOnly; }
     private _mcpReady = false;
@@ -435,6 +436,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     private async _onWebviewMessage(msg: WebviewMessage): Promise<void> {
         try {
+        // A team worker's question, or a button of the team view
+        if (await this.workers?.route(msg)) { return; }
         switch (msg.type) {
             case 'sendMessage':
                 this._planAwaitingAnswer = null;
@@ -795,6 +798,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             runTool: async nested => { await this._dispatchTool(nested, msgId, signal); const text = this._lastInlineResult ?? ''; this._lastInlineResult = undefined; return text; },
         }).finally(() => { this._delegating = false; });
     }
+    /** For a team's workers: their view and questions, and what their file tools share with this conversation. */
+    public postToPanel(message: ExtensionMessage): void { this._post(message); }
+    public get editProposals(): EditProposalManager { return this._editProposals; }
     public showBackgroundTasks(text: string, needsUser: boolean): void { this._post({ type: 'backgroundTasks', text, needsUser }); }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
@@ -954,7 +960,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // What goes before Codico's own system prompt. Project memory is read once per turn: a note saved during the task does not change the prompt under it
         let effectivePrefix = systemPrefix({ repoInstructions: this._repoInstructions, customPrefix, mcpSection: this._mcp.buildSystemPromptSection(), skillsSection: skillsPromptSection(userExtensions.skills),
             memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true) });
-        if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(config.get<number>('teamMaxWorkers', 2))].filter(Boolean).join('\n\n'); }
+        if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 3))))].filter(Boolean).join('\n\n'); }
 
         // Detect @agent mention and apply agent-specific context
         const { agent, strippedText } = parseAgentMention(text);

@@ -59,7 +59,16 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
     await vscode.commands.executeCommand('workbench.view.extension.codico-container');
     for (let tries = 0; tries < 100 && !agent.ready; tries++) { await wait(150); }
     if (!agent.ready) { return store.update(task.id, { status: 'failed', note: 'the Codico panel did not open in the task\'s window' }); }
+    return runTask(store, task, agent);
+}
 
+/**
+ * Runs a task with an agent and keeps its file up to date: in the task's own window, or for a
+ * team's worker in the window of the team. A team's worker goes on reading the orchestrator's
+ * messages after its first reply, until `end` is aborted (or for as long as its window is open).
+ */
+export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, agent: BackgroundAgent, end?: AbortSignal): Promise<BackgroundTask | undefined> {
+    if (task.status === 'starting') { await store.update(task.id, { status: 'running', heartbeat: Date.now(), note: undefined }); }
     agent.backgroundPermissions = task.permissions;
     let current: string = 'running';
     // One write at a time, in the order things happened: a later status must not be overtaken by an earlier one
@@ -101,6 +110,8 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
             } finally { reading = false; }
         })();
     }, INBOX_POLL_MS) : undefined;
+    const close = () => { clearInterval(beat); if (inbox) { clearInterval(inbox); } agent.backgroundListener = undefined; };
+    end?.addEventListener('abort', close, { once: true });
     try {
         await agent.sendMessage(`${taskPreface(task)}\n\n${task.prompt}`);
         const usage = agent.lastReplyUsage();
@@ -117,6 +128,6 @@ export async function runTaskOfThisWindow(store: BackgroundTaskStore, agent: Bac
     } finally {
         // A team worker keeps beating, listening and reading its inbox after the task: the orchestrator may send
         // follow-ups. All of it ends with its window
-        if (!task.team) { clearInterval(beat); agent.backgroundListener = undefined; }
+        if (!task.team || end?.aborted) { close(); }
     }
 }

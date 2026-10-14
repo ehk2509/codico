@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { toolFolders } from './toolRoot';
 import { changeMemory, MEMORY_FILE, memoryPromptSection } from './projectMemory';
 import { RememberTool } from './toolParser';
 import { readCurrentText } from './workspaceText';
@@ -36,7 +37,8 @@ export async function rememberTool(tool: RememberTool, write: (content: string) 
 
 /** Read .codico-instructions.md (or its .github equivalents) from the first workspace folder. */
 export async function loadRepoInstructions(): Promise<string | null> {
-    const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+    // A team worker reads its own worktree's
+    const root = toolFolders()?.[0]?.uri;
     if (!root) { return null; }
     const parts: string[] = [];
     for (const uri of [vscode.Uri.joinPath(root, '.codico-instructions.md'), vscode.Uri.joinPath(root, '.github', 'codico-instructions.md'), vscode.Uri.joinPath(root, '.github', 'copilot-instructions.md')]) {

@@ -125,7 +125,7 @@ export class BackgroundTaskManager implements vscode.Disposable {
      * Makes a task's branch, worktree and entry without asking anything; the caller opens its window.
      * @param options.from a branch to start from instead of the last commit (a tester starts from a developer's work)
      */
-    async createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; team?: string; from?: string; basedOn?: string }): Promise<BackgroundTask | { error: string }> {
+    async createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; name?: string; team?: string; from?: string; basedOn?: string }): Promise<BackgroundTask | { error: string }> {
         const repo = await this._repo();
         if (!repo) { return { error: 'this folder is not in a git repository' }; }
         const id = nodeCrypto.randomBytes(8).toString('hex');
@@ -136,7 +136,7 @@ export class BackgroundTaskManager implements vscode.Disposable {
         const now = Date.now();
         const task: BackgroundTask = { id, prompt: options.prompt, repoRoot: repo, worktree, branch, baseCommit: made.baseCommit, baseBranch: options.from ? undefined : made.baseBranch,
             permissions: options.permissions, status: 'starting', createdAt: now, updatedAt: now,
-            ...(options.role ? { role: options.role } : {}), ...(options.team ? { team: options.team } : {}), ...(options.basedOn ? { basedOn: options.basedOn } : {}) };
+            ...(options.role ? { role: options.role } : {}), ...(options.name ? { name: options.name } : {}), ...(options.team ? { team: options.team } : {}), ...(options.basedOn ? { basedOn: options.basedOn } : {}) };
         await this._store.save(task);
         await this.refresh();
         return task;

@@ -478,10 +478,20 @@
         },
         "codico.teamMaxWorkers": {
           "type": "number",
-          "default": 2,
+          "default": 3,
           "minimum": 1,
           "maximum": 6,
-          "description": "Agent teams (/team): how many workers may run at once. Each worker is a VS Code window of its own, so each one costs memory."
+          "description": "Agent teams (/team): how many workers may run at once. Each one makes its own model requests; with codico.teamWorkersRunIn set to windows, each is also a VS Code window."
+        },
+        "codico.teamWorkersRunIn": {
+          "type": "string",
+          "enum": ["panel", "windows"],
+          "enumDescriptions": [
+            "Workers run in this window, next to the orchestrator, each in its own git worktree. You follow and answer them in the team view of the Codico panel.",
+            "Each worker runs in a VS Code window of its own, like a background task. Costs more memory; useful to take a worker over by hand."
+          ],
+          "default": "panel",
+          "description": "Agent teams (/team): where workers run."
         },
         "codico.teamWorkerPermissions": {
           "type": "string",

@@ -1523,7 +1523,7 @@ body{
 
 /* Base: all elements fill available width, no horizontal overflow */
 body { overflow-x: hidden; }
-#header, #ctx-bar, #input-area, #mode-toggle-row, #status { width: 100%; box-sizing: border-box; }
+#header, #ctx-bar, #input-area, #mode-toggle-row, #status, #team-view { width: 100%; box-sizing: border-box; }
 .agent-out pre { max-width: 100%; }
 .agent-out table { max-width: 100%; display: block; overflow-x: auto; }
 .csel-drop { max-width: calc(100vw - 12px); box-sizing: border-box; }
@@ -1715,3 +1715,30 @@ body.hide-reasoning .think-wrap{display:none!important}
 /* ── Provider selector (next to the model selector) ── */
 .provider-csel .csel-val{max-width:92px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (max-width: 380px){ .provider-csel .csel-val{max-width:64px} }
+
+/* Team view: the workers of an agent team running in this window */
+#team-view{border-top:1px solid var(--vscode-panel-border,rgba(128,128,128,.35));max-height:45vh;overflow-y:auto;font-size:11.5px;flex-shrink:0}
+#team-view .tv-head{display:flex;align-items:center;gap:8px;padding:4px 10px;cursor:pointer;user-select:none;position:sticky;top:0;background:var(--vscode-sideBar-background,var(--vscode-editor-background))}
+#team-view .tv-title{font-weight:600}
+#team-view .tv-sum{opacity:.7;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#team-view .tv-worker{padding:5px 10px;border-top:1px solid var(--vscode-panel-border,rgba(128,128,128,.2))}
+#team-view .tv-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;cursor:pointer}
+#team-view .tv-dot{width:7px;height:7px;border-radius:50%;background:var(--vscode-descriptionForeground,#888);flex-shrink:0}
+#team-view .tv-running .tv-dot,#team-view .tv-starting .tv-dot{background:var(--vscode-charts-blue,#3b82f6);animation:tvPulse 1.4s ease-in-out infinite}
+#team-view .tv-waiting .tv-dot{background:var(--vscode-editorWarning-foreground,#d4a017)}
+#team-view .tv-finished .tv-dot{background:var(--vscode-charts-green,#22c55e)}
+#team-view .tv-failed .tv-dot,#team-view .tv-stopped .tv-dot{background:var(--vscode-errorForeground,#f14c4c)}
+@keyframes tvPulse{50%{opacity:.35}}
+#team-view .tv-role,#team-view .tv-meta{opacity:.65}
+#team-view .tv-status{padding:0 6px;border-radius:8px;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35))}
+#team-view .tv-waiting .tv-status{border-color:var(--vscode-editorWarning-foreground,#d4a017);color:var(--vscode-editorWarning-foreground,#d4a017)}
+#team-view .tv-actions{margin-left:auto;display:flex;gap:4px}
+#team-view .tv-btn{font:inherit;font-size:10.5px;padding:0 6px;border-radius:4px;cursor:pointer;background:transparent;color:inherit;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35))}
+#team-view .tv-btn:hover{border-color:var(--vscode-focusBorder,#a78bfa)}
+#team-view .tv-task{opacity:.75;margin:2px 0 0 13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#team-view .tv-activity{margin-left:13px;opacity:.85;font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#team-view .tv-activity:empty{display:none}
+#team-view .tv-log{margin:4px 0 2px 13px;padding-left:8px;border-left:2px solid var(--vscode-panel-border,rgba(128,128,128,.35));max-height:220px;overflow-y:auto}
+#team-view .tv-step{font-family:var(--vscode-editor-font-family,monospace);font-size:10.5px;opacity:.85;overflow-wrap:anywhere}
+#team-view .tv-step.failed{color:var(--vscode-errorForeground,#f14c4c)}
+#team-view .tv-said{white-space:pre-wrap;margin:3px 0;overflow-wrap:anywhere}

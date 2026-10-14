@@ -2639,14 +2639,106 @@
   }
   var DIFF_PREVIEW_LINES = 40;
 
-  function showWritePermCard(msgId, permId, filepath, preview, diff, editableContent) {
-    // If the user already clicked "Allow All" this turn, auto-grant silently
-    if (_allowAllWrites) {
+  // ── Team view: the team's workers running in this window ────────────────
+  var teamView = document.getElementById('team-view');
+  var _teamOpen = true, _teamLogsOpen = {}, _teamNames = {};
+  var TEAM_STATUS = { starting: 'starting', running: 'running', waiting: 'needs you', finished: 'finished', failed: 'failed', stopped: 'stopped' };
+  function teamWorkerName(id) { return _teamNames[id] || id; }
+  function fmtTok(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n || 0); }
+  function teamButton(label, title, worker, action) {
+    var b = document.createElement('button');
+    b.className = 'tv-btn'; b.textContent = label; b.title = title;
+    b.addEventListener('click', function (e) { e.stopPropagation(); vscode.postMessage({ type: 'teamWorker', worker: worker, action: action }); });
+    return b;
+  }
+  /** The worker's place in the team view; its questions stay there while the rest is redrawn. */
+  function teamWorkerEl(id) {
+    var el = document.getElementById('tv-' + id);
+    if (el) { return el; }
+    el = document.createElement('div');
+    el.className = 'tv-worker'; el.id = 'tv-' + id;
+    el.innerHTML = '<div class="tv-row"><span class="tv-dot"></span><strong class="tv-name"></strong><span class="tv-role"></span><span class="tv-status"></span><span class="tv-meta"></span><span class="tv-actions"></span></div>' +
+      '<div class="tv-task"></div><div class="tv-activity"></div><div class="tv-q" id="team-q-' + id + '"></div><div class="tv-log" style="display:none"></div>';
+    el.querySelector('.tv-row').addEventListener('click', function () { _teamLogsOpen[id] = !_teamLogsOpen[id]; el.querySelector('.tv-log').style.display = _teamLogsOpen[id] ? 'block' : 'none'; });
+    var list = teamView.querySelector('.tv-list');
+    list.appendChild(el);
+    return el;
+  }
+  function teamQuestions(id) { ensureTeamFrame(); teamView.style.display = 'block'; return teamWorkerEl(id).querySelector('.tv-q'); }
+  function ensureTeamFrame() {
+    if (teamView.querySelector('.tv-list')) { return; }
+    teamView.innerHTML = '<div class="tv-head" title="Show or hide the team"><span class="tv-title">\uD83D\uDC65 Team</span><span class="tv-sum"></span><span class="tv-chev">\u25BE</span></div><div class="tv-list"></div>';
+    teamView.querySelector('.tv-head').addEventListener('click', function () {
+      _teamOpen = !_teamOpen;
+      teamView.querySelector('.tv-list').style.display = _teamOpen ? 'block' : 'none';
+      teamView.querySelector('.tv-chev').textContent = _teamOpen ? '\u25BE' : '\u25B8';
+    });
+  }
+  function renderTeamView(workers) {
+    if (!workers.length) { teamView.style.display = 'none'; teamView.innerHTML = ''; return; }
+    ensureTeamFrame();
+    teamView.style.display = 'block';
+    var counts = {};
+    var keep = {};
+    workers.forEach(function (w) {
+      keep[w.id] = true;
+      _teamNames[w.id] = w.name || w.id;
+      counts[TEAM_STATUS[w.status]] = (counts[TEAM_STATUS[w.status]] || 0) + 1;
+      var el = teamWorkerEl(w.id);
+      el.className = 'tv-worker tv-' + w.status;
+      el.querySelector('.tv-name').textContent = w.name || w.id;
+      el.querySelector('.tv-name').title = 'Worker ' + w.id + ' on branch ' + w.branch;
+      el.querySelector('.tv-role').textContent = w.role;
+      el.querySelector('.tv-status').textContent = TEAM_STATUS[w.status] + (w.merged ? ', merged' : '') + (w.verdict ? ' \u00b7 ' + w.verdict : '');
+      el.querySelector('.tv-status').title = w.note || '';
+      el.querySelector('.tv-meta').textContent = w.steps + ' step' + (w.steps === 1 ? '' : 's') + ' \u00b7 ' + fmtTok(w.tokens) + ' tok' + (w.costUsd ? ' \u00b7 $' + w.costUsd.toFixed(3) : '');
+      el.querySelector('.tv-task').textContent = w.task.replace(/\s+/g, ' ').slice(0, 160);
+      el.querySelector('.tv-activity').textContent = w.activity ? '\u21BB ' + w.activity : (w.note && w.status !== 'finished' ? w.note : '');
+      var actions = el.querySelector('.tv-actions');
+      actions.innerHTML = '';
+      var live = w.status === 'running' || w.status === 'waiting' || w.status === 'starting';
+      actions.appendChild(teamButton('Open', 'Open its worktree in a separate window, to look at its files (it goes on running here)', w.id, 'open'));
+      if (live) { actions.appendChild(teamButton('Stop', 'Stop this worker; its work so far stays on its branch', w.id, 'stop')); }
+      else { actions.appendChild(teamButton('\u2715', 'Remove it from this view (its branch and worktree stay; see Background Tasks)', w.id, 'dismiss')); }
+      var log = el.querySelector('.tv-log');
+      log.innerHTML = '';
+      w.log.forEach(function (entry) {
+        var line = document.createElement('div');
+        if (entry.text) { line.className = 'tv-said'; line.textContent = entry.text; }
+        else if (entry.tool) { line.className = 'tv-step' + (entry.ok === false ? ' failed' : ''); line.textContent = (entry.ok === false ? '\u2717 ' : '\u2713 ') + entry.tool + ' ' + (entry.label || '') + (entry.error ? ' \u2014 ' + entry.error : ''); }
+        else { line.className = 'tv-step failed'; line.textContent = '\u26A0 ' + entry.error; }
+        log.appendChild(line);
+      });
+      if (!w.log.length) { log.textContent = 'Nothing yet.'; }
+    });
+    Array.prototype.forEach.call(teamView.querySelectorAll('.tv-worker'), function (el) { if (!keep[el.id.slice(3)]) { el.remove(); } });
+    teamView.querySelector('.tv-sum').textContent = Object.keys(counts).map(function (k) { return counts[k] + ' ' + k; }).join(' \u00b7 ');
+  }
+  function showTeamCheckpoint(worker, reason) {
+    var wrap = teamQuestions(worker);
+    var card = document.createElement('div');
+    card.className = 'write-perm-card';
+    card.innerHTML = '<div class="write-perm-header"><span class="perm-icon">\u23F8</span><span>Worker <strong>' + esc(teamWorkerName(worker)) + '</strong> paused: ' + esc(reason) + '</span></div>';
+    var actions = document.createElement('div');
+    actions.className = 'write-perm-actions';
+    [['Continue', 'continue', 'allow'], ['Stop here', 'halt', 'deny']].forEach(function (b) {
+      var btn = document.createElement('button');
+      btn.className = 'write-perm-btn ' + b[2]; btn.textContent = b[0];
+      btn.addEventListener('click', function () { card.remove(); vscode.postMessage({ type: 'teamWorker', worker: worker, action: b[1] }); });
+      actions.appendChild(btn);
+    });
+    card.appendChild(actions);
+    wrap.appendChild(card);
+  }
+
+  function showWritePermCard(msgId, permId, filepath, preview, diff, editableContent, worker) {
+    // If the user already clicked "Allow All" this turn, auto-grant silently (never for a team worker: that was said to the orchestrator)
+    if (_allowAllWrites && !worker) {
       vscode.postMessage({ type: 'allowAllWrites', permId: permId });
       return;
     }
 
-    var wrap = document.getElementById('msg-' + msgId);
+    var wrap = worker ? teamQuestions(worker) : document.getElementById('msg-' + msgId);
     if (!wrap) { return; }
 
     var card = document.createElement('div');
@@ -2655,7 +2747,7 @@
 
     var header = document.createElement('div');
     header.className = 'write-perm-header';
-    header.innerHTML = '<span class="perm-icon">\uD83D\uDCDD</span><span>Allow Codico to write <strong>' + esc(filepath) + '</strong>?</span>';
+    header.innerHTML = '<span class="perm-icon">\uD83D\uDCDD</span><span>Allow ' + (worker ? 'worker <strong>' + esc(teamWorkerName(worker)) + '</strong>' : 'Codico') + ' to write <strong>' + esc(filepath) + '</strong>?</span>';
     card.appendChild(header);
 
     // Show diff when available (open by default), fall back to plain preview
@@ -2706,7 +2798,7 @@
     });
 
     actions.appendChild(allowBtn);
-    actions.appendChild(allowAllBtn);
+    if (!worker) { actions.appendChild(allowAllBtn); }
     if (editableContent) {
       var editBtn = document.createElement('button');
       editBtn.className = 'write-perm-btn edit';
@@ -2756,15 +2848,15 @@
     scrollBottom();
   }
 
-  function showTerminalPermCard(msgId, permId, command, note, rules) {
+  function showTerminalPermCard(msgId, permId, command, note, rules, worker) {
     // If the user already clicked "Allow All" this turn, auto-grant silently, unless
-    // the extension asks again (the agent read external content this turn)
-    if (_allowAllTerminal && !note) {
+    // the extension asks again (the agent read external content this turn) or a team worker asks
+    if (_allowAllTerminal && !note && !worker) {
       vscode.postMessage({ type: 'allowAllTerminal', permId: permId });
       return;
     }
 
-    var wrap = document.getElementById('msg-' + msgId);
+    var wrap = worker ? teamQuestions(worker) : document.getElementById('msg-' + msgId);
     if (!wrap) { return; }
 
     var card = document.createElement('div');
@@ -2773,7 +2865,7 @@
 
     var header = document.createElement('div');
     header.className = 'write-perm-header';
-    header.innerHTML = '<span class="perm-icon">\u26A1</span><span>Allow Codico to run a terminal command?</span>';
+    header.innerHTML = '<span class="perm-icon">\u26A1</span><span>Allow ' + (worker ? 'worker <strong>' + esc(teamWorkerName(worker)) + '</strong>' : 'Codico') + ' to run a terminal command?</span>';
     card.appendChild(header);
 
     var pre = document.createElement('div');
@@ -2822,7 +2914,7 @@
     });
 
     actions.appendChild(allowBtn);
-    actions.appendChild(allowAllBtn);
+    if (!worker) { actions.appendChild(allowAllBtn); }
     actions.appendChild(denyBtn);
     card.appendChild(actions);
     // Always allow: this command, or for a known tool the command with any arguments
@@ -3784,8 +3876,8 @@
         endMsg(data.id);
         if (_stopPressed) { _stopPressed = false; _showLeftRunning(data.id); }
         break;
-      case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent); break;
-      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note, data.rules); break;
+      case 'writePermissionRequest': showWritePermCard(data.id, data.permId, data.filepath, data.preview, data.diff, data.editableContent, data.worker); break;
+      case 'terminalPermissionRequest': showTerminalPermCard(data.id, data.permId, data.command, data.note, data.rules, data.worker); break;
       case 'fileWriteResult': showFileResult(data.id, data.filepath, data.granted, data.error, data.diff); break;
       case 'toolStart':      showToolPending(data.id, data.tool, data.label); break;
       case 'toolResult':      showToolResult(data.id, data.tool, data.label, data.success, data.error, data.diff); break;
@@ -3922,6 +4014,7 @@
         }
         break;
       }
+      case 'teamState': renderTeamView(data.workers || []); break;
       case 'backgroundTasks':
         bgTasksBtn.style.display = data.text ? 'inline-block' : 'none';
         bgTasksBtn.textContent = '\u29C9 ' + data.text;
@@ -3943,6 +4036,7 @@
         }
         break;
       case 'checkpoint': {
+        if (data.worker) { showTeamCheckpoint(data.worker, data.reason || ('It has taken ' + data.steps + ' steps.')); break; }
         var cpWrap = document.getElementById('msg-' + data.id);
         if (!cpWrap) { break; }
         var cpEl = document.createElement('div');

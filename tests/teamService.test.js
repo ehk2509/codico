@@ -36,11 +36,11 @@ function setup(settings = { maxWorkers: 2, permissions: 'edits' }) {
       const made = await createWorktree(repo, worktree, branch, options.from);
       if ('error' in made) { return made; }
       const task = { id, prompt: options.prompt, repoRoot: repo, worktree, branch, baseCommit: made.baseCommit, permissions: options.permissions, status: 'starting', createdAt: clock, updatedAt: clock,
-        role: options.role, team: options.team, ...(options.basedOn ? { basedOn: options.basedOn } : {}) };
+        role: options.role, name: options.name, team: options.team, ...(options.basedOn ? { basedOn: options.basedOn } : {}) };
       await store.save(task);
       return task;
     },
-    openWindow: async task => { opened.push(task.id); },
+    launch: async task => { opened.push(task.id); },
     settings: () => settings,
     sleep: async ms => { clock += ms; },
     now: () => clock,
@@ -88,6 +88,20 @@ test('waiting for workers repeats without being taken for a loop; starting one r
   assert.equal(guard.check(start).loop, true);
 });
 
+test('workers are named after their part, refer to by name, and a name used twice gets a number', async () => {
+  const t = setup({ maxWorkers: 3, permissions: 'edits' });
+  assert.match(await t.run({ action: 'start', name: 'Backend API', text: 'Build the API' }), /Started worker backend-api \([0-9a-f]{8}\) \(developer\)/);
+  await t.run({ action: 'start', name: 'backend-api', text: 'More API' });
+  const all = await t.only();
+  assert.deepEqual(all.map(task => task.name).sort(), ['backend-api', 'backend-api-2']);
+  const first = all.find(task => task.name === 'backend-api');
+  await t.finish(first, { 'api.js': 'api\n' });
+  assert.match(await t.run({ action: 'changes', worker: 'backend-api' }), /api\.js/);
+  assert.match(await t.run({ action: 'changes', worker: 'Backend-API-2' }), /has not changed any file/);
+  assert.match(await t.run({ action: 'wait', workers: ['backend-api'] }), /Worker backend-api \([0-9a-f]{8}\), developer: finished/);
+  assert.deepEqual(parseTeamFence('action: start\nname: Front End!\ntext:\nx'), { type: 'team', action: 'start', name: 'front-end', text: 'x' });
+});
+
 test('a worker is found by its id or the start of it, never by an ambiguous or too short name', () => {
   const tasks = [{ id: 'abcd1111aaaa' }, { id: 'abcd2222bbbb' }];
   assert.equal(findWorker(tasks, 'abcd1111'), tasks[0]);
@@ -131,7 +145,7 @@ test('wait: returns each worker\'s status, report and changes once all have stop
   t.store.get = async id => { if (++polls === 3) { await t.finish(a, { 'one.js': 'one\n' }, 'Added one.js'); await t.finish(b, { 'two.js': 'two\n' }, 'Added two.js, tests pass'); } return realGet(id); };
   const out = await t.run({ action: 'wait' });
   assert.match(out, /All of them have stopped/);
-  assert.match(out, new RegExp(`Worker ${workerId(a)} \\(developer\\): finished[\\s\\S]*one\\.js[\\s\\S]*Report:\\nAdded one\\.js`));
+  assert.match(out, new RegExp(`Worker ${workerId(a)}, developer: finished[\\s\\S]*one\\.js[\\s\\S]*Report:\\nAdded one\\.js`));
   assert.match(out, /Added two\.js, tests pass/);
 });
 

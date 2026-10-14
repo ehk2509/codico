@@ -52,6 +52,27 @@ export const REPLAY_DIFF_LIMIT = 20_000;
 
 // ─── Message type contracts ──────────────────────────────────────────────────
 
+/** A team worker as the team view shows it. */
+export interface TeamWorkerView {
+    id: string;
+    name?: string;
+    role: string;
+    task: string;
+    branch: string;
+    status: 'starting' | 'running' | 'waiting' | 'finished' | 'failed' | 'stopped';
+    note?: string;
+    merged?: boolean;
+    steps: number;
+    tokens: number;
+    costUsd?: number;
+    /** What it is doing now. */
+    activity?: string;
+    /** Its latest steps and words, oldest first. */
+    log: Array<{ tool?: string; label?: string; ok?: boolean; error?: string; text?: string }>;
+    /** Its change report's verdict, after a reply that changed files. */
+    verdict?: string;
+}
+
 export type WebviewMessage =
     | { type: 'sendMessage'; text: string; contentParts?: Array<{ type: string; [key: string]: unknown }>; injectActiveDiagnostics?: boolean }
     | { type: 'clearChat' }
@@ -91,6 +112,8 @@ export type WebviewMessage =
     /** `/background <task>`: run the task in a worktree and a window of its own. */
     | { type: 'startBackgroundTask'; text: string }
     | { type: 'openBackgroundTasks' }
+    /** A button on a team worker in the panel's team view. */
+    | { type: 'teamWorker'; worker: string; action: 'stop' | 'open' | 'dismiss' | 'continue' | 'halt' }
     | { type: 'threadContextMenu'; id: string }
     | { type: 'searchThreads'; query: string }
     | { type: 'resumeSession' }
@@ -162,18 +185,20 @@ export type ExtensionMessage =
     | { type: 'queuedDelivered' }
     /** Background tasks started from this window, for the panel's status row; empty text when there are none. */
     | { type: 'backgroundTasks'; text: string; needsUser: boolean }
+    /** The team's workers running in this window, for the team view. */
+    | { type: 'teamState'; workers: TeamWorkerView[] }
     | { type: 'followUps'; id: string; suggestions: string[] }
     | { type: 'diagnosticsChanged'; errorCount: number; warningCount: number }
     | { type: 'threadLoaded'; id: string; name: string; displayMessages: DisplayMessage[]; /** After a rewind: the removed message, put back in the input box. */ draftText?: string; /** A message about to be resent (edit, regenerate): shown as the newest user message. */ pendingUserText?: string }
     | { type: 'threadList'; threads: Array<{ id: string; name: string; updatedAt: number; preview: string; messageCount: number; active: boolean }> }
     | { type: 'threadContextMenuRequest'; id: string; name: string }
     | { type: 'threadSearchResults'; query: string; results: Array<{ threadId: string; threadName: string; snippets: Array<{ role: string; snippet: string }> }> }
-    | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string }
-    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Rules the user can choose to always allow (the command itself, and for known tools with any arguments). */ rules?: string[]; /** Set when the request must be shown even under Allow All. */ note?: string }
+    | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string; /** Asked by a team worker: shown in its place in the team view. */ worker?: string }
+    | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Rules the user can choose to always allow (the command itself, and for known tools with any arguments). */ rules?: string[]; /** Set when the request must be shown even under Allow All. */ note?: string ; worker?: string }
     | { type: 'terminalChunk'; id: string; text: string }
     | { type: 'stepProgress'; id: string; step: number }
     | { type: 'activity'; text: string | null }
-    | { type: 'checkpoint'; id: string; steps: number; /** Overrides the default "N steps so far" prompt. */ reason?: string }
+    | { type: 'checkpoint'; id: string; steps: number; /** Overrides the default "N steps so far" prompt. */ reason?: string; worker?: string }
     | { type: 'backgroundProcesses'; processes: { command: string; startedAt: number }[] }
     | { type: 'autoCommitDone'; message: string }
     | { type: 'autoCommitError'; message: string }

@@ -52,6 +52,8 @@ export interface TurnHost {
     readonly readOnly: boolean;
     /** This turn leads an agent team: the `team` tool is offered. */
     readonly team: boolean;
+    /** Only these tools are offered (a team worker's); all of them when absent. */
+    readonly allowedTools?: ReadonlySet<string>;
     steer: string;
     subagentHost: SubagentHost | undefined;
     readonly thinkingEffort: 'high' | 'medium' | 'low';
@@ -108,7 +110,7 @@ export class AgentTurn {
         let blockedOnlyIterations = 0;
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
         const nativeTools = !isOllama && !isCli && nativeToolCalling
-            ? getNativeToolDefinitions(this._host.readOnly, this._host.team)
+            ? getNativeToolDefinitions(this._host.readOnly, this._host.team).filter(tool => !this._host.allowedTools || this._host.allowedTools.has(tool.name))
             : [];
 
         // Circuit breaker for a model repeating the same call while nothing changes
