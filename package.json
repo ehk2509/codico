@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -487,7 +487,11 @@
         },
         "codico.automationPermissions": {
           "type": "string",
-          "enum": ["edits", "all", "ask"],
+          "enum": [
+            "edits",
+            "all",
+            "ask"
+          ],
           "enumDescriptions": [
             "Jobs edit files in their worktree freely, and ask in the Agents view before each command.",
             "Jobs edit and run commands without asking, but only inside the command sandbox (codico.commandSandbox \"required\"); without it, commands are still asked, since jobs work from text other people wrote.",
@@ -508,7 +512,10 @@
         },
         "codico.backgroundTasksRunIn": {
           "type": "string",
-          "enum": ["panel", "windows"],
+          "enum": [
+            "panel",
+            "windows"
+          ],
           "enumDescriptions": [
             "Background tasks (/background) and team workers (/team) run in this window, next to your conversation, each in its own git worktree. You follow them, answer and approve in the Agents view of the Codico panel.",
             "Each one runs in a VS Code window of its own. Costs more memory; useful to take one over by hand."
@@ -531,7 +538,11 @@
         },
         "codico.teamWorkerPermissions": {
           "type": "string",
-          "enum": ["edits", "all", "ask"],
+          "enum": [
+            "edits",
+            "all",
+            "ask"
+          ],
           "enumDescriptions": [
             "Workers edit files in their own worktree freely, and ask in their window before each terminal command.",
             "Workers edit files and run commands without asking. Commands are not confined to the worktree: they run with your user's rights.",

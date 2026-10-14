@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.5.0 - 2026-10-15
 
 ### Added
 - Automations (**Codico: Automations**, off until turned on for a repository). An issue labelled `codico` or a new CI failure on the default branch starts a job: an agent in its own worktree, started from GitHub's branch, run in this window. Its work becomes a draft pull request (after asking, unless publishing is set to go on by itself). Codico then follows the pull request: a CI failure, requested changes or a new review thread resumes the same agent with its conversation (kept on disk, so it survives a reload) and the failing log or the comments, and the fix is pushed to the same pull request, until it is merged or closed. Outside text is quoted as such; a job's commands run unattended only in the command sandbox. Settings: `codico.automationPollSeconds`, `codico.automationPermissions`.
@@ -17,7 +17,6 @@ All notable changes to Codico will be documented in this file.
 - The change report separates acceptance from checks: its headline is *Accepted*, *Partly accepted*, *Disputed* or *Not accepted* when criteria were stated, and *Checks pass* (formerly "Verified") otherwise, with a note that passing checks do not show that the request is met.
 - Background tasks (`/background`) run in this window by default, next to your conversation, in their own git worktree as before, and are followed and answered in the Agents view. A task can be answered or given more to do after it has finished. Set `codico.backgroundTasksRunIn` to `windows` for the previous behaviour (a VS Code window per task).
 
-### Changed
 - Internal: the main agent file (`agentProvider.ts`) is split by responsibility, from 2,895 lines to 1,429. The agent loop now lives in `agentTurn.ts` and reaches the panel only through a narrow interface; the workspace tools, approvals, thread list, compaction, panel commands and turn setup each have a module of their own. Each file has its own size budget in the architecture test, in place of one limit for the main file. No behaviour changes.
 
 ## 0.4.1 - 2026-10-13
