@@ -921,7 +921,14 @@ Or click the Codico icon in the Activity Bar.
 codico/
 ├── src/
 │   ├── extension.ts                 # Activation, command registration
-│   ├── agentProvider.ts             # Agent orchestration loop, workspace tools, thread/session coordination
+│   ├── agentProvider.ts             # The panel's view provider: messages from the panel, a turn's setup and its end
+│   ├── agentTurn.ts                 # The agent loop: model requests, tool calls, recovery, stop rules (no editor UI)
+│   ├── workspaceTools.ts            # write_file, edit_file, search_files, find_files, run_terminal, background processes
+│   ├── approvals.ts                 # Pending approvals: file changes, commands, token-budget checkpoints
+│   ├── threads.ts                   # Thread list: create, open, rename, delete, duplicate, saved metadata
+│   ├── compaction.ts                # Summarising the earlier part of a long conversation
+│   ├── panelCommands.ts             # Context attachments, review, run-and-fix tests, auto-commit
+│   ├── turnSetup.ts                 # The model and its key, the system-prompt prefix
 │   ├── agentPrompts.ts              # Plan-mode and code-review prompts
 │   ├── agentPhasePrompt.ts          # Phase guidance (act, verify), sent as conversation notes
 │   ├── explorationController.ts     # Exploration/verification phases of a task

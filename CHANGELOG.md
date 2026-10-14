@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Changed
+- Internal: the main agent file (`agentProvider.ts`) is split by responsibility, from 2,895 lines to 1,429. The agent loop now lives in `agentTurn.ts` and reaches the panel only through a narrow interface; the workspace tools, approvals, thread list, compaction, panel commands and turn setup each have a module of their own. Each file has its own size budget in the architecture test, in place of one limit for the main file. No behaviour changes.
+
 ## 0.4.1 - 2026-10-13
 
 ### Security
