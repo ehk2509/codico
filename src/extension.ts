@@ -5,7 +5,7 @@ import { clearCheckpoints, undoLastRewind } from './rewind';
 import { WEB_SEARCH_KEY } from './externalToolRuntime';
 import { BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
-import { BackgroundTaskManager } from './backgroundTaskManager';
+import { BackgroundTaskManager, runInPanel } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
 import { TeamWorkers } from './teamWorkers';
@@ -153,11 +153,13 @@ export function activate(context: vscode.ExtensionContext): void {
         message => provider.postToPanel(message), task => backgroundTasks.openWindow(task));
     context.subscriptions.push(teamWorkers);
     provider.workers = teamWorkers;
-    const inWindows = () => vscode.workspace.getConfiguration('codico').get<string>('teamWorkersRunIn', 'panel') === 'windows';
+    const inWindows = () => !runInPanel();
+    // /background tasks run here too, unless the setting says each gets a window
+    backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };
     provider.team = new TeamService({
         store: backgroundStore, createTask: options => backgroundTasks.createTask(options),
         launch: async task => { if (inWindows()) { await backgroundTasks.openWindow(task); } else { teamWorkers.launch(task); } },
-        where: () => inWindows() ? 'in a window of its own' : 'in this window (the user follows it in the team view of the panel)',
+        where: () => inWindows() ? 'in a window of its own' : 'in this window (the user follows it in the Agents view of the panel)',
         settings: () => {
             const config = vscode.workspace.getConfiguration('codico');
             const permissions = config.get<string>('teamWorkerPermissions', 'edits');
@@ -170,6 +172,11 @@ export function activate(context: vscode.ExtensionContext): void {
         context.subscriptions.push(vscode.commands.registerCommand('codico.__evalBackground', async (task?: BackgroundTask) => {
             if (task) { await backgroundStore.save(task); return runTaskOfThisWindow(backgroundStore, provider); }
             return backgroundStore.all();
+        }), vscode.commands.registerCommand('codico.__evalStartBackground', async (prompt: string) => {
+            // A /background task without its questions (what it may do: edit freely, ask before commands)
+            const task = await backgroundTasks.createTask({ prompt, permissions: 'edits' });
+            if (!('error' in task)) { backgroundTasks.runHere?.launch(task); }
+            return task;
         }));
     }
 

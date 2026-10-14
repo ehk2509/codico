@@ -911,6 +911,21 @@ async function run() {
     const merged = /\[team merge\] Merged worker [\s\S]*Acceptance gate/.test(said) && (read('live/team-result.txt') || '').trim() === 'TEAM-WORK';
     const checked = /TEAM-WORK/.test((reqs[4] || {}).lastUser || '');
     const listed = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => worker && t.id === worker.id) || {};
+    // A /background task runs in this window too: in its own worktree, listed with the team, and it can be answered
+    const bgBefore = (await getLog()).length; const bgT0 = Date.now();
+    const bg = await vscode.commands.executeCommand('codico.__evalStartBackground', '[SCENARIO:bg_panel] write the panel file');
+    let bgDone = {};
+    for (let i = 0; i < 150 && bgDone.status !== 'finished'; i++) { await new Promise(r => setTimeout(r, 200)); bgDone = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === bg.id) || {}; }
+    const bgHere = bgDone.status === 'finished' && /Wrote live\/bg-panel\.txt/.test(bgDone.report || '') && !bgDone.team && read('live/bg-panel.txt') === null
+      && (() => { try { return fs.readFileSync(path.join(bg.worktree, 'live/bg-panel.txt'), 'utf8').trim() === 'BG-PANEL'; } catch { return false; } })();
+    await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'teamWorker', worker: bg.id.slice(0, 8), action: 'reply', text: '[SCENARIO:bg_panel_reply] thanks' });
+    let bgAnswered = {};
+    for (let i = 0; i < 100 && !/got the reply/.test(bgAnswered.report || ''); i++) { await new Promise(r => setTimeout(r, 200)); bgAnswered = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === bg.id) || {}; }
+    const bgReplied = /got the reply/.test(bgAnswered.report || '') && bgAnswered.status === 'finished'
+      && /\[Message from the user\]\n\[SCENARIO:bg_panel_reply\]/.test(((await getLog()).slice(bgBefore).find(e => e.scenario === 'bg_panel_reply') || {}).lastUser || '');
+    results.push({ name: 'background_in_window', ms: Date.now() - bgT0, requests: (await getLog()).length - bgBefore, ok: bgHere && bgReplied,
+      why: `a /background task ran in this window, in its own worktree, and finished with its report: ${bgHere} (${bgDone.status}); the user's reply reached it and its answer became the report: ${bgReplied}` });
+    try { git('worktree', 'remove', '--force', bg.worktree); } catch { /* reported by the checks */ }
     try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }
     fs.rmSync(path.join(ws, '.git'), { recursive: true, force: true });
     await set('backgroundTasksDirectory', undefined);

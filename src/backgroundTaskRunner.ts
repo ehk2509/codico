@@ -128,6 +128,7 @@ export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, 
     } finally {
         // A team worker keeps beating, listening and reading its inbox after the task: the orchestrator may send
         // follow-ups. All of it ends with its window
-        if (!task.team || end?.aborted) { close(); }
+        // A task run in the window that started it (a team's worker, or a background task there) also keeps listening: it can be answered later
+        if ((!task.team && !end) || end?.aborted) { close(); }
     }
 }

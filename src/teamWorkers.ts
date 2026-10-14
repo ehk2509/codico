@@ -2,11 +2,11 @@ import * as vscode from 'vscode';
 import { runTask } from './backgroundTaskRunner';
 import { BackgroundTask, lostItsWindow } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
-import { ExtensionMessage, TeamWorkerView, WebviewMessage } from './chatProtocol';
+import { ExtensionMessage, TeamWorkerAction, TeamWorkerView, WebviewMessage } from './chatProtocol';
 import { workerId } from './teamTools';
 import { WorkerAgent, WorkerDeps } from './workerAgent';
 
-/** Steps and words kept per worker for the team view. */
+/** Steps and words kept per worker for the Agents view. */
 export const WORKER_LOG_ENTRIES = 30;
 const VIEW_THROTTLE_MS = 300;
 
@@ -28,7 +28,7 @@ const withoutToolBlocks = (text: string) => text.replace(/(`{3,})[a-z_]+\n[\s\S]
 /**
  * A team's workers running in this window, next to the orchestrator: each is a WorkerAgent in
  * its own worktree, driven like a background task (so waiting, messages and merging work the
- * same), and shown in the panel's team view with its steps, tokens and questions.
+ * same), and shown in the panel's Agents view with its steps, tokens and questions. Background tasks started with /background run here the same way.
  */
 export class TeamWorkers implements vscode.Disposable {
     private readonly _running = new Map<string, Running>();
@@ -37,7 +37,7 @@ export class TeamWorkers implements vscode.Disposable {
     constructor(
         private readonly _store: BackgroundTaskStore,
         private readonly _deps: Omit<WorkerDeps, 'post'>,
-        /** To the panel: the team view, and the questions workers ask. */
+        /** To the panel: the Agents view, and the questions workers ask. */
         private readonly _post: (message: ExtensionMessage) => void,
         private readonly _openWindow: (task: BackgroundTask) => Promise<void>,
     ) {}
@@ -45,7 +45,7 @@ export class TeamWorkers implements vscode.Disposable {
     /** Starts a worker for a task made by the team. */
     launch(task: BackgroundTask): void {
         const id = task.id;
-        const view: TeamWorkerView = { id: workerId(task), name: task.name, role: task.role ?? 'developer', task: task.prompt, branch: task.branch, status: 'starting', steps: 0, tokens: 0, log: [] };
+        const view: TeamWorkerView = { id: workerId(task), name: task.name, role: task.role ?? (task.team ? 'developer' : 'background task'), task: task.prompt, branch: task.branch, status: 'starting', steps: 0, tokens: 0, log: [] };
         const agent = new WorkerAgent(task, { ...this._deps, post: message => this._event(id, message) });
         const running: Running = { task, agent, end: new AbortController(), view, text: '', tokensBefore: 0, stopped: false };
         this._running.set(id, running);
@@ -53,7 +53,7 @@ export class TeamWorkers implements vscode.Disposable {
         void runTask(this._store, task, agent, running.end.signal).then(() => this._changed(), () => this._changed());
     }
 
-    /** What a worker said or did: kept for the team view, and its questions passed on to the panel. */
+    /** What a worker said or did: kept for the Agents view, and its questions passed on to the panel. */
     private _event(id: string, message: ExtensionMessage): void {
         const running = this._running.get(id);
         if (!running) { return; }
@@ -64,6 +64,8 @@ export class TeamWorkers implements vscode.Disposable {
             case 'toolStart': view.steps++; view.activity = `${message.tool} ${message.label}`.trim(); break;
             case 'toolResult': view.activity = undefined; pushLog(view, { tool: message.tool, label: message.label, ok: message.success, error: message.error }); break;
             case 'fileWriteResult': view.activity = undefined; pushLog(view, { tool: 'write_file', label: message.filepath, ok: message.granted, error: message.error }); break;
+            // Processes its commands left running: shown on its row, ended with it
+            case 'backgroundProcesses': view.processes = message.processes.length; break;
             case 'tokenUsage': if (!message.subagent || message.taskTokens !== undefined) { view.tokens = running.tokensBefore + (message.taskTokens ?? message.totalTokens); view.costUsd = message.taskCostUsd ?? view.costUsd; } break;
             case 'error': pushLog(view, { error: message.message }); break;
             case 'endMessage': {
@@ -73,7 +75,7 @@ export class TeamWorkers implements vscode.Disposable {
                 view.verdict = running.agent.passport?.verdict;
                 break;
             }
-            // Its questions are asked in the panel, in its place in the team view
+            // Its questions are asked in the panel, in its place in the Agents view
             case 'writePermissionRequest': case 'terminalPermissionRequest': case 'checkpoint':
                 view.status = 'waiting';
                 this._post({ ...message, worker: id });
@@ -98,7 +100,7 @@ export class TeamWorkers implements vscode.Disposable {
     }
 
     /**
-     * The panel's answers to the workers' questions, and the team view's buttons. True when the
+     * The panel's answers to the workers' questions, and the Agents view's buttons. True when the
      * message was for a worker; anything else is the orchestrator's.
      */
     async route(message: WebviewMessage): Promise<boolean> {
@@ -113,7 +115,7 @@ export class TeamWorkers implements vscode.Disposable {
                 await this._deps.approvedCommands().answered(message.permId, message.granted ? message.remember : undefined);
                 return this.answerCommand(message.permId, message.granted);
             }
-            case 'teamWorker': await this.act(message.worker, message.action); return true;
+            case 'teamWorker': await this.act(message.worker, message.action, message.text); return true;
             default: return false;
         }
     }
@@ -122,8 +124,16 @@ export class TeamWorkers implements vscode.Disposable {
 
     private _resume(running: Running): void { if (running.view.status === 'waiting') { running.view.status = 'running'; this._changed(); } }
 
-    /** A button on a worker in the team view. */
-    async act(worker: string, action: 'stop' | 'open' | 'dismiss' | 'continue' | 'halt'): Promise<void> {
+    /** A button on a worker in the Agents view. */
+    has(id: string): boolean { return this._running.has(id); }
+
+    /** Brings the Agents view forward in the panel. */
+    async show(): Promise<void> {
+        await vscode.commands.executeCommand('workbench.view.extension.codico-container');
+        this._post({ type: 'teamReveal' });
+    }
+
+    async act(worker: string, action: TeamWorkerAction, given?: string): Promise<void> {
         const entry = [...this._running.entries()].find(([, running]) => running.view.id === worker);
         if (!entry) { return; }
         const [id, running] = entry;
@@ -131,6 +141,15 @@ export class TeamWorkers implements vscode.Disposable {
         // For a look at its files: the worker goes on here, and that window does not run it again
         if (action === 'open') { await this._openWindow(running.task); return; }
         if (action === 'stop') { await this.stop(id); return; }
+        if (action === 'reply') {
+            const name = running.task.name ?? running.task.prompt.replace(/\s+/g, ' ').slice(0, 50);
+            const text = (given ?? await vscode.window.showInputBox({ title: `Message to ${name}`, prompt: running.agent.busy ? 'It is working: it reads this at its next step.' : 'An answer to its question, or what to do next.', ignoreFocusOut: true }))?.trim();
+            if (!text) { return; }
+            await running.agent.teamMessage(`[Message from the user]\n${text}`);
+            if (!running.agent.busy) { await this._store.update(id, { status: 'running', note: undefined, heartbeat: Date.now() }); }
+            this._changed();
+            return;
+        }
         if (action === 'dismiss' && !running.agent.busy) { this._end(running); this._running.delete(id); this._changed(); }
     }
 
@@ -157,7 +176,7 @@ export class TeamWorkers implements vscode.Disposable {
         this._timer = setTimeout(() => { this._timer = undefined; void this.postState(); }, VIEW_THROTTLE_MS);
     }
 
-    /** The team view now: the workers' own state, with what their task files say about them. */
+    /** The Agents view now: the workers' own state, with what their task files say about them. */
     async postState(): Promise<void> {
         const now = Date.now();
         const workers: TeamWorkerView[] = [];

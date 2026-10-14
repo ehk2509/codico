@@ -112,6 +112,9 @@ const SCRIPTS = (port) => ({
   // A team's worker: its first report, then its answer to the orchestrator's message
   team_worker: Array(6).fill('Tests pass: 3 of 3.'),   // a text-only reply to a tester's brief is nudged to act a few times
   team_followup: ['Checked the empty input too: it passes.'],
+  // A /background task run in this window, then answered by the user
+  bg_panel: [tool('write_file', 'filepath: live/bg-panel.txt\ncontent:\nBG-PANEL'), 'Wrote live/bg-panel.txt.'],
+  bg_panel_reply: ['The panel task got the reply.'],
   // The worker: a real agent in the same window, working in its own worktree
   // It also tries to leave its worktree, and to read a file the workspace excludes: all refused
   team_dev: ['Looking around first.\n\n' + tool('write_file', 'filepath: ../../ws/live/team-escape.txt\ncontent:\nESCAPED') + tool('write_file', `filepath: ${path.join(process.env.LIVE_WORK_DIR || '', 'ws', 'live', 'team-escape-abs.txt')}\ncontent:\nESCAPED`) +

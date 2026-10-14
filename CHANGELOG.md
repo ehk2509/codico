@@ -6,8 +6,11 @@ All notable changes to Codico will be documented in this file.
 
 ### Added
 - Agent teams, in one window. `/team <goal>` makes the agent in the panel the orchestrator of a team: it plans, starts named developers and testers (`backend`, `frontend`…) that work in parallel, each an agent with its own conversation in a git worktree and branch of its own, waits for their reports, has a read-only reviewer check their patches, sends them corrections or answers, and merges their branches into the workspace after your approval. A merge that conflicts is undone. After merging, it runs the build and tests as an acceptance gate. A tester starts from a developer's branch.
-- The team view in the panel: each worker's status, steps, tokens, current step, change-report verdict and log, with Stop and Open (its worktree in a separate window). A worker's approval cards appear in its place there, named after it, and "Allow all" given to the orchestrator never covers a worker.
-- New settings: `codico.teamMaxWorkers` (default 3), `codico.teamWorkerPermissions` (default: edit freely, ask before commands) and `codico.teamWorkersRunIn` (`panel`, or `windows` to run each worker in a VS Code window of its own).
+- The Agents view in the panel: each worker's or background task's status, steps, tokens, current step, change-report verdict, processes left running and log, with Reply, Stop and Open (its worktree in a separate window). Their approval cards appear in their place there, named after them, and "Allow all" given to the orchestrator never covers them.
+- New settings: `codico.teamMaxWorkers` (default 3), `codico.teamWorkerPermissions` (default: edit freely, ask before commands) and `codico.backgroundTasksRunIn`.
+
+### Changed
+- Background tasks (`/background`) run in this window by default, next to your conversation, in their own git worktree as before, and are followed and answered in the Agents view. A task can be answered or given more to do after it has finished. Set `codico.backgroundTasksRunIn` to `windows` for the previous behaviour (a VS Code window per task).
 
 ### Changed
 - Internal: the main agent file (`agentProvider.ts`) is split by responsibility, from 2,895 lines to 1,429. The agent loop now lives in `agentTurn.ts` and reaches the panel only through a narrow interface; the workspace tools, approvals, thread list, compaction, panel commands and turn setup each have a module of their own. Each file has its own size budget in the architecture test, in place of one limit for the main file. No behaviour changes.

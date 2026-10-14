@@ -940,12 +940,13 @@ test('the team view: each worker with its status, steps, tokens and log; its que
   // The user allows all commands for the orchestrator's task
   await send({ type: 'startMessage', id: 'm1' }, { type: 'terminalPermissionRequest', id: 'm1', permId: 'p0', command: 'ls', rules: [] });
   await page.locator('#perm-p0 .allow-all').click();
-  await send({ type: 'teamState', workers: [worker({ activity: 'edit_file src/health.ts', log: [{ tool: 'read_file', label: 'src/app.ts', ok: true }, { text: 'Adding the route.' }] }),
+  await send({ type: 'teamState', workers: [worker({ activity: 'edit_file src/health.ts', processes: 1, log: [{ tool: 'read_file', label: 'src/app.ts', ok: true }, { text: 'Adding the route.' }] }),
     worker({ id: 'bbbb2222', name: 'frontend', status: 'finished', steps: 9, tokens: 2_300_000, verdict: 'verified', log: [] })] });
   assert.equal(await view.isVisible(), true);
   assert.match(await view.locator('.tv-sum').textContent(), /1 running · 1 finished/);
   const backend = page.locator('#tv-aaaa1111');
-  assert.match(await backend.locator('.tv-row').textContent(), /backend\s*developer\s*running\s*3 steps · 12\.5k tok/);
+  assert.match(await backend.locator('.tv-row').textContent(), /backend\s*developer\s*running\s*3 steps · 12\.5k tok · 1 process running/);
+  assert.match(await view.locator('.tv-title').textContent(), /Agents/);
   assert.match(await backend.locator('.tv-activity').textContent(), /edit_file src\/health\.ts/);
   assert.match(await page.locator('#tv-bbbb2222 .tv-row').textContent(), /frontend.*finished · verified.*2\.3M tok/);
   // Its log opens on a click on its row
@@ -971,8 +972,15 @@ test('the team view: each worker with its status, steps, tokens and log; its que
   // Buttons: stop a running worker, open its folder, remove a finished one from the view
   await backend.locator('.tv-btn', { hasText: 'Stop' }).click();
   await backend.locator('.tv-btn', { hasText: 'Open' }).click();
+  await backend.locator('.tv-btn', { hasText: 'Reply' }).click();
   await page.locator('#tv-bbbb2222 .tv-btn', { hasText: '✕' }).click();
-  assert.deepEqual(await posted('teamWorker'), [{ type: 'teamWorker', worker: 'aaaa1111', action: 'stop' }, { type: 'teamWorker', worker: 'aaaa1111', action: 'open' }, { type: 'teamWorker', worker: 'bbbb2222', action: 'dismiss' }]);
+  assert.deepEqual(await posted('teamWorker'), [{ type: 'teamWorker', worker: 'aaaa1111', action: 'stop' }, { type: 'teamWorker', worker: 'aaaa1111', action: 'open' },
+    { type: 'teamWorker', worker: 'aaaa1111', action: 'reply' }, { type: 'teamWorker', worker: 'bbbb2222', action: 'dismiss' }]);
+  // A background task started with /background is listed the same way, and can be answered once finished
+  await send({ type: 'teamState', workers: [worker({ id: 'cccc3333', name: undefined, role: 'background task', task: 'Add a health check', status: 'finished' })] });
+  assert.match(await page.locator('#tv-cccc3333 .tv-row').textContent(), /cccc3333\s*background task\s*finished/);
+  assert.equal(await page.locator('#tv-cccc3333 .tv-btn', { hasText: 'Reply' }).count(), 1);
+  await send({ type: 'teamState', workers: [worker({ status: 'waiting' })] });
   // A paused worker asks to go on, in its place
   await send({ type: 'checkpoint', id: 'w1', steps: 40, reason: 'It used 200k tokens.', worker: 'aaaa1111' });
   await backend.locator('.write-perm-btn', { hasText: 'Continue' }).click();

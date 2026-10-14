@@ -9,6 +9,11 @@ import { BackgroundTaskStore } from './backgroundTaskStore';
 const POLL_MS = 4_000;
 const short = (text: string, max = 70) => { const one = text.replace(/\s+/g, ' ').trim(); return one.length > max ? one.slice(0, max) + '…' : one; };
 
+/** Background tasks and team workers run in this window (the default), or each in a window of its own. */
+export function runInPanel(): boolean {
+    return vscode.workspace.getConfiguration('codico').get<string>('backgroundTasksRunIn', 'panel') !== 'windows';
+}
+
 /** Where task worktrees are made: one folder for all of them, so that it can be trusted once. */
 export function worktreesRoot(): string {
     const configured = vscode.workspace.getConfiguration('codico').get<string>('backgroundTasksDirectory', '').trim();
@@ -28,6 +33,12 @@ export class BackgroundTaskManager implements vscode.Disposable {
     private readonly _toldToTrust = new Set<string>();
 
     /** @param _openPullRequest publishes a task's branch as a pull request; absent, the list does not offer it */
+    /**
+     * Runs tasks in this window, next to the user's own conversation (codico.backgroundTasksRunIn
+     * "panel"), instead of in a window of their own. `has` says whether a task runs here; `show`
+     * brings its place in the panel's Agents view forward.
+     */
+    public runHere?: { launch(task: BackgroundTask): void; has(id: string): boolean; show(task: BackgroundTask): Promise<void> };
     /** Told on every refresh what to show in the Codico panel: the summary, or '' when there is no task. */
     public onSummary?: (text: string, needsUser: boolean) => void;
 
@@ -83,10 +94,11 @@ export class BackgroundTaskManager implements vscode.Disposable {
     }
 
     private async _announce(message: string, task: BackgroundTask): Promise<void> {
-        const actions = task.status === 'finished' ? ['Review Changes', 'Open Its Window'] : ['Open Its Window'];
+        const open = this.runHere?.has(task.id) ? 'Show It' : 'Open Its Window';
+        const actions = task.status === 'finished' ? ['Review Changes', open] : [open];
         const choice = await vscode.window.showInformationMessage(message, ...actions);
         if (choice === 'Review Changes') { await this.review(task); }
-        if (choice === 'Open Its Window') { await this.openWindow(task); }
+        if (choice === open) { await this.show(task); }
     }
 
     /** Starts a task: its own branch and worktree from the last commit, then a window for it. */
@@ -114,6 +126,11 @@ export class BackgroundTaskManager implements vscode.Disposable {
 
         const task = await this.createTask({ prompt, permissions: pick.value });
         if ('error' in task) { void vscode.window.showErrorMessage(`Codico: the background task could not be started: ${task.error}`); return undefined; }
+        if (this.runHere && runInPanel()) {
+            this.runHere.launch(task);
+            void vscode.window.showInformationMessage(`Codico: background task started on branch ${task.branch}, in this window. Follow it in the Agents view of the Codico panel.`);
+            return task;
+        }
         await this.openWindow(task);
         void vscode.window.showInformationMessage(
             `Codico: background task started on branch ${task.branch}. Its window asks once whether you trust the folder; ` +
@@ -140,6 +157,11 @@ export class BackgroundTaskManager implements vscode.Disposable {
         await this._store.save(task);
         await this.refresh();
         return task;
+    }
+
+    /** Where the user follows the task: its place in the panel when it runs here, otherwise its window. */
+    async show(task: BackgroundTask): Promise<void> {
+        if (this.runHere?.has(task.id)) { await this.runHere.show(task); } else { await this.openWindow(task); }
     }
 
     async openWindow(task: BackgroundTask): Promise<void> {
@@ -225,13 +247,16 @@ export class BackgroundTaskManager implements vscode.Disposable {
         const task = chosen.task;
         const action = await vscode.window.showQuickPick([
             { id: 'review', label: '$(diff) Review its changes', description: 'everything it changed since it started, as one patch' },
-            { id: 'open', label: '$(window) Open its window', description: 'see the conversation, answer or approve' },
+            ...(this.runHere?.has(task.id)
+                ? [{ id: 'open', label: '$(eye) Show it in the panel', description: 'it runs in this window: see its steps, answer or approve' }, { id: 'window', label: '$(window) Open its worktree in a window', description: 'to look at its files; it goes on running here' }]
+                : [{ id: 'open', label: '$(window) Open its window', description: 'see the conversation, answer or approve' }]),
             { id: 'merge', label: '$(git-merge) Merge into the branch checked out here' },
             ...(this._openPullRequest ? [{ id: 'pr', label: '$(git-pull-request) Open a pull request', description: 'push its branch and open a pull request on GitHub, after a confirmation' }] : []),
             { id: 'discard', label: '$(trash) Discard', description: 'delete its worktree and branch' },
         ], { title: short(task.prompt) });
         if (action?.id === 'review') { await this.review(task); }
-        if (action?.id === 'open') { await this.openWindow(task); }
+        if (action?.id === 'open') { await this.show(task); }
+        if (action?.id === 'window') { await this.openWindow(task); }
         if (action?.id === 'merge') { await this.merge(task); }
         if (action?.id === 'pr') { await this.pullRequest(task); }
         if (action?.id === 'discard') { await this.discard(task); }

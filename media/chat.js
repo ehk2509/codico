@@ -2639,7 +2639,7 @@
   }
   var DIFF_PREVIEW_LINES = 40;
 
-  // ── Team view: the team's workers running in this window ────────────────
+  // ── Agents view: team workers and background tasks running in this window ──
   var teamView = document.getElementById('team-view');
   var _teamOpen = true, _teamLogsOpen = {}, _teamNames = {};
   var TEAM_STATUS = { starting: 'starting', running: 'running', waiting: 'needs you', finished: 'finished', failed: 'failed', stopped: 'stopped' };
@@ -2667,7 +2667,7 @@
   function teamQuestions(id) { ensureTeamFrame(); teamView.style.display = 'block'; return teamWorkerEl(id).querySelector('.tv-q'); }
   function ensureTeamFrame() {
     if (teamView.querySelector('.tv-list')) { return; }
-    teamView.innerHTML = '<div class="tv-head" title="Show or hide the team"><span class="tv-title">\uD83D\uDC65 Team</span><span class="tv-sum"></span><span class="tv-chev">\u25BE</span></div><div class="tv-list"></div>';
+    teamView.innerHTML = '<div class="tv-head" title="Show or hide the agents running in this window"><span class="tv-title">\uD83D\uDC65 Agents</span><span class="tv-sum"></span><span class="tv-chev">\u25BE</span></div><div class="tv-list"></div>';
     teamView.querySelector('.tv-head').addEventListener('click', function () {
       _teamOpen = !_teamOpen;
       teamView.querySelector('.tv-list').style.display = _teamOpen ? 'block' : 'none';
@@ -2691,12 +2691,14 @@
       el.querySelector('.tv-role').textContent = w.role;
       el.querySelector('.tv-status').textContent = TEAM_STATUS[w.status] + (w.merged ? ', merged' : '') + (w.verdict ? ' \u00b7 ' + w.verdict : '');
       el.querySelector('.tv-status').title = w.note || '';
-      el.querySelector('.tv-meta').textContent = w.steps + ' step' + (w.steps === 1 ? '' : 's') + ' \u00b7 ' + fmtTok(w.tokens) + ' tok' + (w.costUsd ? ' \u00b7 $' + w.costUsd.toFixed(3) : '');
+      el.querySelector('.tv-meta').textContent = w.steps + ' step' + (w.steps === 1 ? '' : 's') + ' \u00b7 ' + fmtTok(w.tokens) + ' tok' + (w.costUsd ? ' \u00b7 $' + w.costUsd.toFixed(3) : '') +
+        (w.processes ? ' \u00b7 ' + w.processes + ' process' + (w.processes === 1 ? '' : 'es') + ' running' : '');
       el.querySelector('.tv-task').textContent = w.task.replace(/\s+/g, ' ').slice(0, 160);
       el.querySelector('.tv-activity').textContent = w.activity ? '\u21BB ' + w.activity : (w.note && w.status !== 'finished' ? w.note : '');
       var actions = el.querySelector('.tv-actions');
       actions.innerHTML = '';
       var live = w.status === 'running' || w.status === 'waiting' || w.status === 'starting';
+      if (live || w.status === 'finished') { actions.appendChild(teamButton('Reply', w.status === 'waiting' ? 'Answer it' : 'Send it a message: an answer, a correction, or what to do next', w.id, 'reply')); }
       actions.appendChild(teamButton('Open', 'Open its worktree in a separate window, to look at its files (it goes on running here)', w.id, 'open'));
       if (live) { actions.appendChild(teamButton('Stop', 'Stop this worker; its work so far stays on its branch', w.id, 'stop')); }
       else { actions.appendChild(teamButton('\u2715', 'Remove it from this view (its branch and worktree stay; see Background Tasks)', w.id, 'dismiss')); }
@@ -4015,6 +4017,12 @@
         break;
       }
       case 'teamState': renderTeamView(data.workers || []); break;
+      case 'teamReveal':
+        if (teamView.style.display !== 'none') {
+          if (!_teamOpen) { teamView.querySelector('.tv-head').click(); }
+          teamView.scrollIntoView({ block: 'nearest' });
+        }
+        break;
       case 'backgroundTasks':
         bgTasksBtn.style.display = data.text ? 'inline-block' : 'none';
         bgTasksBtn.textContent = '\u29C9 ' + data.text;
