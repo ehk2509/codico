@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as https from 'https';
 import * as nodeCrypto from 'crypto';
-import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, MessageContentPart, StreamChunk } from './openRouterClient';
-import { streamOllama, ollamaChatCompletion } from './ollamaClient';
-import { streamDirect, directSingleCompletion, parseDirectModelId, directSecretKey, getDirectProvider } from './directProviderClient';
-import { parseToolBody, scanToolFences, ToolCall, WriteFileTool, ListDirectoryTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool, GetDiagnosticsTool, FetchUrlTool, BrowserNavigateTool, BrowserClickTool, BrowserTypeTool, BrowserGetTextTool, McpCallTool, LspSymbolTool, DebugGetVariablesTool } from './toolParser';
+import { ChatMessage, MessageContentPart } from './openRouterClient';
+import { directSingleCompletion, parseDirectModelId, directSecretKey } from './directProviderClient';
+import { ToolCall } from './toolParser';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
@@ -17,57 +15,45 @@ import { WorkspaceIndex } from './workspaceIndex';
 import { CodeSearchService } from './codeSearchService';
 import { HookRunner } from './hookRunner';
 import { buildPrContext } from './prContextProvider';
-import { detectTestCommand, buildTestLoopPrompt } from './testOrchestrator';
 import { UndoRedoStack } from './undoRedoStack';
+import { Approvals } from './approvals';
+import { WorkspaceTools } from './workspaceTools';
+import { resolveModelAccess, systemPrefix } from './turnSetup';
+import { AgentTurn, TurnHost } from './agentTurn';
+import { Compaction, CompactionHost } from './compaction';
+import { autoCommit, contextRequest, PanelHost, postSelectionBadge, reviewCode, runAndFixTests } from './panelCommands';
+import { ThreadHost, ThreadManager, THREADS_INDEX_KEY, threadDisplayKey, threadKey } from './threads';
 import { rewindFiles, turnsFrom, workspaceCheckpoints } from './rewind';
 import { handleProposalMessage } from './editProposalMessages';
-import { commandSandbox } from './commandSandboxService';
 import { loadRepoInstructions, projectMemorySection, rememberTool } from './projectMemoryStore';
 import { MEMORY_FILE } from './projectMemory';
 import { untilStopped } from './stopRace';
 import { CommandApprovalStore } from './commandApprovalStore';
-import { MAX_STEER_CHARS, STOPPED_NOTE, addSteer, steerNote } from './steering';
+import { MAX_STEER_CHARS } from './steering';
 import { EditProposalManager } from './editProposalManager';
-import { runGit, fetchCommitMessage } from './commitMessageProvider';
-import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW, setStreamStallTimeout } from './streamCompletion';
-import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
+import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
-import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOutput } from './terminalProcess';
 import { countWorkspaceDiagnostics } from './workspaceDiagnostics';
-import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
 import { ExternalToolRuntime, WEB_SEARCH_KEY } from './externalToolRuntime';
 import { WebviewAssets } from './webviewAssets';
 import { DisplayMessage, ExtensionMessage, ReplayEvent, REPLAY_BUDGET, REPLAY_DIFF_LIMIT, REPLAY_TYPES, ThreadEntry, WebviewMessage } from './chatProtocol';
 import { buildEvaluationRunMetrics, EvaluationRunMetrics, EvaluationToolTraceEvent } from './evaluationMetrics';
 import { projectHistoryForModel } from './contextProjection';
-import { evaluationToolTarget } from './evaluationTrace';
-import { ExplorationController } from './explorationController';
-import { editResultSnippet } from './fileReadWindow';
 import { readFileTool } from './readFileTool';
-import { buildLocalInvariantAudit } from './localInvariantAudit';
-import { shouldRunAgentIteration } from './iterationBudget';
-import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
-import { filterAllowedWorkspaceUris, resolveWorkspaceToolPath } from './workspaceSecurity';
+import { resolveWorkspaceToolPath } from './workspaceSecurity';
 import { TaskUsage } from './taskUsage';
 import { generateFollowUps } from './followUps';
-import { planCompaction, summarizerPrompt, summaryProblem, buildCompactedHistory, approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
-import { looksLikeIntendedRegex } from './agentEfficiency';
-import { computeLineDiff } from './lineDiff';
-import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
-import { PLAN_PROMPT, REVIEW_PROMPT } from './agentPrompts';
+import { approvedPlanExecution, isUserRequest, messageText, userRequestText, USER_REQUEST_MARKER } from './historyCompaction';
+import { PLAN_PROMPT } from './agentPrompts';
 import { cutAtTurn, lastTurnId } from './threadEditing';
-import { duplicateStoredThread } from './threadDuplication';
 import { openChangeDiff, openFileLink, readDroppedFile, registerChangeDiffProvider, exportMarkdown, insertCodeAtCursor, openCodeInNewFile, listDirectoryTool, openSettingsMenu } from './chatFiles';
 import { exportFileName, threadMarkdown } from './threadExport';
 import { buildContextPreamble } from './contextPreamble';
-import { ReminderLog, renderSearchMatches } from './leanContext';
-import { ToolLoopGuard } from './toolLoopGuard';
 import { promptForMissingKey, providerStatusMessage, usableModel } from './modelFallback';
-import { cliModelCompletion, isCliModel, streamCliModel } from './cliProviders';
+import { isCliModel } from './cliProviders';
 import { noteAttention } from './attentionNotifier';
 import { searchThreads } from './threadSearch';
-import { readCurrentBytes, readCurrentText, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
 
 // ─── Thread data types ────────────────────────────────────────────────────────
 
@@ -97,10 +83,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._displayMessages = cut.display;
         this._planAwaitingAnswer = null;
         await this._historyStore.update(this._historyKey, this._history);
-        await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
+        await this._store.update(threadDisplayKey(this._activeThreadId), this._displayMessages);
         const text = msg.type === 'editMessage' ? msg.text : msg.type === 'regenerate' ? turn.plan ?? turn.text : undefined;
         const shown = text === undefined ? undefined : turn.plan !== undefined ? `\uD83D\uDCCB Plan: ${text}` : turn.shownAs ?? text;
-        const name = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === this._activeThreadId)?.name ?? '';
+        const name = this._store.get<ThreadEntry[]>(THREADS_INDEX_KEY, []).find(t => t.id === this._activeThreadId)?.name ?? '';
         this._post({ type: 'threadLoaded', id: this._activeThreadId, name, displayMessages: this._displayMessages, pendingUserText: shown, draftText: msg.type === 'rewind' && !turn.shownAs ? turn.plan ?? turn.text : undefined });
         if (msg.type === 'rewind') { this._post({ type: 'undoRedoState', ...this._undoRedo.state }); }
         if (text === undefined) { return; }
@@ -159,21 +145,78 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _thinkingEffort: 'high' | 'medium' | 'low' = 'medium';
     private _repoInstructions: string | null | undefined = undefined; // undefined = not yet read
     /** Pending inline write-permission requests: permId → resolve fn */
-    private _pendingWritePermissions = new Map<string, (result: { granted: boolean; editedContent?: string }) => void>();
     /** Resolves the pending step checkpoint: true = keep going, false = stop. */
-    private _checkpointResolver: ((keepGoing: boolean) => void) | null = null;
     /** Messages sent while the previous turn was still finishing; run in order once free. */
     private readonly _pendingUserMessages: Array<{ text: string; contentParts?: MessageContentPart[]; injectActiveDiagnostics?: boolean; skipUserPush?: boolean; planGoal?: string; shownAs?: string }> = [];
     /** Resolved when the agent next becomes idle (used to stop a turn before switching threads). */
     private _idleWaiters: Array<() => void> = [];
     /** Process groups left running by run_terminal commands (POSIX only), keyed by pgid. */
-    private readonly _bgProcesses = new Map<number, { command: string; startedAt: number }>();
-    private _bgPollTimer: ReturnType<typeof setInterval> | undefined;
     /** Pending inline terminal-permission requests: permId → resolve fn */
-    private _pendingTerminalPermissions = new Map<string, (granted: boolean) => void>();
+    /** Questions the agent waits on: file changes, commands, the token budget. */
+    private readonly _approvals = new Approvals(message => this._post(message));
+    /** What the panel's own commands (context, review, tests, commit) need from this conversation. */
+    private readonly _panel: PanelHost = {
+        post: message => this._post(message), send: text => this._handleUserMessage(text), sendShown: text => this.sendMessage(text),
+        ready: () => !!this._view, sessionSignal: () => this._sessionAbort.signal,
+    };
+    /** Summarising the earlier part of a long conversation. */
+    private readonly _compaction = new Compaction(AgentProvider._compactionHost(this));
+    private static _compactionHost(provider: AgentProvider): CompactionHost {
+        return {
+            get history() { return provider._history; }, set history(history) { provider._history = history; },
+            get compactRetryAt() { return provider._compactRetryAt; }, set compactRetryAt(at) { provider._compactRetryAt = at; },
+            get lastPromptTokens() { return provider._lastPromptTokens; }, set lastPromptTokens(tokens) { provider._lastPromptTokens = tokens; },
+            post: message => provider._post(message), save: history => provider._historyStore.update(provider._historyKey, history),
+            sessionSignal: () => provider._sessionAbort.signal,
+        };
+    }
+    /** What a turn of the agent needs from this conversation (a static method: it may reach this class's private state). */
+    private static _turnHost(provider: AgentProvider): TurnHost {
+        return {
+            get compactRetryAt() { return provider._compactRetryAt; }, set compactRetryAt(value) { provider._compactRetryAt = value; },
+            get displayMessages() { return provider._displayMessages; }, set displayMessages(value) { provider._displayMessages = value; },
+            get evalBudgetExceeded() { return provider._evalBudgetExceeded; }, set evalBudgetExceeded(value) { provider._evalBudgetExceeded = value; },
+            get evalCompletionTokens() { return provider._evalCompletionTokens; }, set evalCompletionTokens(value) { provider._evalCompletionTokens = value; },
+            get evalProjectedCharsOmitted() { return provider._evalProjectedCharsOmitted; }, set evalProjectedCharsOmitted(value) { provider._evalProjectedCharsOmitted = value; },
+            get evalPromptTokens() { return provider._evalPromptTokens; }, set evalPromptTokens(value) { provider._evalPromptTokens = value; },
+            get evalSteps() { return provider._evalSteps; }, set evalSteps(value) { provider._evalSteps = value; },
+            get evalToolCalls() { return provider._evalToolCalls; }, set evalToolCalls(value) { provider._evalToolCalls = value; },
+            get evalTrace() { return provider._evalTrace; }, set evalTrace(value) { provider._evalTrace = value; },
+            get history() { return provider._history; }, set history(value) { provider._history = value; },
+            get lastInlineResult() { return provider._lastInlineResult; }, set lastInlineResult(value) { provider._lastInlineResult = value; },
+            get lastPromptTokens() { return provider._lastPromptTokens; }, set lastPromptTokens(value) { provider._lastPromptTokens = value; },
+            get steer() { return provider._steer; }, set steer(value) { provider._steer = value; },
+            get subagentHost() { return provider._subagentHost; }, set subagentHost(value) { provider._subagentHost = value; },
+            get approvals() { return provider._approvals; },
+            get autoCompact() { return provider._autoCompact; },
+            get compaction() { return provider._compaction; },
+            get evaluationMode() { return provider._evaluationMode; },
+            get evaluationTokenBudget() { return provider._evaluationTokenBudget; },
+            get readOnly() { return provider._readOnly; },
+            get thinkingEffort() { return provider._thinkingEffort; },
+            post: message => provider._post(message), dispatchTool: (tool, msgId, signal) => provider._dispatchTool(tool, msgId, signal),
+        };
+    }
+    /** The thread list and the open thread's saved state. */
+    private readonly _threads = new ThreadManager(AgentProvider._threadHost(this));
+    /** The open conversation as thread operations see it (a static method: it may reach this class's private state). */
+    private static _threadHost(provider: AgentProvider): ThreadHost {
+        return {
+            get store() { return provider._store; }, get editProposals() { return provider._editProposals; },
+            get activeThreadId() { return provider._activeThreadId; }, set activeThreadId(id) { provider._activeThreadId = id; },
+            get history() { return provider._history; }, set history(history) { provider._history = history; },
+            get displayMessages() { return provider._displayMessages; }, set displayMessages(display) { provider._displayMessages = display; },
+            get editsMode() { return provider._editsMode; }, set editsMode(on) { provider._editsMode = on; },
+            post: message => provider._post(message), newId: () => provider._newId(),
+        };
+    }
+    /** Writing, editing, searching and commands, with what they need from this conversation. */
+    private readonly _tools = new WorkspaceTools({
+        post: message => this._post(message), approvals: this._approvals, undo: this._undoRedo, passport: () => this._passport, editProposals: this._editProposals,
+        fileManager: this._fileManager, approvedCommands: () => this.approvedCommands, evaluationMode: () => this._evaluationMode,
+        editsMode: () => this._editsMode, untrustedContentSeen: () => this._external.untrustedContentSeen, fileWritten: () => { this._filesWrittenThisTurn++; },
+    });
     /** Set to true by "Allow All" for the current agent response; resets each user turn. */
-    private _allowAllWrites = false;
-    private _allowAllTerminal = false;
     /** The workspace as it was at each message, kept on disk: what rewinding restores. */
     public readonly checkpoints = workspaceCheckpoints(this._context.globalStorageUri.fsPath);
     /** Commands the user always allows in this workspace. */
@@ -221,7 +264,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._editProposals.register(_context);
         registerChangeDiffProvider(_context);
         _context.secrets.onDidChange(() => providerStatusMessage(_context).then(status => this._post(status)), undefined, _context.subscriptions);
-        this._initThreadsSync();
+        this._threads.initSync();
         // Pre-load webview assets so first render does not block the extension host.
         void this._webviewAssets.preload();
         _context.subscriptions.push(this._userExtensions, this._hooks);
@@ -230,14 +273,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         _context.subscriptions.push({ dispose: () => {
             this._followUpAbortController?.abort();
             this._sessionAbort.abort();
-            this._killBackgroundProcesses();
+            this._tools.killBackgroundProcesses();
         }});
         // Reload thread list when globalHistory setting is toggled so threads from the
         // newly-active store are immediately visible instead of appearing lost.
         vscode.workspace.onDidChangeConfiguration(e => {
             if (e.affectsConfiguration('codico.globalHistory')) {
-                this._initThreadsSync();
-                this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+                this._threads.initSync();
+                this._post({ type: 'threadList', threads: this._threads.list() });
             }
             if (['chatDensity', 'showReasoning', 'autoCompactThreshold'].some(key => e.affectsConfiguration(`codico.${key}`))) { this._postUiSettings(); }
             // The header selector follows the setting (changed in Settings, or by the no-OpenRouter-key fallback)
@@ -256,11 +299,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** Legacy alias — keeps existing call-sites unchanged. */
     private get _historyStore(): vscode.Memento { return this._store; }
     /** _historyKey now routes to the active thread's storage key. */
-    private get _historyKey(): string { return this._threadKey(this._activeThreadId); }
-    private _threadKey(id: string): string { return `codico.thread.${id}`; }
-    private _threadDisplayKey(id: string): string { return `codico.threadDisplay.${id}`; }
-    private get _threadsIndexKey(): string { return 'codico.threads'; }
-    private get _activeThreadIdKey(): string { return 'codico.activeThreadId'; }
+    private get _historyKey(): string { return threadKey(this._activeThreadId); }
     private _newId(): string { return nodeCrypto.randomBytes(8).toString('hex'); }
 
     public resolveWebviewView(
@@ -287,10 +326,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             void providerStatusMessage(this._context).then(status => this._post(status));
             void this._userExtensions.get().then(extensions => this._post(userExtensionsMessage(extensions)));
             this._postUiSettings();
-            this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+            this._post({ type: 'threadList', threads: this._threads.list() });
             // Show the active thread's full conversation (the panel starts empty after a reload)
             if (!this._busy && this._displayMessages.length > 0) {
-                const active = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === this._activeThreadId);
+                const active = this._store.get<ThreadEntry[]>(THREADS_INDEX_KEY, []).find(t => t.id === this._activeThreadId);
                 this._post({ type: 'threadLoaded', id: this._activeThreadId, name: active?.name ?? '', displayMessages: this._displayMessages });
             }
             // Offer to resume an interrupted agentic session from the previous run
@@ -299,7 +338,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'resumeOffer', summary });
             }
             // Sync initial selection state so the badge is correct on first load
-            this._postSelectionBadge();
+            postSelectionBadge(this._panel);
         }, 200);
 
         // Connect MCP servers asynchronously (non-blocking)
@@ -347,14 +386,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             };
             const editorWatcher = vscode.window.onDidChangeActiveTextEditor(() => {
                 _checkProactiveOffer();
-                this._postSelectionBadge();
+                postSelectionBadge(this._panel);
             });
             const diagOfferWatcher = vscode.languages.onDidChangeDiagnostics(() => _checkProactiveOffer());
             let _selectionDebounce: ReturnType<typeof setTimeout> | undefined;
             const selectionWatcher = vscode.window.onDidChangeTextEditorSelection((e) => {
                 if (e.textEditor === vscode.window.activeTextEditor) {
                     clearTimeout(_selectionDebounce);
-                    _selectionDebounce = setTimeout(() => this._postSelectionBadge(), 150);
+                    _selectionDebounce = setTimeout(() => postSelectionBadge(this._panel), 150);
                 }
             });
             this._context.subscriptions.push(editorWatcher, diagOfferWatcher, selectionWatcher);
@@ -377,7 +416,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     public evaluationApprovals(require?: boolean | 'commands'): string[] {
         if (!this._evaluationMode) { throw new Error('Codico evaluation mode is only available from the VS Code test Extension Host.'); }
         if (require !== undefined) { this._evalRequireApproval = require === true; this._evalAskCommands = require === 'commands'; }
-        return [...this._pendingWritePermissions.keys(), ...this._pendingTerminalPermissions.keys()];
+        return this._approvals.pending;
     }
 
     /** Test-only: delivers a message as if the panel had sent it. */
@@ -398,14 +437,14 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._history = [];
                 this._displayMessages = [];
                 await this._historyStore.update(this._historyKey, []);
-                await this._store.update(this._threadDisplayKey(this._activeThreadId), []);
-                await this._updateThreadMeta('');
+                await this._store.update(threadDisplayKey(this._activeThreadId), []);
+                await this._threads.updateMeta('');
                 if (this._editsMode) {
                     this._editsMode = false;
                     this._editProposals.rejectAll();
                     this._post({ type: 'allProposalsResolved' });
                 }
-                this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+                this._post({ type: 'threadList', threads: this._threads.list() });
                 break;
             case 'setApiKey':
                 await vscode.commands.executeCommand(msg.direct ? 'codico.setDirectApiKey' : 'codico.setApiKey');
@@ -417,11 +456,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await vscode.commands.executeCommand('workbench.action.closeSidebar');
                 break;
             case 'checkpointResponse':
-                this._checkpointResolver?.(msg.continue === true);
-                this._checkpointResolver = null;
+                this._approvals.answerCheckpoint(msg.continue === true);
                 break;
             case 'killBackgroundProcesses':
-                this._killBackgroundProcesses();
+                this._tools.killBackgroundProcesses();
                 break;
             case 'queueMessage':
                 this._steer = this._busy && msg.text.length <= MAX_STEER_CHARS ? msg.text : '';
@@ -436,54 +474,27 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                     this._post({ type: 'endMessage', id: '' });
                 }
                 // Resolve all pending permission dialogs as denied so their Promises unblock
-                this._cancelTurnPrompts();
-                this._allowAllWrites = false;
-                this._allowAllTerminal = false;
+                this._approvals.cancelAll();
+                this._approvals.allowAllWrites = false;
+                this._approvals.allowAllCommands = false;
                 this._external.resetTurnPermissions();
                 break;
-            case 'writePermissionResponse': {
-                const resolve = this._pendingWritePermissions.get(msg.permId);
-                if (resolve) {
-                    this._pendingWritePermissions.delete(msg.permId);
-                    resolve({ granted: msg.granted });
-                }
+            case 'writePermissionResponse':
+                this._approvals.answerWrite(msg.permId, { granted: msg.granted });
                 break;
-            }
-            case 'terminalPermissionResponse': {
-                const resolve = this._pendingTerminalPermissions.get(msg.permId);
+            case 'terminalPermissionResponse':
                 await this.approvedCommands.answered(msg.permId, msg.granted ? msg.remember : undefined);
-                if (resolve) {
-                    this._pendingTerminalPermissions.delete(msg.permId);
-                    resolve(msg.granted);
-                }
+                this._approvals.answerCommand(msg.permId, msg.granted);
                 break;
-            }
-            case 'allowAllWrites': {
-                this._allowAllWrites = true;
-                const resolve = this._pendingWritePermissions.get(msg.permId);
-                if (resolve) {
-                    this._pendingWritePermissions.delete(msg.permId);
-                    resolve({ granted: true });
-                }
+            case 'allowAllWrites':
+                this._approvals.answerWrite(msg.permId, { granted: true }, true);
                 break;
-            }
-            case 'writePermissionEdit': {
-                const resolve = this._pendingWritePermissions.get(msg.permId);
-                if (resolve) {
-                    this._pendingWritePermissions.delete(msg.permId);
-                    resolve({ granted: true, editedContent: msg.content });
-                }
+            case 'writePermissionEdit':
+                this._approvals.answerWrite(msg.permId, { granted: true, editedContent: msg.content });
                 break;
-            }
-            case 'allowAllTerminal': {
-                this._allowAllTerminal = true;
-                const resolve = this._pendingTerminalPermissions.get(msg.permId);
-                if (resolve) {
-                    this._pendingTerminalPermissions.delete(msg.permId);
-                    resolve(true);
-                }
+            case 'allowAllTerminal':
+                this._approvals.answerCommand(msg.permId, true, true);
                 break;
-            }
             case 'changeModel': {
                 // Validate against known model IDs before persisting
                 if (!this._webviewAssets.isValidModelId(msg.model)) {
@@ -500,10 +511,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._thinkingEffort = msg.effort;
                 break;
             case 'requestContext':
-                await this._handleContextRequest(msg.kind);
+                await contextRequest(this._panel, msg.kind);
                 break;
             case 'startReview':
-                await this._handleReview(msg.target);
+                await reviewCode(this._panel, msg.target);
                 break;
             case 'startPlan':
                 await this._handlePlan(msg.goal);
@@ -558,25 +569,25 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 await vscode.commands.executeCommand('codico.generateTestsFromCoverage');
                 break;
             case 'runAndFixTests':
-                await this._handleRunAndFixTests();
+                await runAndFixTests(this._panel);
                 break;
             case 'openProblems':
                 await vscode.commands.executeCommand('workbench.actions.view.problems');
                 break;
             case 'createThread':
                 await this._stopTurnAndWait();
-                await this._createThread(msg.name);
+                await this._threads.create(msg.name);
                 break;
             case 'switchThread':
                 await this._stopTurnAndWait();
-                await this._switchThread(msg.id);
+                await this._threads.switchTo(msg.id);
                 break;
             case 'renameThread':
-                await this._renameThread(msg.id, msg.name);
+                await this._threads.rename(msg.id, msg.name);
                 break;
             case 'deleteThread':
                 await this._stopTurnAndWait();
-                await this._deleteThread(msg.id);
+                await this._threads.remove(msg.id);
                 break;
             case 'startBackgroundTask':
                 this.onBackgroundRequest?.(msg.text);
@@ -587,13 +598,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             case 'duplicateThread':
                 // Refused, not stopped: a copy of a half-finished reply would be wrong.
                 if (this._busy) { this._post({ type: 'error', message: 'Cannot duplicate a thread while a reply is running. Wait for it to finish, or stop it, first.' }); break; }
-                await this._duplicateThread(msg.id);
+                await this._threads.duplicate(msg.id);
                 break;
             case 'threadContextMenu':
-                await this._handleThreadContextMenu(msg.id);
+                await this._threads.contextMenu(msg.id);
                 break;
             case 'searchThreads':
-                this._post({ type: 'threadSearchResults', query: msg.query, results: searchThreads(this._store.get<ThreadEntry[]>(this._threadsIndexKey, []), id => this._store.get<DisplayMessage[]>(this._threadDisplayKey(id), []), msg.query) });
+                this._post({ type: 'threadSearchResults', query: msg.query, results: searchThreads(this._store.get<ThreadEntry[]>(THREADS_INDEX_KEY, []), id => this._store.get<DisplayMessage[]>(threadDisplayKey(id), []), msg.query) });
                 break;
             case 'resumeSession': {
                 if (!this._busy) {
@@ -632,7 +643,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                             break;
                         }
                     }
-                    await this._compactHistory(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
+                    await this._compaction.run(compactApiKey, compactModel, isCompactOllama, compactOllamaBaseUrl, compactOllamaModel, isCompactDirect, compactDirectKey, compactDirectParsed?.providerId ?? '', compactDirectParsed?.modelId ?? '');
                 } finally {
                     this._releaseBusy();
                 }
@@ -668,17 +679,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 break;
             }
             case 'exportThread': {
-                const thread = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []).find(t => t.id === msg.id);
+                const thread = this._store.get<ThreadEntry[]>(THREADS_INDEX_KEY, []).find(t => t.id === msg.id);
                 // The open thread's newest messages may not be saved yet
-                const messages = msg.id === this._activeThreadId ? this._displayMessages : this._store.get<DisplayMessage[]>(this._threadDisplayKey(msg.id), []);
+                const messages = msg.id === this._activeThreadId ? this._displayMessages : this._store.get<DisplayMessage[]>(threadDisplayKey(msg.id), []);
                 if (thread) { await exportMarkdown(threadMarkdown(thread.name, messages), exportFileName(thread.name)); }
                 break;
             }
             case 'pinThread': {
-                const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
+                const threads = this._store.get<ThreadEntry[]>(THREADS_INDEX_KEY, []);
                 const pinned = threads.find(t => t.id === msg.id);
-                if (pinned) { pinned.pinned = !pinned.pinned; await this._store.update(this._threadsIndexKey, threads); }
-                this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+                if (pinned) { pinned.pinned = !pinned.pinned; await this._store.update(THREADS_INDEX_KEY, threads); }
+                this._post({ type: 'threadList', threads: this._threads.list() });
                 break;
             }
             case 'attachDroppedFiles':
@@ -753,7 +764,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     public backgroundPermissions: 'ask' | 'edits' | 'all' = 'ask'; public backgroundListener?: (msg: ExtensionMessage) => void;
     public get ready(): boolean { return !!this._view; }
     /** Declines whatever is waiting for an approval (a run with nobody to ask). */
-    public denyPrompts(): void { this._cancelTurnPrompts(); }
+    public denyPrompts(): void { this._approvals.cancelAll(); }
     public onBackgroundRequest?: (text: string) => void;
     public showBackgroundTasks(text: string, needsUser: boolean): void { this._post({ type: 'backgroundTasks', text, needsUser }); }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
@@ -861,8 +872,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Reset per-response allow-all flags at the start of every new user turn
-        this._allowAllWrites  = (this._evaluationMode && !this._evalRequireApproval) || this.backgroundPermissions !== 'ask';
-        this._allowAllTerminal = (this._evaluationMode && !this._evalAskCommands) || this.backgroundPermissions === 'all';
+        this._approvals.allowAllWrites = (this._evaluationMode && !this._evalRequireApproval) || this.backgroundPermissions !== 'ask';
+        this._approvals.allowAllCommands = (this._evaluationMode && !this._evalAskCommands) || this.backgroundPermissions === 'all';
         this._external.resetTurnPermissions();
 
         // ── /pr slash command: inject PR context then re-prompt as a review ──
@@ -882,39 +893,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         text = expandSkillCommand(text, userExtensions.skills)?.text ?? text;
 
         const config = vscode.workspace.getConfiguration('codico');
-        // Without an OpenRouter key but with a direct provider key, that provider's model is used
-        const model = await usableModel(this._context, config.get<string>('model', 'deepseek/deepseek-v4-flash'));
-        const isOllama = model.startsWith('ollama/');
-        const isCli = isCliModel(model); // through a command the user is signed in to (claude, codex)
-        const isDirect = model.startsWith('direct:');
-        const ollamaModel = model.slice('ollama/'.length);
-        const ollamaBaseUrl = config.get<string>('ollamaBaseUrl', 'http://localhost:11434');
-        const directParsed = isDirect ? parseDirectModelId(model) : null;
-
-        let apiKey = '';
-        let directApiKey = '';
-        if (isOllama || isCli) {
-            // no key needed for local Ollama or for Claude Code (its own login)
-        } else if (isDirect) {
-            if (!directParsed) {
-                this._post({ type: 'error', message: `Invalid direct model ID: "${model}"` });
-                return;
-            }
-            directApiKey = await this._context.secrets.get(directSecretKey(directParsed.providerId)) ?? '';
-            if (!directApiKey) {
-                const prov = getDirectProvider(directParsed.providerId);
-                this._post({ type: 'error', message: `No API key for ${prov?.name ?? directParsed.providerId}. Run "Codico: Set Direct Provider API Key" from the command palette.` });
-                return;
-            }
-        } else {
-            apiKey = await this._context.secrets.get('openRouterApiKey') ?? '';
-            if (!apiKey) {
-                this._post({ type: 'error', message: 'No API key set. Click the ⚙ icon to add an OpenRouter key or a direct provider key (Anthropic, OpenAI, DeepSeek…).' });
-                return;
-            }
-            // Keep the index aware of the current API key for embedding calls
-            this._workspaceIndex.setApiKey(apiKey);
-        }
+        const access = await resolveModelAccess(this._context, config);
+        if ('error' in access) { this._post({ type: 'error', message: access.error }); return; }
+        const { model, isOllama, isCli, isDirect, ollamaModel, ollamaBaseUrl, directParsed, apiKey, directApiKey } = access;
+        // Keep the index aware of the current API key for embedding calls
+        if (apiKey) { this._workspaceIndex.setApiKey(apiKey); }
         const customPrefix = config.get<string>('systemPrompt', '') || undefined;
         const autoInject = config.get<boolean>('autoInjectContext', true);
         // 0 (the default) means no iteration limit
@@ -931,35 +914,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._repoInstructions = await loadRepoInstructions();
         }
 
-        // Build effective system prompt prefix (repo instructions + custom prefix + MCP tools)
-        let effectivePrefix = this._repoInstructions
-            ? `[Repository Instructions]\n${this._repoInstructions}`
-            : undefined;
-        if (customPrefix) {
-            effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${customPrefix}` : customPrefix;
-        }
-        // Append MCP tool documentation if any servers are connected
-        const mcpSection = this._mcp.buildSystemPromptSection();
-        if (mcpSection) {
-            effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${mcpSection}` : mcpSection;
-        }
-        const skillsSection = skillsPromptSection(userExtensions.skills);
-        if (skillsSection) { effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${skillsSection}` : skillsSection; }
-        // What earlier sessions noted about the project. Read once per turn: a note saved during the task does not change the prompt under it
-        const memorySection = await projectMemorySection();
-        if (memorySection) { effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${memorySection}` : memorySection; }
-        // In Edits Mode: instruct the AI to emit ALL file mutations in one pass
-        if (this._editsMode) {
-            const editsNote = '[EDITS MODE] You are in multi-file edits mode. Use write_file and edit_file tools to propose changes across as many files as needed. All changes will be shown as diffs for user review before being applied. Emit every required file change in this single response — do not wait for confirmation between files.';
-            effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${editsNote}` : editsNote;
-        }
-
-        // Append response summary instruction if enabled
-        const summaryEnabled = config.get<boolean>('responseSummaryEnabled', true);
-        if (summaryEnabled) {
-            const summaryNote = 'Only at the very end of the entire task — in your final reply when you have no more tool calls to make and the work is fully complete — add a single `---` horizontal rule followed by a **Summary** section (2–4 concise bullet points) and a one-sentence **Conclusion**. Never add this block mid-task, after individual tool calls, or in intermediate responses. Do NOT add it for single-sentence answers, tool-only responses, or clarifying questions.';
-            effectivePrefix = effectivePrefix ? `${effectivePrefix}\n\n${summaryNote}` : summaryNote;
-        }
+        // What goes before Codico's own system prompt. Project memory is read once per turn: a note saved during the task does not change the prompt under it
+        let effectivePrefix = systemPrefix({ repoInstructions: this._repoInstructions, customPrefix, mcpSection: this._mcp.buildSystemPromptSection(), skillsSection: skillsPromptSection(userExtensions.skills),
+            memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true) });
 
         // Detect @agent mention and apply agent-specific context
         const { agent, strippedText } = parseAgentMention(text);
@@ -1019,8 +976,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // Auto-name the thread immediately from the first user message so the sidebar updates right away
-        void this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText).then(() => {
-            this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+        void this._threads.updateMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText).then(() => {
+            this._post({ type: 'threadList', threads: this._threads.list() });
         });
 
         const msgId = Date.now().toString();
@@ -1033,544 +990,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._followUpAbortController?.abort();
         this._followUpAbortController = null;
 
-        const MAX_STREAM_RECOVERY_ATTEMPTS = 5;
-        let streamRecoveryAttempts = 0;
-        // Visible text just before a cutoff; the resumed response is checked against it
-        // so any restarted sentence is dropped and the seam stays invisible.
-        let resumeTail: string | null = null;
-        let recoveryStatusShown = false;
-        const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
-        // Reminders answered without any tool call before the turn stops instead of
-        // re-sending them (each reminder is another paid model request).
-        const MAX_STALLED_VERIFICATION_NUDGES = 3;
-        let verificationNudges = 0;
-        // Iterations in a row in which no tool call could run (repeats, blocked calls): ends a stuck
-        // model, since there is no iteration limit while a change awaits verification
-        const MAX_BLOCKED_ONLY_ITERATIONS = 3;
-        let blockedOnlyIterations = 0;
-        let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
-        const nativeTools = !isOllama && !isCli && nativeToolCalling
-            ? getNativeToolDefinitions(this._readOnly)
-            : [];
-
-        // Circuit breaker for a model repeating the same call while nothing changes
-        const loopGuard = new ToolLoopGuard();
-        // Read-only turns (Ask mode, planning) must not be nudged to "make the code change"
-        const exploration = new ExplorationController(this._readOnly ? '' : rawText, maxIterations);
-        const reminders = new ReminderLog();
-        try {
-            // One request to the selected provider. The main loop and its subagents share it.
-            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => isCli
-                ? streamCliModel(model, history, prefix, signal, this._thinkingEffort, override)
-                : isOllama
-                ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override)
-                : isDirect && directParsed
-                    ? streamDirect(directApiKey, history, directParsed.providerId, directParsed.modelId, prefix, signal, this._thinkingEffort, override, tools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
-                    : streamOpenRouter(apiKey, history, model, prefix, signal, this._thinkingEffort, override, tools, this._evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer);
-            // A subagent has its own conversation and system prompt; its usage counts toward this task
-            this._subagentHost = {
-                request: (history, systemPrompt, tools) => requestModel(history, undefined, systemPrompt, tools),
-                nativeTools: nativeTools.length > 0,
-                onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens, usage.promptTokens, usage.completionTokens, 'subagent'); this._post({ type: 'tokenUsage', subagent: true, taskRequests: taskUsage.requests, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
-            };
-
-            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
-                if (signal.aborted) { break; }
-                if (this._evaluationMode && this._evaluationTokenBudget > 0 &&
-                    this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) {
-                    this._evalBudgetExceeded = true;
-                    this._post({
-                        type: 'appendContent',
-                        id: msgId,
-                        text: `\n\n⚠ Evaluation token budget reached (${this._evaluationTokenBudget.toLocaleString()} cumulative tokens).\n`,
-                    });
-                    break;
-                }
-                this._evalSteps = Math.max(this._evalSteps, i + 1);
-                exploration.beginIteration();
-                this._post({ type: 'stepProgress', id: msgId, step: i + 1 });
-
-                let fullContent = '';
-                let lastSentPos = 0;    // how far into fullContent we've sent as appendContent
-                let dispatchedUpTo = 0; // how far into fullContent we've dispatched tool fences
-                const inlineToolResults: string[] = [];
-                const fencedToolResults: string[] = [];
-                const nativeToolExecutions: NativeToolExecution[] = [];
-                let recoverableStreamInterruption: string | null = null;
-                let recoverableFinishReason: string | null = null;
-
-                let resumeBuffer = '';
-                let iterationReasoning = ''; // the reply's reasoning, when the provider needs it back (DeepSeek)
-
-                // Large write_file/edit_file bodies are hidden until complete; show their
-                // progress in the status bar so a long write never looks idle.
-                let draftReported = false;
-                let draftLines = 0;
-                const reportDraftProgress = (fence: string) => {
-                    const m = /^```(write_file|edit_file)\r?\nfilepath:\s*(.+)/.exec(fence);
-                    if (!m) { return; }
-                    const lines = fence.split('\n').length;
-                    if (draftReported && lines - draftLines < 10) { return; }
-                    draftReported = true;
-                    draftLines = lines;
-                    const name = path.basename(m[2].trim());
-                    const verb = m[1] === 'write_file' ? 'Writing' : 'Editing';
-                    this._post({ type: 'activity', text: `${verb} ${name}\u2026 ${lines} lines` });
-                };
-
-                // Once a loop is detected, the rest of this response is not executed either
-                let loopDetected = false;
-                let ranTool = false;
-                const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
-                    if (loopDetected) {
-                        const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
-                        inlineToolResults.push(skipped);
-                        return { keepGoing: false, result: skipped };
-                    }
-                    const { count: callCount, loop } = loopGuard.check(tool);
-                    if (loop) {
-                        loopDetected = true;
-                        const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
-                        inlineToolResults.push(nudge);
-                        this._post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
-                        return { keepGoing: false, result: nudge };
-                    }
-
-                    const explorationCheck = exploration.before(tool, this._readOnly);
-                    if (explorationCheck.block) {
-                        if (this._evaluationMode) {
-                            this._evalTrace.push({
-                                step: this._evalSteps,
-                                tool: 'exploration_block',
-                                target: evaluationToolTarget(tool),
-                            });
-                        }
-                        inlineToolResults.push(explorationCheck.block);
-                        return { keepGoing: true, result: explorationCheck.block };
-                    }
-
-                    if (explorationCheck.isExploration) {
-                        this._evalToolCalls++;
-                        if (this._evaluationMode) {
-                            this._evalTrace.push({
-                                step: this._evalSteps,
-                                tool: tool.type,
-                                target: evaluationToolTarget(tool),
-                            });
-                        }
-                        ranTool = true;
-                        await this._dispatchTool(tool, msgId, signal);
-                        loopGuard.ran(tool);
-                        let result = this._lastInlineResult ?? `[${tool.type}] completed`;
-                        this._lastInlineResult = undefined;
-                        if (explorationCheck.guidance) { result += `\n\n${reminders.say(explorationCheck.guidance)}`; }
-                        inlineToolResults.push(result);
-                        return { keepGoing: true, result };
-                    }
-
-                    if (exploration.blocksTerminal(tool)) {
-                        const result = '[System] Source-inspection terminal commands are disabled in the current focused phase. ' +
-                            'Use the edited-file read tool, edit/write tools, or tests/builds/diagnostics for verification.';
-                        if (this._evaluationMode) {
-                            this._evalTrace.push({
-                                step: this._evalSteps,
-                                tool: 'exploration_block',
-                                target: evaluationToolTarget(tool),
-                            });
-                        }
-                        inlineToolResults.push(result);
-                        return { keepGoing: true, result };
-                    }
-
-                    this._evalToolCalls++;
-                    if (this._evaluationMode) {
-                        this._evalTrace.push({
-                            step: this._evalSteps,
-                            tool: tool.type,
-                            target: evaluationToolTarget(tool),
-                        });
-                    }
-                    ranTool = true;
-                    await this._dispatchTool(tool, msgId, signal);
-                    loopGuard.ran(tool);
-                    let result = this._lastInlineResult ?? `[${tool.type}] completed`;
-                    this._lastInlineResult = undefined;
-                    const followThrough = exploration.after(tool, result);
-                    if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
-                    if (followThrough) { result += `\n\n${reminders.say(followThrough)}`; }
-                    inlineToolResults.push(result);
-                    return { keepGoing: true, result };
-                };
-
-                // Dispatch every newly complete tool fence, sending the text before each first.
-                // `final` accepts a closing line that is the last thing in the stream.
-                const dispatchFences = async (final: boolean): Promise<void> => {
-                    for (const fence of scanToolFences(fullContent, dispatchedUpTo, final).fences) {
-                        const fenceStart = fence.start;
-                        const fenceEnd = fence.end;
-
-                        // Send text before this fence (strips the fence from display)
-                        if (fenceStart > lastSentPos) {
-                            this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, fenceStart) });
-                        }
-                        lastSentPos = fenceEnd;
-                        dispatchedUpTo = fenceEnd;
-
-                        // Dispatch tool — toolStart is posted inside _dispatchTool,
-                        // which causes the webview to finalize the current text segment
-                        // and create a new one after the pill
-                        const tools = parseToolBody(fence.type, fence.body);
-                        if (tools.length > 0) {
-                            const dispatched = await dispatchToolCall(tools[0]);
-                            fencedToolResults.push(dispatched.result);
-                            if (!dispatched.keepGoing) { return; }
-                        }
-                    }
-                };
-
-                const processContent = async (text: string): Promise<void> => {
-                    fullContent += text;
-
-                    // Dispatch any newly complete tool fences, sending pre-fence text first
-                    await dispatchFences(false);
-
-                    // Determine safe send boundary: hold back only the last ``` if it could
-                    // still become a tool fence (nothing after it, or a tool-name first letter
-                    // with no newline yet). Once a newline is received after ```, the name is
-                    // confirmed and we know whether it's a tool fence or not — no more holdback.
-                    // This avoids freezing content during common language fences like ```bash,
-                    // ```rust, ```shell, etc. for the entire duration of the code block.
-                    const tail = fullContent.slice(dispatchedUpTo);
-                    const lastTripleIdx = tail.lastIndexOf('```');
-                    let safeEnd: number;
-                    if (lastTripleIdx === -1) {
-                        // No ``` at all — hold back 1-2 trailing backticks that could start one
-                        const trailingTicks = tail.match(/`+$/)?.[0].length ?? 0;
-                        safeEnd = trailingTicks > 0 && trailingTicks < 3
-                            ? fullContent.length - trailingTicks
-                            : fullContent.length;
-                    } else {
-                        const afterTriple = tail.slice(lastTripleIdx + 3);
-                        // Unresolved if nothing follows, or a tool-name letter without a newline yet
-                        const unresolved = afterTriple.length === 0 ||
-                            (/^[wrslfesgbmdu]/.test(afterTriple) && !afterTriple.includes('\n'));
-                        safeEnd = unresolved ? dispatchedUpTo + lastTripleIdx : fullContent.length;
-                    }
-                    // Never display the body of a tool fence that is still open: it is either
-                    // dispatched once complete or dropped if the stream is cut off.
-                    const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
-                    if (openFence !== -1) {
-                        safeEnd = Math.min(safeEnd, openFence);
-                        reportDraftProgress(fullContent.slice(openFence));
-                    } else if (draftReported) {
-                        draftReported = false;
-                        this._post({ type: 'activity', text: null });
-                    }
-                    if (safeEnd > lastSentPos) {
-                        this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, safeEnd) });
-                        lastSentPos = safeEnd;
-                    }
-                };
-
-                // The system prompt and tool list stay the same for the whole task so providers can reuse
-                // their prompt cache. A phase change is added to the conversation instead (append-only).
-                const { systemPrompt: systemPromptOverride, phaseNote } = splitPhasePrompt(exploration.systemPrompt(this._readOnly));
-                if (phaseNote !== currentPhaseNote && (phaseNote || currentPhaseNote)) { appendPhaseNote(this._history, phaseNote); currentPhaseNote = phaseNote; }
-                const projectedHistory = projectHistoryForModel(this._history);
-                const requestHistory = projectedHistory.history;
-                if (this._evaluationMode) {
-                    this._evalProjectedCharsOmitted += projectedHistory.omittedChars;
-                }
-                for await (const chunk of requestModel(requestHistory, effectivePrefix, systemPromptOverride, nativeTools)) {
-                    if (signal.aborted) { break; }
-                    if (recoveryStatusShown) {
-                        recoveryStatusShown = false;
-                        this._post({ type: 'activity', text: null });
-                    }
-                    if (chunk.type === 'thinking') {
-                        this._post({ type: 'appendThinking', id: msgId, text: chunk.text });
-                    } else if (chunk.type === 'content') {
-                        let text = chunk.text;
-                        if (resumeTail !== null) {
-                            // Buffer the start of a resumed response until it can be
-                            // compared with the pre-cutoff text, then drop any repetition.
-                            resumeBuffer += text;
-                            if (resumeBuffer.length < resumeTail.length + 20) { continue; }
-                            text = resumeBuffer.slice(repeatedPrefixLength(resumeTail, resumeBuffer));
-                            resumeTail = null;
-                            resumeBuffer = '';
-                        }
-                        if (text) { await processContent(text); }
-                    } else if (chunk.type === 'native_tool') {
-                        const call: NativeToolCall & { id: string } = {
-                            ...chunk.call,
-                            id: chunk.call.id ?? `codico_${nodeCrypto.randomBytes(8).toString('hex')}`,
-                        };
-                        // A native `clarify` call becomes the <clarify> block the panel renders.
-                        // It is not recorded as a tool call: the turn ends waiting for the user.
-                        const clarifyBlock = nativeClarifyBlock(call);
-                        if (clarifyBlock) {
-                            await processContent(`${fullContent.trim() ? '\n\n' : ''}${clarifyBlock}\n`);
-                            continue;
-                        }
-                        const tool = nativeToolCallToToolCall(call);
-                        if (!tool) {
-                            // Unknown tool or unusable arguments: return the error as the tool
-                            // result so the model can correct the call and the turn continues.
-                            const result = invalidNativeCallResult(call);
-                            nativeToolExecutions.push({ call, result });
-                            inlineToolResults.push(result);
-                            continue;
-                        }
-                        const dispatched = await dispatchToolCall(tool);
-                        nativeToolExecutions.push({ call, result: dispatched.result });
-                    } else if (chunk.type === 'reasoning') {
-                        iterationReasoning = chunk.text;
-                    } else if (chunk.type === 'usage') {
-                        this._lastPromptTokens = chunk.promptTokens;
-                        this._evalPromptTokens += chunk.promptTokens;
-                        this._evalCompletionTokens += chunk.completionTokens;
-                        if (this._evaluationMode && this._evaluationTokenBudget > 0 && this._evalPromptTokens + this._evalCompletionTokens >= this._evaluationTokenBudget) { this._evalBudgetExceeded = true; }
-                        taskUsage.add(chunk.totalTokens, chunk.costUsd, chunk.cachedTokens, chunk.promptTokens, chunk.completionTokens);
-                        this._post({ type: 'tokenUsage', taskRequests: taskUsage.requests, promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens, totalTokens: chunk.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: chunk.cachedTokens, taskCachedTokens: taskUsage.cachedTokens });
-                    } else if (chunk.type === 'finish') {
-                        const reason = normalizeFinishReason(chunk.reason);
-                        if (reason === 'length') {
-                            recoverableFinishReason = reason;
-                        } else {
-                            this._post({ type: 'streamFinishReason', id: msgId, reason });
-                        }
-                    } else if (chunk.type === 'stream_error') {
-                        if (isRecoverableStreamInterruption(chunk.message)) {
-                            recoverableStreamInterruption = chunk.message;
-                        } else {
-                            this._post({ type: 'streamError', id: msgId, message: chunk.message });
-                        }
-                    }
-                }
-
-                if (draftReported) { this._post({ type: 'activity', text: null }); }
-
-                // Stream ended while the start of a resumed response was still buffered
-                if (resumeTail !== null && resumeBuffer) {
-                    const text = resumeBuffer.slice(repeatedPrefixLength(resumeTail, resumeBuffer));
-                    resumeTail = null;
-                    resumeBuffer = '';
-                    if (text && !signal.aborted) { await processContent(text); }
-                }
-
-                // On a cutoff, drop an incomplete trailing tool fence: it was never shown or
-                // executed, and the model re-issues it in full when it resumes.
-                const isCutoff = !signal.aborted && (recoverableStreamInterruption !== null || recoverableFinishReason === 'length');
-                let droppedToolCall = false;
-                if (isCutoff) {
-                    const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
-                    if (openFence !== -1) {
-                        fullContent = fullContent.slice(0, Math.max(openFence, lastSentPos));
-                        droppedToolCall = true;
-                    }
-                }
-
-                // A model can end its response cleanly without writing the closing ``` of
-                // its last tool fence. Close it and dispatch the call instead of silently
-                // treating the turn as finished. Cut-off streams are left to recovery.
-                const cleanEnd = !signal.aborted && !recoverableStreamInterruption && recoverableFinishReason !== 'length';
-                // A closing fence line that is the very last thing in the stream
-                if (cleanEnd) { await dispatchFences(true); }
-                const unclosed = cleanEnd ? scanToolFences(fullContent, dispatchedUpTo, true) : null;
-                const unclosedFenceStart = unclosed ? unclosed.unclosedStart : -1;
-                if (unclosed && unclosedFenceStart !== -1) {
-                    const ticks = /^`+/.exec(fullContent.slice(unclosedFenceStart))?.[0] ?? '```';
-                    const tools = parseToolBody(unclosed.unclosedType ?? '', (unclosed.unclosedBody ?? '').replace(/\r?\n$/, ''));
-                    if (!fullContent.endsWith('\n')) { fullContent += '\n'; }
-                    fullContent += ticks;
-                    if (tools.length > 0) {
-                        if (unclosedFenceStart > lastSentPos) {
-                            this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos, unclosedFenceStart) });
-                        }
-                        lastSentPos = fullContent.length;
-                        dispatchedUpTo = fullContent.length;
-                        const dispatched = await dispatchToolCall(tools[0]);
-                        fencedToolResults.push(dispatched.result);
-                    }
-                }
-
-                // Flush any remaining content after stream ends
-                if (lastSentPos < fullContent.length) {
-                    this._post({ type: 'appendContent', id: msgId, text: fullContent.slice(lastSentPos) });
-                }
-
-                if (signal.aborted) {
-                    // Preserve completed native tool calls/results even when the user stops
-                    // the turn after a tool has already finished.
-                    if (fullContent.trim() || inlineToolResults.length > 0) {
-                        appendAssistantIteration(this._history, fullContent, nativeToolExecutions, '(interrupted)', iterationReasoning);
-                        // Text-format tools: what the finished calls returned is kept too (an applied edit, a command's output)
-                        if (fencedToolResults.length > 0) { this._history.push({ role: 'user', content: `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}` }, { role: 'assistant', content: STOPPED_NOTE }); }
-                    }
-                    break;
-                }
-
-                appendAssistantIteration(
-                    this._history,
-                    fullContent,
-                    nativeToolExecutions,
-                    recoverableStreamInterruption
-                        ? '[Stream interrupted before content]'
-                        : '[Assistant turn completed without text]',
-                    iterationReasoning
-                );
-
-                // Unexpected transport EOFs are recoverable: preserve the partial
-                // assistant response and any tool results, then ask the model to
-                // continue from the exact cutoff point. This avoids replaying tools or
-                // discarding useful partial output. Recovery is deliberately bounded.
-                if (recoverableStreamInterruption || recoverableFinishReason === 'length') {
-                    if (streamRecoveryAttempts < MAX_STREAM_RECOVERY_ATTEMPTS) {
-                        streamRecoveryAttempts++;
-
-                        const recoveryParts: string[] = [];
-                        if (fencedToolResults.length > 0) {
-                            recoveryParts.push(`[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`);
-                        }
-
-                        const cause = recoverableStreamInterruption
-                            ? 'The previous assistant response was interrupted by the network/stream transport.'
-                            : 'The previous assistant response reached the provider output-token limit.';
-
-                        recoveryParts.push(
-                            '[System Recovery]\n' +
-                            cause + ' ' +
-                            'Your output is appended directly after what was already shown to the user, so continue exactly ' +
-                            'from where it stopped, even mid-sentence. Do not repeat text that was already produced, do not ' +
-                            'mention the interruption, and do not repeat tool calls that already completed.' +
-                            (droppedToolCall
-                                ? ' Your last tool call was cut off before it was complete and was NOT executed: issue it again in full as one complete valid fence.'
-                                : '')
-                        );
-                        this._history.push({ role: 'user', content: recoveryParts.join('\n\n') });
-
-                        // Compare the resumed response against the text shown just before the cutoff
-                        const visibleTail = fullContent.slice(dispatchedUpTo).slice(-RESUME_OVERLAP_WINDOW);
-                        resumeTail = visibleTail.trim() ? visibleTail : null;
-
-                        this._post({ type: 'activity', text: recoverableStreamInterruption ? 'Reconnecting\u2026' : 'Continuing\u2026' });
-                        recoveryStatusShown = true;
-
-                        // Give a dropped connection a moment before reconnecting
-                        if (recoverableStreamInterruption) {
-                            await new Promise(resolve => setTimeout(resolve, 1000 * streamRecoveryAttempts));
-                        }
-
-                        // Recovery should not consume an agentic tool iteration.
-                        i--;
-                        continue;
-                    }
-
-                    if (recoverableFinishReason === 'length') {
-                        this._post({ type: 'streamFinishReason', id: msgId, reason: 'length' });
-                    } else {
-                        this._post({
-                            type: 'streamError',
-                            id: msgId,
-                            message: `${recoverableStreamInterruption} Automatic recovery failed after ${MAX_STREAM_RECOVERY_ATTEMPTS} attempts.`,
-                        });
-                    }
-                    break;
-                }
-
-                streamRecoveryAttempts = 0;
-                if (inlineToolResults.length === 0) {
-                    // A clarifying question ends the turn: wait for the user's answer
-                    if (/<clarify>[\s\S]*?<\/clarify>/.test(fullContent)) { break; }
-                    const verificationGuidance = exploration.completionGuidance();
-                    if (verificationGuidance) {
-                        if (verificationNudges >= MAX_STALLED_VERIFICATION_NUDGES) {
-                            const pendingWork = verificationGuidance.startsWith('[System Action]')
-                                ? 'make the code change this task requires'
-                                : 'verify its change';
-                            this._post({
-                                type: 'appendContent',
-                                id: msgId,
-                                text: `\n\n> ⚠️ Stopped after ${verificationNudges} reminders: the model kept ending its turn without trying to ${pendingWork}, so this task is not verified as complete.`,
-                            });
-                            break;
-                        }
-                        verificationNudges++;
-                        this._history.push({ role: 'user', content: verificationGuidance });
-                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
-                    }
-                    // Some models announce an action ("I'll locate the file.") and end the
-                    // turn without emitting the tool fence. Ask them to issue it rather than
-                    // treating the announcement as the final answer. Bounded per request.
-                    if (isUnfulfilledActionAnnouncement(fullContent) && actionNudges < MAX_ACTION_NUDGES) {
-                        actionNudges++;
-                        this._history.push({
-                            role: 'user',
-                            content: '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
-                                'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.',
-                        });
-                        this._post({ type: 'appendContent', id: msgId, text: '\n\n' });
-                        continue;
-                    }
-                    break;
-                }
-
-                actionNudges = 0;
-                // The model is calling tools again, so reminders are no longer "stalled"
-                verificationNudges = 0;
-                blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
-                if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
-                    this._post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
-                }
-
-                // ── Mid-stream auto-compact ────────────────────────────────────────
-                // Compact between iterations while the agent loop is still running so
-                // the stream never terminates due to context overflow. The compact runs
-                // silently between the current and next iteration; the UI stays in the
-                // streaming state and continues as soon as compaction finishes.
-                const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 60_000);
-                if (this._autoCompact && this._lastPromptTokens > autoCompactThresholdMid && this._history.length >= this._compactRetryAt) {
-                    const sizeBefore = this._history.length;
-                    await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
-                    if (this._history.length < sizeBefore) { taskUsage.markCompaction(); }
-                    currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
-                }
-
-                // Fenced compatibility tools return results as a normal user message.
-                // Native calls already have provider-native tool result turns above.
-                if (fencedToolResults.length > 0) {
-                    const resultText = `[Tool Results]\n\n${fencedToolResults.join('\n\n---\n\n')}`;
-                    this._history.push({ role: 'user', content: resultText });
-                }
-
-                // Token budget: pause each time the task crosses another budget's worth
-                if (taskUsage.budgetExceeded) {
-                    if (!await this._awaitCheckpoint(msgId, i + 1, signal, taskUsage.budgetPrompt())) { break; }
-                    taskUsage.extendBudget();
-                }
-                // The agent goes on to another request: a message queued meanwhile goes with it
-                if (this._steer) { addSteer(this._history, this._steer); this._post({ type: 'appendContent', id: msgId, text: steerNote(this._steer) }); this._post({ type: 'queuedDelivered' }); this._steer = ''; }
-
-            }
-        } catch (err: unknown) {
-            // Only roll back if no tool calls have completed yet.  If the history already
-            // contains assistant replies (length > rollback+1), those iterations wrote files
-            // that are now on disk — wiping them from history would make chat state diverge
-            // from the file system.  Keep completed history; only trim an orphaned user message.
-            // Only ever shorten: if mid-turn compaction already replaced the history it can be
-            // shorter than historyRollbackLen, and assigning length would pad it with holes.
-            if (this._history.length > historyRollbackLen && this._history.length <= historyRollbackLen + 1) {
-                this._history.length = historyRollbackLen;
-            }
-            if (this._displayMessages.length > displayRollbackLen) {
-                this._displayMessages.length = displayRollbackLen;
-            }
-            if (!signal.aborted) {
-                const message = err instanceof Error ? err.message : String(err);
-                this._post({ type: 'error', message });
-            }
-        }
+        // The agent loop: requests, tools, recovery and stop rules, until the reply is complete
+        await new AgentTurn(AgentProvider._turnHost(this)).run({ accoOptimizer, apiKey, config, directApiKey, directParsed, displayRollbackLen, effectivePrefix, historyRollbackLen, isCli, isDirect, isOllama, maxIterations, model, msgId, mutationGraceIterations, nativeToolCalling, ollamaBaseUrl, ollamaModel, rawText, taskUsage, verificationGraceIterations, signal });
 
         // The change report: what this turn changed, and what was checked afterwards
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
@@ -1647,9 +1068,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // Persist conversation history + display transcript
         await this._historyStore.update(this._historyKey, this._history);
-        await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
-        await this._updateThreadMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText, taskUsage);
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
+        await this._store.update(threadDisplayKey(this._activeThreadId), this._displayMessages);
+        await this._threads.updateMeta(this._planGoal !== null ? `Plan: ${this._planGoal}` : rawText, taskUsage);
+        this._post({ type: 'threadList', threads: this._threads.list() });
 
         // Generate follow-up suggestions (non-blocking, best-effort)
         const followUpEnabled = vscode.workspace.getConfiguration('codico').get<boolean>('followUpSuggestionsEnabled', true);
@@ -1661,13 +1082,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // ── Auto-commit ───────────────────────────────────────────────────────
         if (!signal.aborted && this._autoCommit && this._filesWrittenThisTurn > 0) {
-            void this._runAutoCommit(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, rawText, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
+            void autoCommit(this._panel, apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, rawText, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '');
         }
 
         // ── Auto-compact: summarize history when prompt tokens exceed threshold ──
         const autoCompactThreshold = config.get<number>('autoCompactThreshold', 60_000);
         if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold && this._history.length >= this._compactRetryAt) {
-            await this._compactHistory(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
+            await this._compaction.run(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
         }
 
         } finally {
@@ -1678,18 +1099,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    /** Shows a Continue / Stop prompt and resolves with the user's choice (Stop or abort = false). */
-    private async _awaitCheckpoint(msgId: string, steps: number, signal: AbortSignal, reason?: string): Promise<boolean> {
-        // An already-aborted signal never fires 'abort' again
-        if (signal.aborted) { return false; }
-        const keepGoing = await new Promise<boolean>((resolve) => {
-            this._checkpointResolver = resolve;
-            signal.addEventListener('abort', () => resolve(false), { once: true });
-            this._post({ type: 'checkpoint', id: msgId, steps, reason });
-        });
-        this._checkpointResolver = null;
-        return keepGoing;
-    }
 
     /** Marks the agent free and runs the next message that arrived while it was busy. */
     private _releaseBusy(): void {
@@ -1722,19 +1131,10 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         if (!this._busy) { return; }
         const idle = this._whenIdle();
         this._abortController?.abort();
-        this._cancelTurnPrompts();
+        this._approvals.cancelAll();
         await idle;
     }
 
-    /** Resolves open permission prompts and checkpoints as declined so a stopped turn can end. */
-    private _cancelTurnPrompts(): void {
-        for (const resolve of this._pendingWritePermissions.values()) { resolve({ granted: false }); }
-        this._pendingWritePermissions.clear();
-        for (const resolve of this._pendingTerminalPermissions.values()) { resolve(false); }
-        this._pendingTerminalPermissions.clear();
-        this._checkpointResolver?.(false);
-        this._checkpointResolver = null;
-    }
 
     private async _generateFollowUps(msgId: string, apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, signal: AbortSignal, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
         const suggestions = await generateFollowUps(this._history,
@@ -1744,157 +1144,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _runAutoCommit(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, userPrompt: string, isDirect = false, directKey = '', directProviderId = '', directModelId = ''): Promise<void> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) { return; }
-        const cwd = folders[0].uri.fsPath;
 
-        try {
-            // Stage all changes
-            await runGit(['add', '-A'], cwd);
-
-            // Check if there is actually anything staged
-            const staged = await runGit(['diff', '--staged', '--name-only'], cwd).catch(() => '');
-            if (!staged.trim()) { return; }
-
-            // Generate commit message
-            let commitMsg = '';
-            try {
-                const diff = await runGit(['diff', '--staged'], cwd);
-                if (isOllama) {
-                    const systemMsg = 'You are a commit message generator. Given a git diff, produce a concise conventional commit message. Format: type(scope): description — max 72 chars. Output ONLY the commit message, nothing else.';
-                    commitMsg = await ollamaChatCompletion(
-                        ollamaBaseUrl,
-                        [{ role: 'system', content: systemMsg }, { role: 'user', content: `Git diff:\n\n${diff.slice(0, 8000)}` }],
-                        ollamaModel,
-                        100
-                    );
-                } else if (isDirect) {
-                    const commitPrompt = `Generate a concise conventional commit message for this diff. Format: type(scope): description — max 72 chars. Output ONLY the commit message.\n\nGit diff:\n\n${diff.slice(0, 8000)}`;
-                    commitMsg = await directSingleCompletion(directKey, directProviderId, directModelId, commitPrompt, 100, this._sessionAbort.signal);
-                } else {
-                    commitMsg = await fetchCommitMessage(apiKey, model, diff);
-                }
-            } catch { /* fall back to prompt-based message */ }
-
-            if (!commitMsg) {
-                const label = userPrompt.replace(/\s+/g, ' ').trim().slice(0, 60);
-                commitMsg = `feat: ${label}${label.length < userPrompt.trim().length ? '…' : ''}`;
-            }
-
-            commitMsg = commitMsg.trim().replace(/^["']|["']$/g, '');
-            await runGit(['commit', '-m', commitMsg], cwd);
-
-            this._post({ type: 'autoCommitDone', message: commitMsg });
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'autoCommitError', message });
-        }
-    }
-
-    private async _compactHistory(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, isDirect = false, directKey = '', directProviderId = '', directModelId = '', signal: AbortSignal = this._sessionAbort.signal): Promise<void> {
-        if (signal.aborted) { this._post({ type: 'compactCancelled' }); return; }
-        const plan = planCompaction(this._history);
-        if (!plan) {
-            this._post({ type: 'compactDone', messageCount: 0 });
-            return;
-        }
-
-        this._post({ type: 'compactStart' });
-        const prompt = summarizerPrompt(plan);
-        // Room for the summary even when a reasoning model spends part of the budget thinking
-        const SUMMARY_MAX_TOKENS = 4000;
-
-        const ask = async (): Promise<string> => {
-            if (isCliModel(model)) {
-                return cliModelCompletion(model, prompt, signal);
-            } else if (isOllama) {
-                return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal);
-            } else if (isDirect) {
-                return directSingleCompletion(directKey, directProviderId, directModelId, prompt, SUMMARY_MAX_TOKENS, signal);
-            } else {
-                const body = JSON.stringify({
-                    model,
-                    messages: [{ role: 'user', content: prompt }],
-                    max_tokens: SUMMARY_MAX_TOKENS,
-                    temperature: 0.1,
-                    reasoning: { effort: 'low' },
-                });
-                return new Promise<string>((resolve) => {
-                    const req = https.request(
-                        {
-                            hostname: 'openrouter.ai',
-                            path: '/api/v1/chat/completions',
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${apiKey}`,
-                                'Content-Type': 'application/json',
-                                'HTTP-Referer': 'vscode-codico',
-                                'X-Title': 'Codico',
-                                'Content-Length': Buffer.byteLength(body),
-                            },
-                        },
-                        (res) => {
-                            let data = '';
-                            let totalBytes = 0;
-                            res.setEncoding('utf8'); // keeps characters split across chunks intact
-                            res.on('data', (c: string) => {
-                                totalBytes += c.length;
-                                if (totalBytes > 256 * 1024) { res.destroy(); resolve(''); return; }
-                                data += c.toString();
-                            });
-                            res.on('end', () => {
-                                try { resolve(JSON.parse(data)?.choices?.[0]?.message?.content ?? ''); }
-                                catch { resolve(''); }
-                            });
-                            res.on('error', () => resolve(''));
-                        }
-                    );
-                    req.setTimeout(30_000, () => { req.destroy(); resolve(''); });
-                    req.on('error', () => resolve(''));
-                    signal.addEventListener('abort', () => { req.destroy(); resolve(''); }, { once: true });
-                    req.write(body);
-                    req.end();
-                });
-            }
-        };
-
-        // A bad summary would replace the history and the agent would forget its work: check it,
-        // retry once, and otherwise keep the history as it is
-        let summary = '';
-        let problem: string | null = null;
-        try {
-            for (let attempt = 0; attempt < 2 && !signal.aborted; attempt++) {
-                summary = await ask();
-                problem = summaryProblem(summary, plan);
-                if (!problem) { break; }
-            }
-        } catch (err: unknown) {
-            if (signal.aborted) { this._post({ type: 'compactCancelled' }); return; }
-            problem = err instanceof Error ? err.message : String(err);
-        }
-
-        // Stopped while summarising: keep the history as it was, and don't bill another step
-        if (signal.aborted) {
-            this._post({ type: 'compactCancelled' });
-            return;
-        }
-
-        if (problem) {
-            // Not retried on every step: wait until the history has grown
-            this._compactRetryAt = this._history.length + 10;
-            this._post({ type: 'compactError', message: `History kept as it is: ${problem}.` });
-            return;
-        }
-        this._compactRetryAt = 0;
-
-        // The current request stays verbatim; the kept tail starts at a complete exchange
-        this._history = buildCompactedHistory(summary, plan);
-        this._lastPromptTokens = 0;
-
-        await this._historyStore.update(this._historyKey, this._history);
-        this._post({ type: 'compactDone', messageCount: this._history.length - 1 });
-    }
 
     /** Dispatches a single tool call immediately, stores result in _lastInlineResult */
     private async _dispatchTool(tool: ToolCall, msgId: string, signal: AbortSignal): Promise<void> {
@@ -1931,7 +1181,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         switch (tool.type) {
             case 'write_file': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'write_file', label: tool.filepath });
-                result = await this._handleWriteFile(tool, msgId);
+                result = await this._tools.writeFile(tool, msgId);
                 break;
             }
             case 'read_file': {
@@ -1946,7 +1196,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'run_terminal': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'run_terminal', label: tool.command.slice(0, 72) });
-                result = await this._handleRunTerminal(tool, msgId, signal);
+                result = await this._tools.runTerminal(tool, msgId, signal);
                 break;
             }
             case 'search_code': {
@@ -1961,17 +1211,17 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 // so showToolResult can find the pending pill and update it in-place.
                 const searchLabel = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
                 this._post({ type: 'toolStart', id: msgId, tool: 'search_files', label: searchLabel });
-                result = await untilStopped(this._handleSearchFiles(tool, msgId), signal, stopped);
+                result = await untilStopped(this._tools.searchFiles(tool, msgId), signal, stopped);
                 break;
             }
             case 'find_files': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'find_files', label: tool.pattern });
-                result = await untilStopped(this._handleFindFiles(tool, msgId), signal, stopped);
+                result = await untilStopped(this._tools.findFiles(tool, msgId), signal, stopped);
                 break;
             }
             case 'edit_file': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'edit_file', label: tool.filepath });
-                result = await this._handleEditFile(tool, msgId);
+                result = await this._tools.editFile(tool, msgId);
                 break;
             }
             case 'get_diagnostics': {
@@ -1994,8 +1244,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             }
             case 'remember': {
                 // After web or MCP content was read, a note is never saved without being shown: it would be read as fact by every later session
-                if (this._external.untrustedContentSeen) { this._allowAllWrites = false; }
-                result = await rememberTool(tool, content => this._handleWriteFile({ type: 'write_file', filepath: MEMORY_FILE, content }, msgId));
+                if (this._external.untrustedContentSeen) { this._approvals.allowAllWrites = false; }
+                result = await rememberTool(tool, content => this._tools.writeFile({ type: 'write_file', filepath: MEMORY_FILE, content }, msgId));
                 break;
             }
             case 'fetch_url': {
@@ -2077,502 +1327,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         this._lastInlineResult = result + await this._hooks.after(tool, result, signal);
     }
 
-    private async _handleWriteFile(tool: WriteFileTool, msgId: string): Promise<string> {
-        try {
-            const target = await resolveWorkspaceToolPath(tool.filepath);
-            const beforeBytes = await readCurrentBytes(target.uri);
-            const beforeText = beforeBytes ? new TextDecoder().decode(beforeBytes) : '';
-
-            if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, uri: target.uri, originalContent: beforeBytes, proposedContent: tool.content, label: `write ${tool.filepath}` });
-                this._post({ type: 'proposalQueued', filepath: tool.filepath });
-                return `[write_file: ${tool.filepath}] Queued as edit proposal`;
-            }
-
-            const diff = this._computeLineDiff(beforeText, tool.content);
-            let writeResult: { granted: boolean; editedContent?: string };
-            if (this._allowAllWrites) {
-                writeResult = { granted: true };
-            } else {
-                const permId = nodeCrypto.randomBytes(8).toString('hex');
-                writeResult = await new Promise<{ granted: boolean; editedContent?: string }>((resolve) => {
-                    this._pendingWritePermissions.set(permId, resolve);
-                    this._post({ type: 'writePermissionRequest', id: msgId, permId, filepath: tool.filepath, preview: '', diff, editableContent: tool.content });
-                });
-            }
-
-            if (!writeResult.granted) {
-                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false });
-                return `[write_file: ${tool.filepath}] Denied by user`;
-            }
-
-            // Approval can take a while: if the file changed meanwhile (the user edited it),
-            // writing would silently replace those changes with content they never saw
-            if (!sameBytes(await readCurrentBytes(target.uri), beforeBytes)) {
-                this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: 'File changed while waiting for approval' });
-                return `[write_file: ${tool.filepath}] Not written: the file changed while waiting for approval (probably edited by the user). Read it again and make your change on its current content.`;
-            }
-
-            const contentToWrite = writeResult.editedContent ?? tool.content;
-            const finalDiff = writeResult.editedContent ? this._computeLineDiff(beforeText, contentToWrite) : diff;
-            await this._fileManager.writeFile(tool.filepath, contentToWrite);
-
-            const after = new TextEncoder().encode(contentToWrite);
-            this._undoRedo.push({ filepath: tool.filepath, uri: target.uri, before: beforeBytes, after, label: `write_file ${tool.filepath}` });
-            this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: true, diff: finalDiff });
-            this._passport.recordChange(tool.filepath, beforeBytes ? beforeText : null, contentToWrite);
-            this._filesWrittenThisTurn++;
-            const lineCount = contentToWrite.split('\n').length;
-            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath, beforeText)}`;
-        } catch (err: unknown) {
-            const errorMsg = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
-            return `[write_file: ${tool.filepath}] Error: ${errorMsg}`;
-        }
-    }
-
-    private async _handleRunTerminal(tool: RunTerminalTool, msgId: string, signal: AbortSignal): Promise<string> {
-        const shortCmd = tool.command.length > 80
-            ? tool.command.slice(0, 80) + '\u2026'
-            : tool.command;
-
-        // Confined by the operating system when the user asked for it; where that is required and not possible, not run at all
-        const sandbox = await commandSandbox();
-        if (sandbox.refusal) { this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'No sandbox' }); return `[run_terminal: ${tool.command}] ${sandbox.refusal}`; }
-        // After the agent has read external content this turn, Allow All no longer covers
-        // commands: a prompt-injected page must not be able to run them unattended.
-        const askAgain = this._allowAllTerminal && !this._evaluationMode && this._external.untrustedContentSeen;
-        // A remembered command is not asked about, with the same exception
-        const remembered = this._external.untrustedContentSeen ? undefined : this.approvedCommands.allows(tool.command);
-        let granted: boolean;
-        if ((this._allowAllTerminal && !askAgain) || remembered) {
-            granted = true;
-        } else {
-            const permId = nodeCrypto.randomBytes(8).toString('hex');
-            granted = await new Promise<boolean>((resolve) => {
-                this._pendingTerminalPermissions.set(permId, resolve);
-                this._post({ type: 'terminalPermissionRequest', id: msgId, permId, command: tool.command, rules: askAgain ? [] : this.approvedCommands.offer(permId, tool.command),
-                    note: askAgain ? 'Asking again: the agent read web or MCP content in this turn, so Allow All does not cover commands.' : undefined });
-            });
-        }
-
-        if (!granted) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'Denied' });
-            return `[run_terminal] Denied by user:\n${tool.command}`;
-        }
-
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        const timeoutSec = Math.max(
-            10,
-            vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300)
-        );
-
-        this._post({ type: 'terminalChunk', id: msgId, text: '' });
-        const result = await runTerminalProcess({
-            command: tool.command,
-            cwd,
-            timeoutMs: timeoutSec * 1000,
-            signal, sandbox: sandbox.wrap,
-            onChunk: (text) => this._post({ type: 'terminalChunk', id: msgId, text }),
-        });
-
-        if (result.stopped) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false });
-            return `[run_terminal: ${tool.command}] Stopped by user.\n${clipTerminalOutput(result.output)}`;
-        }
-        if (result.timedOut) {
-            const message = `Timed out after ${timeoutSec}s`;
-            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: message });
-            this._passport.recordCommand(tool.command, null, result.output);
-            return `[run_terminal: ${tool.command}]\n(timed out after ${timeoutSec}s — the command and its child processes were killed. Long-running processes such as servers must not be started with run_terminal.)\n${clipTerminalOutput(result.output)}`;
-        }
-        if (result.error) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: result.error });
-            return `[run_terminal: ${tool.command}] ERROR: ${result.error}`;
-        }
-
-        const bgNote = result.backgroundProcessGroup &&
-            this._trackBackgroundGroup(result.backgroundProcessGroup, tool.command)
-            ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
-            : '';
-        const success = result.exitCode === 0;
-        this._passport.recordCommand(tool.command, result.exitCode ?? null, result.output);
-        this._post({
-            type: 'toolResult',
-            id: msgId,
-            tool: 'run_terminal',
-            label: shortCmd,
-            success,
-            error: success ? undefined : `Exit ${result.exitCode}`,
-        });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}`;
-    }
-
-    /** Records `pgid` if any process in that group is still alive. Returns true when tracked. */
-    private _trackBackgroundGroup(pgid: number, command: string): boolean {
-        if (!AgentProvider._groupAlive(pgid)) { return false; }
-        this._bgProcesses.set(pgid, { command, startedAt: Date.now() });
-        this._postBackgroundProcesses();
-        if (!this._bgPollTimer) {
-            this._bgPollTimer = setInterval(() => this._pruneBackgroundProcesses(), 5_000);
-        }
-        return true;
-    }
-
-    private static _groupAlive(pgid: number): boolean {
-        return processGroupAlive(pgid);
-    }
-
-    private _pruneBackgroundProcesses(): void {
-        let changed = false;
-        for (const pgid of [...this._bgProcesses.keys()]) {
-            if (!AgentProvider._groupAlive(pgid)) { this._bgProcesses.delete(pgid); changed = true; }
-        }
-        if (this._bgProcesses.size === 0 && this._bgPollTimer) {
-            clearInterval(this._bgPollTimer);
-            this._bgPollTimer = undefined;
-        }
-        if (changed) { this._postBackgroundProcesses(); }
-    }
-
-    private _killBackgroundProcesses(): void {
-        for (const pgid of this._bgProcesses.keys()) {
-            killProcessGroup(pgid, 'SIGTERM');
-            setTimeout(() => killProcessGroup(pgid, 'SIGKILL'), 3_000);
-        }
-        this._bgProcesses.clear();
-        if (this._bgPollTimer) { clearInterval(this._bgPollTimer); this._bgPollTimer = undefined; }
-        this._postBackgroundProcesses();
-    }
-
-    private _postBackgroundProcesses(): void {
-        this._post({
-            type: 'backgroundProcesses',
-            processes: [...this._bgProcesses.values()].map(p => ({ command: p.command, startedAt: p.startedAt })),
-        });
-    }
-
-    private async _handleSearchFiles(tool: SearchFilesTool, msgId: string): Promise<string> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders || folders.length === 0) {
-            this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: 'No workspace folder open' });
-            return '[search_files] ERROR: No workspace folder open';
-        }
-
-        let matcher: RegExp | null = null;
-        if (tool.isRegex) {
-            try {
-                matcher = new RegExp(tool.pattern);
-            } catch (err) {
-                const message = err instanceof Error ? err.message : String(err);
-                this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: tool.pattern, success: false, error: message });
-                return `[search_files: ${tool.pattern}] ERROR: Invalid regular expression: ${message}`;
-            }
-        }
-
-        const include = tool.glob?.trim() || '**/*';
-        const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-        const uris = await filterAllowedWorkspaceUris(
-            await vscode.workspace.findFiles(include, exclude, 600)
-        );
-        const scan = async (test: (line: string) => boolean): Promise<string[]> => {
-            const found: string[] = [];
-            for (const uri of uris) {
-                if (found.length >= 1000) { break; }
-                try {
-                    const bytes = await vscode.workspace.fs.readFile(uri);
-                    if (bytes.byteLength > 1_000_000) { continue; }
-                    const text = new TextDecoder().decode(bytes);
-                    if (text.includes('\x00')) { continue; }
-                    const rel = vscode.workspace.asRelativePath(uri);
-                    const lines = text.split('\n');
-                    for (let i = 0; i < lines.length && found.length < 1000; i++) {
-                        if (test(lines[i])) { found.push(`${rel}:${i + 1}:${lines[i].slice(0, 300)}`); }
-                    }
-                } catch {
-                    // Skip unreadable files; continue searching the rest of the workspace.
-                }
-            }
-            return found;
-        };
-        let matches = await scan(matcher ? (line) => matcher!.test(line) : (line) => line.includes(tool.pattern));
-        // Models often send "a|b" without regex mode; such a literal search finds nothing
-        let note = '';
-        if (matches.length === 0 && !matcher && looksLikeIntendedRegex(tool.pattern)) {
-            const re = new RegExp(tool.pattern);
-            matches = await scan((line) => re.test(line));
-            note = ' (no literal matches; searched as a regular expression)';
-        }
-
-        const label = tool.glob ? `"${tool.pattern}" in ${tool.glob}` : `"${tool.pattern}"`;
-        this._post({ type: 'toolResult', id: msgId, tool: 'search_files', label: `${label} — ${matches.length} matches`, success: true });
-        return matches.length > 0
-            ? `[search_files: ${label}]${note}\n${renderSearchMatches(matches, matches.length < 1000)}\nUse read_file start_line/end_line around the most relevant matches instead of reading large files whole.`
-            : `[search_files: ${label}] No matches found${note}`;
-    }
-
-    private async _handleFindFiles(tool: FindFilesTool, msgId: string): Promise<string> {
-        try {
-            const cleanPattern = tool.pattern.replace(/^\*\*\//, '');
-            let include: vscode.GlobPattern = `**/${cleanPattern}`;
-            const requestedDir = (tool.dirpath ?? '').trim();
-            if (requestedDir && requestedDir !== '.') {
-                const target = await resolveWorkspaceToolPath(requestedDir, true);
-                const scopedPattern = target.relativePath
-                    ? `${target.relativePath}/**/${cleanPattern}`
-                    : `**/${cleanPattern}`;
-                include = new vscode.RelativePattern(target.folder, scopedPattern);
-            }
-
-            const exclude = '**/{node_modules,.git,out,dist,coverage,.next,target}/**';
-            const uris = await filterAllowedWorkspaceUris(
-                await vscode.workspace.findFiles(include, exclude, 200)
-            );
-            const result = uris.map(uri => vscode.workspace.asRelativePath(uri));
-            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: `${tool.pattern} — ${result.length} file(s)`, success: true });
-            return result.length > 0
-                ? `[find_files: ${tool.pattern}]\n${result.join('\n')}${result.length >= 200 ? '\n… (truncated at 200)' : ''}`
-                : `[find_files: ${tool.pattern}] No files found`;
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'find_files', label: tool.pattern, success: false, error: message });
-            return `[find_files: ${tool.pattern}] ERROR: ${message}`;
-        }
-    }
-
-    private async _handleEditFile(tool: EditFileTool, msgId: string): Promise<string> {
-        try {
-            const fileUri = (await resolveWorkspaceToolPath(tool.filepath)).uri;
-            // Edits mode: a file can have a queued (unwritten) proposal. Build on it, or earlier
-            // edits to the same file are lost and edits to a file created by write_file fail.
-            const pending = this._editsMode ? this._editProposals.pending(fileUri) : undefined;
-            const bytes = pending ? pending.originalContent : await readCurrentBytes(fileUri);
-            if (!pending && bytes === null) { throw new Error(`File not found: ${tool.filepath}`); }
-            let rawContent = pending ? pending.proposedContent : new TextDecoder().decode(bytes!);
-
-            // Normalize CRLF → LF for matching; oldStr from the parser is always LF-only.
-            // Without this, edit_file fails with "old_str not found" on any CRLF file.
-            let hasCRLF = rawContent.includes('\r\n');
-            let content = hasCRLF ? rawContent.replace(/\r\n/g, '\n') : rawContent;
-
-            // Line numbers copied along from a numbered read are not part of the file
-            const bare = withoutCopiedLineNumbers(content, tool.oldStr, tool.newStr);
-            tool = { ...tool, oldStr: bare.oldText, newStr: bare.newText };
-            const resolved = resolveEditMatch(content, tool.oldStr);
-            if (!resolved.match) {
-                const err = resolved.error === 'ambiguous'
-                    ? `old_str matches ${resolved.candidates}+ locations after safe normalization — provide more context`
-                    : 'old_str not found, including safe whitespace-tolerant matching';
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: err });
-                const fresh = editFailureContext(content, tool.oldStr);
-                return `[edit_file: ${tool.filepath}] ERROR: ${err}${fresh ? `\nCurrent source near the closest requested anchor:\n\`\`\`\n${fresh}\n\`\`\`` : ''}`;
-            }
-            let editMatch = resolved.match;
-
-            const applyEdit = (replacement: string): string => {
-                const replaced = applyEditMatch(content, editMatch, replacement);
-                // Use a negative lookbehind so existing \r\n pairs in replacement are not
-                // double-converted to \r\r\n when restoring the file's original line endings.
-                return hasCRLF ? replaced.replace(/(?<!\r)\n/g, '\r\n') : replaced;
-            };
-
-            // ── Edits Mode: queue proposal instead of writing immediately ──────
-            if (this._editsMode) {
-                this._editProposals.queue({ filepath: tool.filepath, uri: fileUri, originalContent: bytes, proposedContent: applyEdit(tool.newStr), label: `edit ${tool.filepath}` });
-                this._post({ type: 'proposalQueued', filepath: tool.filepath });
-                return `[edit_file: ${tool.filepath}] Queued as edit proposal`;
-            }
-
-            // Full-file diff gives the reviewer complete context (before → proposed file)
-            const proposedLF = applyEditMatch(content, editMatch, tool.newStr);
-            const editDiff = this._computeLineDiff(content, proposedLF);
-
-            let editResult: { granted: boolean; editedContent?: string };
-            if (this._allowAllWrites) {
-                editResult = { granted: true };
-            } else {
-                const permId = nodeCrypto.randomBytes(8).toString('hex');
-                editResult = await new Promise<{ granted: boolean; editedContent?: string }>((resolve) => {
-                    this._pendingWritePermissions.set(permId, resolve);
-                    this._post({ type: 'writePermissionRequest', id: msgId, permId, filepath: tool.filepath, preview: '', diff: editDiff, editableContent: tool.newStr });
-                });
-            }
-            if (!editResult.granted) {
-                this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: 'Denied' });
-                return `[edit_file: ${tool.filepath}] Denied by user`;
-            }
-
-            // Approval can take a while: if the file changed meanwhile (the user edited it),
-            // apply the edit to the current content, or stop rather than overwrite those changes
-            const nowBytes = await readCurrentBytes(fileUri);
-            const nowRaw = nowBytes === null ? null : new TextDecoder().decode(nowBytes);
-            if (nowRaw !== rawContent) {
-                const nowContent = nowRaw?.replace(/\r\n/g, '\n') ?? '';
-                const rematch = nowRaw === null ? null : resolveEditMatch(nowContent, tool.oldStr).match;
-                if (!rematch) {
-                    this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: 'File changed while waiting for approval' });
-                    return `[edit_file: ${tool.filepath}] Not applied: the file changed while waiting for approval (probably edited by the user) and old_str no longer matches. Read it again and redo the edit on its current content.`;
-                }
-                rawContent = nowRaw!;
-                hasCRLF = rawContent.includes('\r\n');
-                content = nowContent;
-                editMatch = rematch;
-            }
-
-            const effectiveNewStr = editResult.editedContent ?? tool.newStr;
-            const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr);
-            // Recomputed when the user edited the replacement or the file changed during approval
-            const finalEditDiff = this._computeLineDiff(content, newContentLF);
-            const newContent = hasCRLF ? newContentLF.replace(/(?<!\r)\n/g, '\r\n') : newContentLF;
-            const before = new TextEncoder().encode(rawContent);
-            const after = new TextEncoder().encode(newContent);
-            await writeCurrentBytes(fileUri, after);
-            await revealFile(fileUri);
-
-            this._undoRedo.push({ filepath: tool.filepath, uri: fileUri, before, after, label: `edit_file ${tool.filepath}` });
-            this._post({ type: 'undoRedoState', ...this._undoRedo.state });
-            this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: true, diff: finalEditDiff });
-            this._passport.recordChange(tool.filepath, rawContent, newContent);
-            this._filesWrittenThisTurn++;
-
-            // Return a context window around the edited region so the model can
-            // confirm the result without issuing a follow-up read_file call.
-            const linesBefore = newContentLF.slice(0, editMatch.start).split('\n').length - 1;
-            // Enough around the edit for the next nearby edit without reading the file again
-            const snippet = editResultSnippet(newContentLF.split('\n'), linesBefore, effectiveNewStr.split('\n').length);
-            const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr, tool.filepath, content);
-            const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
-            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${snippet.from}–${snippet.to}, numbered like read_file):\n\`\`\`\n${snippet.text}\n\`\`\`${invariantAudit}`;
-        } catch (err: unknown) {
-            const message = err instanceof Error ? err.message : String(err);
-            this._post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });
-            return `[edit_file: ${tool.filepath}] ERROR: ${message}`;
-        }
-    }
-
-    // ── Line diff (LCS-based) ─────────────────────────────────────────────────
-    /**
-     * Produces a compact unified-style diff string (lines prefixed with +, -, or space).
-     * Hunk separators are the literal string '@@'.
-     * Input strings are split on '\n'; each side is capped at 500 lines so the
-     * O(n×m) LCS stays fast even for large files.
-     */
-    private _computeLineDiff(before: string, after: string, maxOutputLines = 200): string {
-        return computeLineDiff(before, after, maxOutputLines);
-    }
-
-    private async _handleContextRequest(kind: 'file' | 'selection' | 'diagnostics' | 'files-pick'): Promise<void> {
-        switch (kind) {
-            case 'file': {
-                const editor = vscode.window.activeTextEditor;
-                if (!editor) {
-                    this._post({ type: 'contextSnippet', kind: 'file', label: 'No active file', text: '' });
-                    return;
-                }
-                const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-                const rawText = editor.document.getText();
-                const text = `File: ${relPath}\n\`\`\`${editor.document.languageId}\n${rawText.slice(0, 20_000)}\n\`\`\`${rawText.length > 20_000 ? '\n… (truncated)' : ''}`;
-                this._post({ type: 'contextSnippet', kind: 'file', label: relPath, text });
-                break;
-            }
-            case 'selection': {
-                const editor = vscode.window.activeTextEditor;
-                if (!editor || editor.selection.isEmpty) {
-                    this._post({ type: 'contextSnippet', kind: 'selection', label: 'No selection', text: '' });
-                    return;
-                }
-                const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-                const selText = editor.document.getText(editor.selection);
-                const { start, end } = editor.selection;
-                const text = `Selection from ${relPath} (lines ${start.line + 1}–${end.line + 1}):\n\`\`\`${editor.document.languageId}\n${selText}\n\`\`\``;
-                this._post({ type: 'contextSnippet', kind: 'selection', label: `${relPath}:${start.line + 1}-${end.line + 1}`, text });
-                break;
-            }
-            case 'diagnostics': {
-                const allDiags = vscode.languages.getDiagnostics();
-                const lines: string[] = [];
-                let count = 0;
-                for (const [uri, diags] of allDiags) {
-                    const relPath = vscode.workspace.asRelativePath(uri);
-                    for (const d of diags) {
-                        if (d.severity > vscode.DiagnosticSeverity.Warning) { continue; }
-                        if (count >= 30) { lines.push('…'); break; }
-                        const sev = d.severity === vscode.DiagnosticSeverity.Error ? 'ERROR' : 'WARNING';
-                        lines.push(`${relPath}:${d.range.start.line + 1}: ${sev}: ${d.message}`);
-                        count++;
-                    }
-                    if (count >= 30) { break; }
-                }
-                const text = lines.length > 0
-                    ? `Workspace diagnostics:\n${lines.join('\n')}`
-                    : 'No errors or warnings in workspace.';
-                this._post({ type: 'contextSnippet', kind: 'diagnostics', label: `${count} issue(s)`, text });
-                break;
-            }
-            case 'files-pick': {
-                const folders = vscode.workspace.workspaceFolders;
-                if (!folders || folders.length === 0) { return; }
-                const allFiles = await vscode.workspace.findFiles(
-                    '**/*',
-                    '{**/node_modules/**,**/.git/**,**/out/**,**/.vscode/**}',
-                    800
-                );
-                const items = allFiles
-                    .map(uri => ({ label: vscode.workspace.asRelativePath(uri), uri }))
-                    .sort((a, b) => a.label.localeCompare(b.label));
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: 'Select files to attach as context (Space to select, Enter to confirm)',
-                    canPickMany: true,
-                    matchOnDescription: true,
-                });
-                if (!selected || selected.length === 0) { return; }
-                for (const item of selected) {
-                    try {
-                        const bytes = await vscode.workspace.fs.readFile(item.uri);
-                        const rawText = new TextDecoder().decode(bytes);
-                        let lang = 'text';
-                        try {
-                            const doc = await vscode.workspace.openTextDocument(item.uri);
-                            lang = doc.languageId;
-                        } catch { /* binary or unopenable */ }
-                        const snippet = rawText.slice(0, 20_000);
-                        const truncated = rawText.length > 20_000 ? '\n… (truncated at 20 000 chars)' : '';
-                        const text = `File: ${item.label}\n\`\`\`${lang}\n${snippet}\n\`\`\`${truncated}`;
-                        this._post({ type: 'contextSnippet', kind: 'file', label: item.label, text });
-                    } catch {
-                        // skip unreadable / binary files
-                    }
-                }
-                break;
-            }
-        }
-    }
 
     // ─── Code Review ─────────────────────────────────────────────────────────
 
-    private async _handleRunAndFixTests(): Promise<void> {
-        const folders = vscode.workspace.workspaceFolders;
-        if (!folders?.length) {
-            this._post({ type: 'error', message: 'No workspace folder open.' });
-            return;
-        }
-
-        const detected = detectTestCommand(folders[0].uri.fsPath);
-
-        const confirmed = await vscode.window.showInputBox({
-            title: 'Codico: Run & Fix Tests',
-            prompt: detected
-                ? 'Detected test command — edit if needed or press Enter to confirm'
-                : 'No test runner detected — enter the command to run your tests',
-            value: detected ?? '',
-            placeHolder: 'e.g. npm test, pytest, go test ./...',
-            ignoreFocusOut: true,
-        });
-
-        if (!confirmed?.trim()) { return; }
-        await this.sendMessage(buildTestLoopPrompt(confirmed.trim()));
-    }
 
     private async _handlePlan(goal: string): Promise<void> {
         if (!this._view) { return; }
@@ -2608,79 +1365,9 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
     }
 
-    private async _handleReview(target: 'file' | 'selection'): Promise<void> {
-        if (!this._view) { return; }
-
-        const editor = vscode.window.activeTextEditor;
-        let codeContext = '';
-        let displayLabel = '';
-
-        if (target === 'selection') {
-            if (!editor || editor.selection.isEmpty) {
-                this._post({ type: 'reviewReady', label: '', error: 'No text selected. Select code first then click Review.' });
-                return;
-            }
-            const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-            const { start, end } = editor.selection;
-            displayLabel = `${relPath}:${start.line + 1}-${end.line + 1}`;
-            const selText = editor.document.getText(editor.selection);
-            codeContext = `Selection from ${displayLabel}:\n\`\`\`${editor.document.languageId}\n${selText}\n\`\`\``;
-        } else {
-            if (!editor) {
-                this._post({ type: 'reviewReady', label: '', error: 'No active file open. Open a file and try again.' });
-                return;
-            }
-            const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-            displayLabel = relPath;
-            const rawText = editor.document.getText();
-            const snippet = rawText.slice(0, 24_000);
-            const truncated = rawText.length > 24_000 ? '\n… (truncated at 24 000 chars)' : '';
-            codeContext = `File: ${relPath}\n\`\`\`${editor.document.languageId}\n${snippet}\n\`\`\`${truncated}`;
-        }
-
-        this._post({ type: 'reviewReady', label: displayLabel, error: undefined });
-
-        const reviewMessage = `${codeContext}\n\n${REVIEW_PROMPT}`;
-        await this._handleUserMessage(reviewMessage);
-    }
 
     // ─── Thread management ───────────────────────────────────────────────────
 
-    private _initThreadsSync(): void {
-        const store = this._store;
-        let threads = store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-
-        if (threads.length === 0) {
-            // First launch: migrate old history or create fresh thread
-            const oldWs = store.get<ChatMessage[]>('codico.history', []);
-            const oldGlobal = store.get<ChatMessage[]>('codico.history.global', []);
-            const oldHistory = oldWs.length > 0 ? oldWs : oldGlobal;
-            const thread: ThreadEntry = {
-                id: this._newId(),
-                name: oldHistory.length > 0 ? 'Previous Chat' : 'New Chat',
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                messageCount: oldHistory.length,
-                preview: '',
-            };
-            threads = [thread];
-            void store.update(this._threadsIndexKey, threads);
-            void store.update(this._activeThreadIdKey, thread.id);
-            void store.update(this._threadKey(thread.id), oldHistory);
-            void store.update(this._threadDisplayKey(thread.id), []);
-            // Remove old flat-history keys
-            if (oldWs.length > 0) { void store.update('codico.history', undefined); }
-            if (oldGlobal.length > 0) { void store.update('codico.history.global', undefined); }
-            this._activeThreadId = thread.id;
-            this._history = oldHistory;
-            this._displayMessages = [];
-        } else {
-            const activeId = store.get<string>(this._activeThreadIdKey, threads[0].id);
-            this._activeThreadId = threads.some(t => t.id === activeId) ? activeId : threads[0].id;
-            this._history = store.get<ChatMessage[]>(this._threadKey(this._activeThreadId), []);
-            this._displayMessages = store.get<DisplayMessage[]>(this._threadDisplayKey(this._activeThreadId), []);
-        }
-    }
 
     private _postUiSettings(): void {
         const cfg = vscode.workspace.getConfiguration('codico');
@@ -2688,156 +1375,13 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             compactAt: cfg.get<number>('autoCompactThreshold', 60_000) });
     }
 
-    private _getThreadListForWebview(): Array<ThreadEntry & { active: boolean }> {
-        // Pinned first, then the most recently used
-        return this._store.get<ThreadEntry[]>(this._threadsIndexKey, [])
-            .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || b.updatedAt - a.updatedAt)
-            .map(t => ({ ...t, active: t.id === this._activeThreadId }));
-    }
 
-    /** @param usage a finished task's tokens and cost, added to the thread's totals */
-    private async _updateThreadMeta(userText: string, usage?: TaskUsage): Promise<void> {
-        const store = this._store;
-        const threads = store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const idx = threads.findIndex(t => t.id === this._activeThreadId);
-        if (idx === -1) { return; }
-        const userDisplayCount = this._displayMessages.filter(m => m.role === 'user').length;
-        // Auto-name from first user message if this thread has never been explicitly named
-        let name = threads[idx].name;
-        let hasBeenNamed = threads[idx].hasBeenNamed ?? false;
-        const isDefaultName = !hasBeenNamed && (
-            name === 'New Chat' || name === 'New Session' || name === 'Previous Chat' || /^Thread \d+$/.test(name)
-        );
-        if (isDefaultName && userText.trim().length > 0) {
-            const cleaned = userText.replace(/\n/g, ' ').trim();
-            name = cleaned.length > 60 ? cleaned.slice(0, 60) + '\u2026' : cleaned;
-            hasBeenNamed = true;
-        }
-        threads[idx] = {
-            ...threads[idx],
-            name,
-            hasBeenNamed,
-            updatedAt: Date.now(),
-            messageCount: userDisplayCount,
-            preview: userText.slice(0, 80).replace(/\n/g, ' '),
-            tokens: (threads[idx].tokens ?? 0) + (usage?.tokens ?? 0),
-            costUsd: usage?.costUsd !== undefined ? (threads[idx].costUsd ?? 0) + usage.costUsd : threads[idx].costUsd,
-        };
-        await store.update(this._threadsIndexKey, threads);
-    }
 
-    private async _createThread(name?: string): Promise<void> {
-        // Save current thread first
-        await this._store.update(this._threadKey(this._activeThreadId), this._history);
-        await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
 
-        const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const threadName = name?.trim() || `Thread ${threads.length + 1}`;
-        const thread: ThreadEntry = {
-            id: this._newId(),
-            name: threadName,
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-            messageCount: 0,
-            preview: '',
-        };
-        threads.push(thread);
-        await this._store.update(this._threadsIndexKey, threads);
-        await this._store.update(this._activeThreadIdKey, thread.id);
-        await this._store.update(this._threadKey(thread.id), []);
-        await this._store.update(this._threadDisplayKey(thread.id), []);
 
-        this._activeThreadId = thread.id;
-        this._history = [];
-        this._displayMessages = [];
-        this._post({ type: 'threadLoaded', id: thread.id, name: thread.name, displayMessages: [] });
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-    }
 
-    private async _switchThread(id: string): Promise<void> {
-        if (id === this._activeThreadId) { return; }
-        const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const target = threads.find(t => t.id === id);
-        if (!target) { return; }
-        // Discard any pending proposals from the outgoing thread
-        if (this._editsMode) {
-            this._editsMode = false;
-            this._editProposals.rejectAll();
-            this._post({ type: 'allProposalsResolved' });
-        }
-        // Save current
-        await this._store.update(this._threadKey(this._activeThreadId), this._history);
-        await this._store.update(this._threadDisplayKey(this._activeThreadId), this._displayMessages);
-        // Load target
-        this._activeThreadId = id;
-        this._history = this._store.get<ChatMessage[]>(this._threadKey(id), []);
-        this._displayMessages = this._store.get<DisplayMessage[]>(this._threadDisplayKey(id), []);
-        await this._store.update(this._activeThreadIdKey, id);
-        this._post({ type: 'threadLoaded', id, name: target.name, displayMessages: this._displayMessages });
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-    }
 
-    private async _renameThread(id: string, name: string): Promise<void> {
-        const store = this._store;
-        const threads = store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const idx = threads.findIndex(t => t.id === id);
-        if (idx === -1) { return; }
-        threads[idx] = { ...threads[idx], name, hasBeenNamed: true };
-        await store.update(this._threadsIndexKey, threads);
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-    }
 
-    private async _deleteThread(id: string): Promise<void> {
-        const store = this._store;
-        let threads = store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        if (threads.length <= 1) {
-            // Clear instead of delete — can't remove last thread; reset to a fresh session
-            this._history = [];
-            this._displayMessages = [];
-            threads[0] = { ...threads[0], name: 'New Session', hasBeenNamed: false, messageCount: 0, preview: '', updatedAt: Date.now() };
-            await store.update(this._threadsIndexKey, threads);
-            await store.update(this._threadKey(id), []);
-            await store.update(this._threadDisplayKey(id), []);
-            this._post({ type: 'threadLoaded', id, name: 'New Session', displayMessages: [] });
-            this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-            return;
-        }
-        threads = threads.filter(t => t.id !== id);
-        await store.update(this._threadsIndexKey, threads);
-        await store.update(this._threadKey(id), undefined);
-        await store.update(this._threadDisplayKey(id), undefined);
-        // If deleted thread was active, switch to most recent remaining thread
-        if (id === this._activeThreadId) {
-            const next = threads.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-            this._activeThreadId = next.id;
-            this._history = store.get<ChatMessage[]>(this._threadKey(next.id), []);
-            this._displayMessages = store.get<DisplayMessage[]>(this._threadDisplayKey(next.id), []);
-            await store.update(this._activeThreadIdKey, next.id);
-            this._post({ type: 'threadLoaded', id: next.id, name: next.name, displayMessages: this._displayMessages });
-        }
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-    }
-
-    /** Copies a thread into a new, unpinned, active thread; nothing happens when it is gone. */
-    private async _duplicateThread(id: string): Promise<void> {
-        if (this._editsMode) { this._editsMode = false; this._editProposals.rejectAll(); this._post({ type: 'allProposalsResolved' }); }
-        const copy = await duplicateStoredThread(this._store, {
-            index: this._threadsIndexKey, activeId: this._activeThreadIdKey,
-            history: threadId => this._threadKey(threadId), display: threadId => this._threadDisplayKey(threadId),
-        }, id, { id: this._activeThreadId, history: this._history, display: this._displayMessages }, this._newId(), Date.now());
-        if (!copy) { return; }
-        this._activeThreadId = copy.entry.id; this._history = copy.history; this._displayMessages = copy.display;
-        this._post({ type: 'threadLoaded', id: copy.entry.id, name: copy.entry.name, displayMessages: copy.display });
-        this._post({ type: 'threadList', threads: this._getThreadListForWebview() });
-    }
-
-    private async _handleThreadContextMenu(id: string): Promise<void> {
-        const threads = this._store.get<ThreadEntry[]>(this._threadsIndexKey, []);
-        const thread = threads.find(t => t.id === id);
-        if (!thread) { return; }
-        // Show inline context menu in the webview (no VS Code modal)
-        this._post({ type: 'threadContextMenuRequest', id, name: thread.name });
-    }
 
     private _post(msg: ExtensionMessage): void {
         this._view?.webview.postMessage(msg);
@@ -2869,16 +1413,6 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         rec.events.push({ ...ev });
     }
 
-    private _postSelectionBadge(): void {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor || editor.selection.isEmpty) {
-            this._post({ type: 'selectionBadge', label: '' });
-            return;
-        }
-        const sel = editor.selection;
-        const relPath = vscode.workspace.asRelativePath(editor.document.uri);
-        this._post({ type: 'selectionBadge', label: `${relPath}:${sel.start.line + 1}–${sel.end.line + 1}` });
-    }
 
     public focusInput(): void {
         void vscode.commands.executeCommand('workbench.view.extension.codico-container').then(() => {
