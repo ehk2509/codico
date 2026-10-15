@@ -234,7 +234,7 @@ function github(req, res) {
     if ((m = /^\/repos\/acme\/(\w+)\/pulls$/.exec(url.pathname)) && req.method === 'POST') {
       const input = JSON.parse(body); const number = 100 + gh.created.length;
       gh.created.push({ ...input, repo: m[1] }); gh.pulls[number] = { state: 'open', merged: false, head: { sha: 'pending' } };
-      return json({ number, html_url: `https://github.com/acme/app/pull/${number}` }, 201);
+      return json({ number, html_url: `https://github.com/acme/${m[1]}/pull/${number}` }, 201);
     }
     json({ message: 'Not Found' }, 404);
   });
