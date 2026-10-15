@@ -7,6 +7,9 @@ All notable changes to Codico will be documented in this file.
 ### Added
 - **Codico: Marketplace**: community skills, agents, MCP servers and hooks from a registry, searchable, installed into the project. Each version is pinned to a commit of its publisher's repository and a content hash, checked on download; before installing you see what it adds, its declared permissions and a security scan of every file. Updates (checked daily) and uninstalls touch exactly what was installed, recorded in `.codico/packages.json`, and keep files you changed. `codico package check` and `codico registry verify` for publishers and the registry's CI. Setting: `codico.marketplaceRegistry`.
 
+### Fixed
+- A reply that ended with an offer ("If you meant a file containing `{}`, let me know and I'll adjust it") was taken for an announced step the agent had not taken, and the agent was sent back up to twice to "issue that tool call", for nothing: two extra requests on a finished task. Offers and replies that say the work is done now end the turn.
+
 ## 0.5.1 - 2026-10-15
 
 ### Fixed

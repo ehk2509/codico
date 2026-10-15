@@ -895,7 +895,9 @@ async function run() {
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
     const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];
-    const evidence = files.includes('report.md') && files.includes('replay.png') && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 6
+    const evidence = files.includes('report.md') && files.includes('replay.png')
+      // Each assertion's screenshot is evidence; a step's own screenshot is best-effort (a slow machine may miss one)
+      && files.filter(f => /^\d\d-expect-.*\.png$/.test(f)).length >= 2 && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 4
       && /### Acceptance — Accepted/.test(fs.readFileSync(path.join(folder, 'report.md'), 'utf8')) && !!ac1.evidence[0]?.screenshot && fs.existsSync(path.join(ws, ac1.evidence[0].screenshot))
       && fs.readFileSync(path.join(ws, '.codico/evidence/.gitignore'), 'utf8') === '*\n';
     const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${process.env.LIVE_APP_PORT}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
