@@ -32,3 +32,30 @@ test('a stop is reported with its place, source, call stack, variables and outpu
   assert.match(text, /Call stack:\n  0\. main — debugme\/run\.js:3\n  1\. Module\._compile[\s\S]*Local:\n  t \(number\) = NaN\n\nRecent output:\n  start$/);
   assert.equal(D.endText(0, ['TOTAL 11']), 'The program ended with exit code 0.\nLast output:\n  TOTAL 11');
 });
+
+test('exit codes: each Node process of a debugged run writes its own; the one that exits last (the outermost) is the run\'s', () => {
+  const fs = require('node:fs'); const os = require('node:os'); const path = require('node:path'); const cp = require('node:child_process');
+  const Module = require('node:module');
+  const load = Module._load;
+  Module._load = function (request, ...rest) { return request === 'vscode' ? {} : load.call(this, request, ...rest); };
+  const { EXIT_HOOK, withExitHook, exitCodeOf } = require('../out/debugController.js');
+  Module._load = load;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codico exit '));
+  try {
+    const hook = path.join(dir, 'exit-hook.js'); fs.writeFileSync(hook, EXIT_HOOK);
+    assert.equal(withExitHook('--max-old-space-size=512', hook), `--max-old-space-size=512 --require ${JSON.stringify(hook)}`);
+    const env = { ...process.env, NODE_OPTIONS: withExitHook(undefined, hook), CODICO_DEBUG_EXIT_DIR: dir };
+    assert.equal(exitCodeOf(dir), undefined, 'none yet');
+    // A process that ends on an uncaught error
+    cp.spawnSync(process.execPath, ['-e', 'throw new Error("boom")'], { env });
+    assert.equal(exitCodeOf(dir), 1);
+    // A command whose child fails and which then exits with its own code (as npm does): the outer code is the run's
+    for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.code'))) { fs.rmSync(path.join(dir, f)); }
+    cp.spawnSync(process.execPath, ['-e', 'const r = require("child_process").spawnSync(process.execPath, ["-e", "process.exit(2)"]); setTimeout(() => process.exit(r.status === 2 ? 5 : 9), 30)'], { env });
+    assert.deepEqual(fs.readdirSync(dir).filter(n => n.endsWith('.code')).length, 2, 'both processes wrote theirs');
+    assert.equal(exitCodeOf(dir), 5);
+    for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.code'))) { fs.rmSync(path.join(dir, f)); }
+    cp.spawnSync(process.execPath, ['-e', 'console.log("ok")'], { env });
+    assert.equal(exitCodeOf(dir), 0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DEFAULT_DEBUG_WAIT_SECONDS, DebugTool, endText, Frame, MAX_DEBUG_WAIT_SECONDS, readOnlyExpression, StopReport, stopText } from './debugTools';
@@ -20,12 +21,42 @@ interface Run {
     entryPause?: boolean;
     /** It is a configuration of launch.json: used as the user wrote it. */
     fromLaunchJson?: boolean;
+    /** Where its Node processes write their exit codes (one file per process). */
+    exitDir?: string;
     /** The configuration as made, before Codico's additions: what a rerun starts from. */
     original: vscode.DebugConfiguration;
 }
 
 const OUTPUT_LINES = 60;
 let counter = 0;
+
+/**
+ * Preloaded into the Node processes of a run (NODE_OPTIONS reaches the ones a command starts):
+ * each writes its exit code when it exits. Written to a file, synchronously, as the process
+ * ends: output sent then can be lost, and the JavaScript debugger reports no exit code itself.
+ */
+export const EXIT_HOOK = "process.on('exit', code => { try { require('fs').writeFileSync(require('path').join(process.env.CODICO_DEBUG_EXIT_DIR, process.pid + '.code'), String(code)); } catch { /* the run is gone */ } });\n";
+
+/** NODE_OPTIONS with the hook preloaded, keeping what was there. */
+export function withExitHook(nodeOptions: string | undefined, hook: string): string {
+    return `${nodeOptions ? `${nodeOptions} ` : ''}--require ${JSON.stringify(hook)}`;
+}
+
+/**
+ * The run's exit code from its processes' files: the one that exited last is the outermost
+ * (npm, for "npm test"), whose code is the run's. Undefined when none wrote one.
+ */
+export function exitCodeOf(dir: string | undefined): number | undefined {
+    if (!dir) { return undefined; }
+    let files: Array<{ code: number; at: number }> = [];
+    try {
+        files = fs.readdirSync(dir).filter(name => name.endsWith('.code')).map(name => {
+            const file = path.join(dir, name);
+            return { code: Number(fs.readFileSync(file, 'utf8').trim()), at: fs.statSync(file).mtimeMs };
+        }).filter(f => Number.isInteger(f.code));
+    } catch { return undefined; }
+    return files.sort((a, b) => a.at - b.at).pop()?.code;
+}
 
 /**
  * Drives debugging sessions for the agent through VS Code's debugger, whatever the language
@@ -63,7 +94,17 @@ export class DebugController implements vscode.Disposable {
         );
     }
 
-    dispose(): void { for (const d of this._disposables) { d.dispose(); } }
+    dispose(): void { for (const d of this._disposables) { d.dispose(); } this._clean(); }
+
+    /** The previous run's exit files go. */
+    private _clean(): void { if (this._run?.exitDir) { fs.rmSync(this._run.exitDir, { recursive: true, force: true }); } }
+
+    /** How the run ended: as the debugger said (debugpy and others do), else as its Node processes wrote it. */
+    private _exitCode(): number | undefined {
+        if (!this._run) { return undefined; }
+        // The processes write as they exit; the last one may still be finishing when its session ends
+        return this._run.exitCode ?? exitCodeOf(this._run.exitDir);
+    }
 
     private _wake(): void { const waiters = this._waiters; this._waiters = []; for (const wake of waiters) { wake(); } }
 
@@ -123,7 +164,7 @@ export class DebugController implements vscode.Disposable {
             await new Promise<void>(resolve => { this._waiters.push(resolve); setTimeout(resolve, 500); });
         }
         if (this._stop) { return stopText(await this._report(this._stop)); }
-        if (!this._run || this._run.ended) { return endText(this._run?.exitCode, this._output); }
+        if (!this._run || this._run.ended) { return endText(this._exitCode(), this._output); }
         if (signal.aborted) { return 'Stopped waiting (the user stopped the task); the program goes on running.'; }
         return `Still running after ${Math.round(limit / 1000)} s without stopping. Use "pause" to see where it is, or "stop".${this._output.length ? `\nRecent output:\n${this._output.slice(-10).map(l => `  ${l}`).join('\n')}` : ''}`;
     }
@@ -178,7 +219,7 @@ export class DebugController implements vscode.Disposable {
             switch (tool.action) {
                 case 'breakpoint': return `${tag} ${await this._breakpoint(tool)}`;
                 case 'start': case 'rerun': return `${tag} ${await this._start(tool, call)}`;
-                case 'inspect': return `${tag} ${this._stop ? stopText(await this._report(this._stop)) : this._run && !this._run.ended ? 'The program is running, not stopped. Use "pause".' : endText(this._run?.exitCode, this._output)}`;
+                case 'inspect': return `${tag} ${this._stop ? stopText(await this._report(this._stop)) : this._run && !this._run.ended ? 'The program is running, not stopped. Use "pause".' : endText(this._exitCode(), this._output)}`;
                 case 'stop': {
                     if (!this._run || this._run.ended) { return `${tag} No debugging session of Codico is running.`; }
                     await this._end();
@@ -256,10 +297,24 @@ export class DebugController implements vscode.Disposable {
         const what = config.command ? `${config.command}` : config.program ? `${path.basename(String(config.program))} ${(config.args as string[] | undefined ?? []).join(' ')}`.trim() : `launch configuration "${config.name}"`;
         if (!await call.askToRun(`debugger: run ${what}`)) { return 'Not started: the user declined.'; }
         if (this._run && !this._run.ended) { await this._end(); }
+        this._clean();
         const name = `Codico debug ${++counter}`;
+        // What a rerun starts from: the configuration before Codico's additions below
+        const original = config;
+        const fromLaunchJson = tool.action === 'start' ? !!tool.config : !!this._run?.fromLaunchJson;
+        // Node processes write their exit codes (the JavaScript debugger does not report them)
+        let exitDir: string | undefined;
+        const node = ['node', 'pwa-node', 'node-terminal'].includes(String(config.type));
+        if (node) {
+            exitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-debug-'));
+            const hook = path.join(exitDir, 'exit-hook.js');
+            fs.writeFileSync(hook, EXIT_HOOK);
+            const env = { ...(config.env as Record<string, string> | undefined ?? {}) };
+            config = { ...config, env: { ...env, NODE_OPTIONS: withExitHook(env.NODE_OPTIONS ?? process.env.NODE_OPTIONS, hook), CODICO_DEBUG_EXIT_DIR: exitDir } };
+        }
         // A program (not a launch.json configuration, not a terminal command) waits on entry for the exception settings, unless the user's configuration says otherwise
-        const entryPause = exceptions !== 'none' && (config.type === 'node' || config.type === 'debugpy') && config.stopOnEntry === undefined && !(tool.action === 'start' ? tool.config : this._run?.fromLaunchJson);
-        this._run = { name, config: { ...config, name, ...(entryPause ? { stopOnEntry: true } : {}) }, original: config, fromLaunchJson: tool.action === 'start' ? !!tool.config : this._run?.fromLaunchJson, folder, sessions: new Map(), ended: false, exceptions, entryPause };
+        const entryPause = exceptions !== 'none' && (config.type === 'node' || config.type === 'debugpy') && config.stopOnEntry === undefined && !fromLaunchJson;
+        this._run = { name, config: { ...config, name, ...(entryPause ? { stopOnEntry: true } : {}) }, original, exitDir, fromLaunchJson, folder, sessions: new Map(), ended: false, exceptions, entryPause };
         this._exceptionsSet.clear();
         this._stop = undefined; this._output = [];
         const started = await vscode.debug.startDebugging(folder, this._run.config, { suppressDebugToolbar: false });

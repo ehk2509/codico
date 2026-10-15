@@ -135,6 +135,7 @@ const SCRIPTS = (port) => ({
     tool('debug', 'action: continue'),
     tool('debug', 'action: evaluate\nexpression: item.qty'),
     tool('debug', 'action: breakpoint\nfile: debugme/calc.js\nline: 4\nremove: true') + tool('debug', 'action: continue'),
+    tool('debug', 'action: continue'),
     tool('edit_file', 'filepath: debugme/calc.js\nold_str:\n    sum += item.price * item.qty;\nnew_str:\n    sum += item.price * (item.qty ?? 1);'),
     tool('debug', 'action: rerun'),
     'The second item had no qty; it now counts as 1, and the program prints TOTAL 11.'],
