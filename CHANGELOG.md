@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- A reply that ended with an offer ("If you meant a file containing `{}`, let me know and I'll adjust it") was taken for an announced step the agent had not taken, and the agent was sent back up to twice to "issue that tool call", for nothing: two extra requests on a finished task. Offers and replies that say the work is done now end the turn.
+
 ## 0.5.1 - 2026-10-15
 
 ### Fixed
