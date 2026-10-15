@@ -10,6 +10,7 @@ import { PassportRecorder } from './patchPassport';
 import { SubagentHost } from './subagent';
 import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
+import { requestCheckGuidance } from './requestCheck';
 import { WorkspaceTools } from './workspaceTools';
 
 /** What verification needs from the conversation. */
@@ -43,6 +44,7 @@ export class VerifyRuntime {
     private _sinceStep: string[] = [];
     private _onPage: string[] = [];
     private _reminders = 0;
+    private _requestReminded = false;
 
     constructor(private readonly _host: VerifyHost) {
         _host.external.browser.onError = text => {
@@ -61,7 +63,7 @@ export class VerifyRuntime {
     /** A new turn: a new evidence folder (made only if something is saved). */
     beginTurn(workspaceRoot: string | undefined): void {
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0;
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false;
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -115,9 +117,19 @@ export class VerifyRuntime {
         }
     }
 
+    /** Once per turn, before a reply that changed code may end: that the request itself is met (requestCheck.ts). */
+    private _requestGuidance(): string | undefined {
+        if (this._requestReminded) { return undefined; }
+        const text = requestCheckGuidance(this._host.passport().build());
+        if (text) { this._requestReminded = true; }
+        return text;
+    }
+
     /** Before the reply may end: the criteria not verified on the final code, as a reminder; undefined when there is nothing to say. */
     guidance(): string | undefined {
         if (this._reminders >= MAX_ACCEPTANCE_REMINDERS) { return undefined; }
+        const request = this._requestGuidance();
+        if (request) { return request; }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
         const pending = report?.criteria.filter(c => c.status !== 'verified' && c.status !== 'failing') ?? [];
         if (pending.length === 0) { return undefined; }
