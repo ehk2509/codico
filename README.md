@@ -226,7 +226,14 @@ When you open a file that has errors in the Problems panel, a banner appears in 
 ---
 
 ### Debugger Integration
-While a VS Code debug session is active, the agent can inspect program state using three tools:
+The agent can drive the debugger itself, to find the cause of a failure from the running program rather than from the source and the terminal output. The `debug` tool works with whatever debugger VS Code has (JavaScript and TypeScript built in; Python, Go and others with their extension):
+
+- **start** the failing test or program under the debugger: a launch configuration of `launch.json` by name, a file (`.js`/`.ts` with Node, `.py` with debugpy), or a command such as `npm test` run in the JavaScript debug terminal, which debugs every Node process it starts. By default it stops where an exception is thrown, including the assertion a test runner catches, so a failing test stops at its failure.
+- **breakpoint** (with a condition, or a log message instead of a stop), **continue**, **step** (over, into, out), **pause**. Each waits for the next stop and reports it: why it stopped (breakpoint, step, the exception and its message), the source around the line, the call stack, the variables with their runtime values, and the program's recent output, or how the program ended.
+- **evaluate** an expression where it stopped. An expression that only reads (names, properties, operators) runs without asking; one that could change state (a call, an assignment) is asked for, like a command.
+- **rerun** the last session after a fix, with the same breakpoints, and **stop**. Starting a program is asked for like a command; only Codico's own sessions are stopped, never one you started.
+
+While a debug session you started is active, the agent can also read it with three tools:
 
 - **`debug_get_variables`** — reads local/closure variables from the top (or specified) stack frame, organized by scope
 - **`debug_get_callstack`** — shows full call stack for all threads with file name and line number
