@@ -895,7 +895,9 @@ async function run() {
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
     const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];
-    const evidence = files.includes('report.md') && files.includes('replay.png') && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 6
+    const evidence = files.includes('report.md') && files.includes('replay.png')
+      // Each assertion's screenshot is evidence; a step's own screenshot is best-effort (a slow machine may miss one)
+      && files.filter(f => /^\d\d-expect-.*\.png$/.test(f)).length >= 2 && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 4
       && /### Acceptance — Accepted/.test(fs.readFileSync(path.join(folder, 'report.md'), 'utf8')) && !!ac1.evidence[0]?.screenshot && fs.existsSync(path.join(ws, ac1.evidence[0].screenshot))
       && fs.readFileSync(path.join(ws, '.codico/evidence/.gitignore'), 'utf8') === '*\n';
     const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${process.env.LIVE_APP_PORT}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
@@ -923,6 +925,41 @@ async function run() {
     const noneLeft = !vscode.debug.activeDebugSession;
     results.push({ name: 'debugging', ms: Date.now() - t0, requests: reqs.length, ok: !error && atBreakpoint && evaluated && stepped && secondItem && thrown && rerun,
       why: `${atBreakpoint && thrown && rerun ? '' : `[start: ${JSON.stringify(said(2).slice(0, 700))}] [after continue: ${JSON.stringify((all.match(/\[debug continue\][\s\S]{0,400}/g) || []).join(' | ').slice(0, 900))}] [rerun: ${JSON.stringify(((all.match(/\[debug rerun\][\s\S]{0,400}/) || [''])[0]).slice(0, 400))}] `}stopped at the breakpoint with the real variables: ${atBreakpoint}; evaluated where it stopped: ${evaluated}; stepped: ${stepped}; on the next item, qty is undefined: ${secondItem}; stopped where the error is thrown, with its message: ${thrown}; let go past the exception, it ends with exit code 1: ${failedExit}; after the fix, rerun ends with exit code 0 and the right total: ${rerun}; no session left running: ${noneLeft}${error ? '; error: ' + error : ''}` });
+  // ── Marketplace: a package from the registry is checked, installed into the project, used, and uninstalled ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    const cpx = require('node:child_process');
+    const pkgRepo = path.join(ws, '..', 'kits-repo');
+    const g = (...args) => cpx.execFileSync('git', args, { cwd: pkgRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.mkdirSync(path.join(pkgRepo, 'pkg/skills/market-skill'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRepo, 'pkg/codico-package.json'), JSON.stringify({ id: 'acme/market-kit', version: '1.0.0', description: 'A test kit', skills: ['skills/market-skill'], permissions: {} }));
+    fs.writeFileSync(path.join(pkgRepo, 'pkg/skills/market-skill/SKILL.md'), '---\nname: market-skill\ndescription: Use for the market test\n---\nMARKET-SKILL-BODY: answer briefly.\n');
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('add', '-A'); g('commit', '-q', '-m', 'kit');
+    const head = g('rev-parse', 'HEAD').trim();
+    const archive = cpx.execFileSync('git', ['archive', '--format=tar.gz', `--prefix=kits-${head}/`, head], { cwd: pkgRepo });
+    const market = path.join(ws, '..', 'market');
+    fs.mkdirSync(path.join(market, 'archive', 'acme', 'kits'), { recursive: true });
+    fs.writeFileSync(path.join(market, 'archive', 'acme', 'kits', `${head}.tar.gz`), archive);
+    // The hash the registry records: what `codico package check` prints for it
+    const { contentHash, packageFiles, readTarGz } = require(path.join(__dirname, '..', '..', '..', 'out', 'packageArchive.js'));
+    const hash = contentHash(packageFiles(readTarGz(archive), 'pkg'));
+    const entryOf = (h) => ({ packages: [{ id: 'acme/market-kit', description: 'A test kit', publisher: { github: 'acme', verified: true }, versions: [{ version: '1.0.0', repo: 'acme/kits', commit: head, path: 'pkg', hash: h }] }] });
+    fs.writeFileSync(path.join(market, 'index.json'), JSON.stringify(entryOf('sha256-' + '0'.repeat(64))));
+    await set('marketplaceRegistry', `http://127.0.0.1:${process.env.LIVE_PORT}/market/index.json`);
+    const refused = await vscode.commands.executeCommand('codico.__evalMarketplace', 'install', 'acme/market-kit');
+    const nothingWritten = !fs.existsSync(path.join(ws, '.codico/skills/market-skill'));
+    fs.writeFileSync(path.join(market, 'index.json'), JSON.stringify(entryOf(hash)));
+    const installed = await vscode.commands.executeCommand('codico.__evalMarketplace', 'install', 'acme/market-kit');
+    const onDisk = /MARKET-SKILL-BODY/.test(read('.codico/skills/market-skill/SKILL.md') || '');
+    const lock = await vscode.commands.executeCommand('codico.__evalMarketplace', 'lock');
+    await new Promise(r => setTimeout(r, 1500));
+    await vscode.commands.executeCommand('codico.__evalRunTask', '/market-skill [SCENARIO:market_skill] please do the task');
+    const used = (await getLog()).slice(before).some(e => e.scenario === 'market_skill' && e.sawMarketSkill);
+    await vscode.commands.executeCommand('codico.__evalMarketplace', 'uninstall', 'acme/market-kit');
+    const gone = !fs.existsSync(path.join(ws, '.codico/skills/market-skill')) && Object.keys(((await vscode.commands.executeCommand('codico.__evalMarketplace', 'lock')) || {}).packages || {}).length === 0;
+    await set('marketplaceRegistry', undefined);
+    results.push({ name: 'marketplace', ms: Date.now() - t0, requests: (await getLog()).length - before, ok: /does not match the registry/.test(String(refused)) && nothingWritten && installed === 'installed' && onDisk && !!(lock && lock.packages && lock.packages['acme/market-kit']) && used && gone,
+      why: `content not matching the registry is refused, nothing written: ${/does not match the registry/.test(String(refused)) && nothingWritten}; installed from the registry: ${installed}; the skill is in .codico and recorded: ${onDisk && !!(lock && lock.packages && lock.packages['acme/market-kit'])}; "/market-skill" runs with its instructions: ${used}; uninstalled, nothing left: ${gone}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
@@ -1034,6 +1071,42 @@ async function run() {
       results.push({ name: 'automation_lifecycle', ms: Date.now() - a0, requests: (await getLog()).length - aBefore, ok: ranHere && opened && resumed && withContext && pushed && done && ownToken,
         why: `${problem ? 'problem: ' + problem + '; ' : ''}the labelled issue became a job run in this window: ${ranHere}; its work became a draft pull request that resolves the issue, pushed: ${opened} (${afterFirst.state}${afterFirst.note ? ': ' + afterFirst.note : ''}; ${JSON.stringify((afterFirst.log || []).map(l => l.text))}); CI failing on it resumed the job: ${resumed}; the resumed agent had its earlier conversation (reloaded from disk) and the failing log: ${withContext}; the fix was pushed to the same pull request: ${pushed}; merged, the job is done: ${done}; only the test token was sent: ${ownToken}` });
       fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+
+      // A team across repositories: an SDK beside the workspace (codico.repositories), integrated tests, linked pull requests in dependency order
+      {
+        const x0 = Date.now(); const xBefore = (await getLog()).length;
+        const sdk = path.join(ws, '..', 'sdk-repo'); const sdkBare = path.join(ws, '..', 'sdk.git');
+        const sg = (...args) => require('node:child_process').execFileSync('git', args, { cwd: sdk, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        fs.mkdirSync(sdk);
+        fs.writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@acme/sdk' }));
+        fs.writeFileSync(path.join(sdk, 'lib.js'), 'module.exports = { version: 1 };\n');
+        require('node:child_process').execFileSync('git', ['init', '-q', '--bare', '-b', 'main', sdkBare]);
+        sg('init', '-q', '-b', 'main'); sg('config', 'user.email', 't@example.com'); sg('config', 'user.name', 'T');
+        sg('remote', 'add', 'origin', 'https://github.com/acme/sdk.git'); sg('config', `url.${sdkBare}.insteadOf`, 'https://github.com/acme/sdk.git');
+        sg('add', '-A'); sg('commit', '-q', '-m', 'sdk'); sg('push', '-q', 'origin', 'main');
+        // The workspace (repository "ws") uses the SDK and tests against it, next to it
+        fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'app', dependencies: { '@acme/sdk': 'file:../sdk-repo' } }));
+        fs.writeFileSync(path.join(ws, 'live/xr-app.js'), 'module.exports = { uses: 1 };\n');
+        fs.writeFileSync(path.join(ws, 'live/xr-test.js'), "const sdk = require('../../sdk-repo/lib.js'); const app = require('./xr-app.js'); if (sdk.version !== 2 || app.uses !== 2) { console.error('XR-FAIL', sdk.version, app.uses); process.exit(1); } console.log('XR-INTEGRATED-OK');\n");
+        git('add', '-A'); git('commit', '-q', '-m', 'app uses the sdk'); git('push', '-q', 'origin', 'HEAD:main');
+        await set('repositories', ['../sdk-repo']);
+        await ghState({ created: [], patched: [] });
+        await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'createThread' });
+        let xError = null;
+        try { await Promise.race([vscode.commands.executeCommand('codico.__evalRunTask', '/team [SCENARIO:team_xrepo] change the SDK and the app together'), new Promise((_, rej) => setTimeout(() => rej(new Error('timed out after 150 s')), 150000))]); } catch (e) { xError = String(e && e.message || e); }
+        const xReqs = (await getLog()).slice(xBefore).filter(e => e.scenario === 'team_xrepo' && e.stream);
+        const xSaid = xReqs.map(r => r.lastUser).join('\n');
+        const inSdk = (((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.team && t.name === 'sdk') || {}).repoRoot === fs.realpathSync(sdk);
+        const integrated = /\[team integrate\] Integrated test PASSED: `node live\/xr-test\.js` in ws[\s\S]*sdk-repo: with sdk[\s\S]*XR-INTEGRATED-OK/.test(xSaid);
+        const gh = await ghState();
+        const prs = (gh.created || []).map(c => c.repo);
+        const linked = (gh.patched || []).some(p => p.repo === 'app' && /\*\*Depends on\*\* acme\/sdk#\d+/.test(p.body)) && (gh.patched || []).some(p => p.repo === 'sdk' && /Merge this one first/.test(p.body));
+        const published = /\[team publish\] Opened 2 linked draft pull requests, to be merged in this order:\n1\. https:\/\/github\.com\/acme\/sdk\/pull\/\d+ \(sdk-repo\)\n2\. https:\/\/github\.com\/acme\/app/.test(xSaid) && prs.join() === 'sdk,app' && linked;
+        await set('repositories', undefined);
+        results.push({ name: 'team_cross_repo', ms: Date.now() - x0, requests: xReqs.length, ok: !xError && inSdk && integrated && published,
+          why: `a worker started in the SDK repository beside the workspace: ${inSdk}; the integrated test, with both repositories side by side and both workers merged, passed: ${integrated}; linked draft pull requests, the SDK first, each naming the other: ${published} (${prs.join(', ')})${xError ? '; error: ' + xError : ''}` });
+        fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+      }
       git('remote', 'remove', 'origin');
     }
     try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }

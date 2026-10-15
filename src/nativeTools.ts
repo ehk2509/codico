@@ -162,6 +162,8 @@ const ALL_TOOLS: NativeToolDefinition[] = [
                 action: { type: 'string', enum: [...TEAM_ACTIONS] },
                 role: { type: 'string', enum: ['developer', 'tester'], description: 'start: what the worker is (developer by default).' },
                 name: { type: 'string', description: 'start: a short name for the worker after its part of the work (backend, frontend, api-tests). Workers can then be named in "worker".' },
+                repo: { type: 'string', description: 'start: the repository the worker works in, when there are several. integrate: the repository the command runs in.' },
+                command: { type: 'string', description: 'integrate: the integrated test command, run with every repository side by side.' },
                 text: { type: 'string', description: 'start: the worker\'s complete, self-contained task. message: the text sent. review: what to look at most.' },
                 worker: { type: 'string', description: 'The worker\'s name or id. start: an existing worker whose branch the new one starts from.' },
                 workers: { type: 'array', items: { type: 'string' }, description: 'wait: the ids waited for; every unmerged worker when absent.' },

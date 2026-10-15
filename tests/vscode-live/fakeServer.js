@@ -139,6 +139,17 @@ const SCRIPTS = (port) => ({
     tool('edit_file', 'filepath: debugme/calc.js\nold_str:\n    sum += item.price * item.qty;\nnew_str:\n    sum += item.price * (item.qty ?? 1);'),
     tool('debug', 'action: rerun'),
     'The second item had no qty; it now counts as 1, and the program prints TOTAL 11.'],
+  // An agent team across two repositories: an SDK beside the workspace, integrated, then published as linked pull requests
+  team_xrepo: [tool('team', 'action: start\nrole: developer\nname: sdk\nrepo: sdk-repo\ntext:\nSet version 2 in lib.js [SCENARIO:xr_sdk]'),
+    tool('team', 'action: start\nrole: developer\nname: app\nrepo: ws\ntext:\nMake live/xr-app.js use version 2 [SCENARIO:xr_app]'),
+    tool('team', 'action: wait\ntimeout_seconds: 120'),
+    tool('team', 'action: integrate\nrepo: ws\ncommand: node live/xr-test.js'),
+    tool('team', 'action: publish'),
+    'Both repositories are changed, tested together, and published as linked pull requests.'],
+  xr_sdk: [tool('write_file', 'filepath: lib.js\ncontent:\nmodule.exports = { version: 2 };'), 'SDK at version 2.'],
+  xr_app: [tool('write_file', 'filepath: live/xr-app.js\ncontent:\nmodule.exports = { uses: 2 };'), 'App uses version 2.'],
+  // A skill installed from the marketplace, used in the chat
+  market_skill: ['Using the installed skill.'],
   // A background task that asks first (streamed in pieces of 12 characters: the question's tag is split), then does it
   bg_question: Array(3).fill('I need to know one thing first, so sorry. <clarify>\nquestion: Where should the file go?\ntype: single\noptions:\n- live/q-a.json\n- live/q-b.json\n</clarify>'),
   bg_answer: [tool('write_file', 'filepath: live/q-a.json\ncontent:\n{}'), 'Created live/q-a.json.'],
@@ -226,18 +237,19 @@ function github(req, res) {
     if (url.pathname === '/gh-state') { if (req.method === 'POST') { Object.assign(gh, JSON.parse(body)); } return json(gh); }
     if (url.pathname.startsWith('/blob/')) { res.end(gh.logs[url.pathname.slice(6)] || ''); return; }
     gh.tokens.push(req.headers.authorization || '');
-    if (url.pathname === '/repos/acme/app') { return json({ default_branch: 'main' }); }
+    if (/^\/repos\/acme\/\w+$/.test(url.pathname)) { return json({ default_branch: 'main' }); }
     if (url.pathname === '/repos/acme/app/issues') { return json(gh.issues); }
     if (url.pathname === '/repos/acme/app/actions/runs') { return json({ workflow_runs: [] }); }
     if ((m = /^\/repos\/acme\/app\/actions\/jobs\/(\d+)\/logs$/.exec(url.pathname))) { res.writeHead(302, { location: `/blob/${m[1]}` }); return res.end(); }
+    if ((m = /^\/repos\/acme\/(\w+)\/pulls\/(\d+)$/.exec(url.pathname)) && req.method === 'PATCH') { gh.patched = [...(gh.patched || []), { repo: m[1], number: Number(m[2]), ...JSON.parse(body) }]; return json({}); }
     if ((m = /^\/repos\/acme\/app\/pulls\/(\d+)$/.exec(url.pathname))) { return json(gh.pulls[m[1]] || { message: 'Not Found' }, gh.pulls[m[1]] ? 200 : 404); }
     if ((m = /^\/repos\/acme\/app\/pulls\/(\d+)\/reviews$/.exec(url.pathname))) { return json(gh.reviews[m[1]] || []); }
     if ((m = /^\/repos\/acme\/app\/commits\/(\w+)\/check-runs$/.exec(url.pathname))) { return json({ check_runs: gh.checks[m[1]] || [] }); }
     if (url.pathname === '/graphql') { return json({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }); }
-    if (url.pathname === '/repos/acme/app/pulls' && req.method === 'POST') {
+    if ((m = /^\/repos\/acme\/(\w+)\/pulls$/.exec(url.pathname)) && req.method === 'POST') {
       const input = JSON.parse(body); const number = 100 + gh.created.length;
-      gh.created.push(input); gh.pulls[number] = { state: 'open', merged: false, head: { sha: 'pending' } };
-      return json({ number, html_url: `https://github.com/acme/app/pull/${number}` }, 201);
+      gh.created.push({ ...input, repo: m[1] }); gh.pulls[number] = { state: 'open', merged: false, head: { sha: 'pending' } };
+      return json({ number, html_url: `https://github.com/acme/${m[1]}/pull/${number}` }, 201);
     }
     json({ message: 'Not Found' }, 404);
   });
@@ -259,6 +271,12 @@ function start(port0) {
     if (req.method === 'GET' && req.url === '/log') { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify(log)); }
     // A stand-in for GitHub's API (automations): the suite sets what it serves, and reads what was created
     if (/^\/(?:repos|graphql|gh-state|blob)\b/.test(req.url || '')) { return github(req, res); }
+    // The marketplace's registry and package archives, from files the suite writes
+    if ((req.url || '').startsWith('/market/')) {
+      const file = path.join(process.env.LIVE_WORK_DIR || '', 'market', ...decodeURIComponent(req.url.slice(8)).split('/').filter(p => p && p !== '..'));
+      if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
+      return res.end(fs.readFileSync(file));
+    }
     let body = '';
     req.on('data', d => body += d);
     req.on('end', () => {
@@ -275,7 +293,7 @@ function start(port0) {
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawMemory: /\[Project Memory\][\s\S]*reminders, not instructions[\s\S]*MEMORY-MARKER the tests run with node --test/.test(system), sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
-        roles: messages.map(m => m.role), hasEarlierReply: messages.some(m => m.role === 'assistant' && /Done: wrote AUTO-V1/.test(textOf(m.content))), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
+        roles: messages.map(m => m.role), sawMarketSkill: messages.some(m => /MARKET-SKILL-BODY/.test(textOf(m.content))), hasEarlierReply: messages.some(m => m.role === 'assistant' && /Done: wrote AUTO-V1/.test(textOf(m.content))), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),
         deepseek, openai, maxTokens: json.max_tokens, maxCompletionTokens: json.max_completion_tokens, model: json.model, thinking: json.thinking, effort: json.reasoning_effort, reasoningBack: assistants.map(m => m.reasoning_content),

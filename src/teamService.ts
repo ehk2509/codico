@@ -1,12 +1,18 @@
 import { commitTaskWork, mergeTask, taskChanges, uncommittedCount } from './backgroundGit';
 import { BackgroundPermissions, BackgroundTask, isActive, lostItsWindow, statusLabel, waitingForItsWindow, WorkerRole } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
+import { CrossRepoCall, describe, integrate, publish } from './crossRepo';
+import { dependencyOrder, repositoriesSection } from './repositories';
 import { cleanWorkerName, DEFAULT_WAIT_SECONDS, findWorker, MAX_PATCH_CHARS, MAX_WAIT_SECONDS, TeamTool, workerLabel, workerSummary } from './teamTools';
 
 /** What the team needs from the editor: where tasks are kept, how they are made and opened, and the settings. */
 export interface TeamHost {
     readonly store: BackgroundTaskStore;
-    createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; name?: string; team?: string; from?: string; basedOn?: string }): Promise<BackgroundTask | { error: string }>;
+    createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; name?: string; team?: string; from?: string; basedOn?: string; repoRoot?: string }): Promise<BackgroundTask | { error: string }>;
+    /** The repositories a team can work across (several when the workspace has several, or the codico.repositories setting lists them). */
+    repositories?(): Promise<Array<{ name: string; root: string }>>;
+    /** Where a team's integration (every repository side by side) is built. */
+    integrationFolder?(team: string): string;
     /** Starts the worker's agent: in this window, or in a window of its own. */
     launch(task: BackgroundTask): Promise<void>;
     settings(): { maxWorkers: number; permissions: BackgroundPermissions };
@@ -27,6 +33,8 @@ export interface TeamCall {
     approveMerge(task: BackgroundTask, stat: string): Promise<boolean>;
     /** Runs a read-only reviewer on a task and returns its report. */
     review(task: string): Promise<string>;
+    /** Running the integrated tests and publishing across repositories. */
+    crossRepo?: CrossRepoCall;
 }
 
 export const WAIT_POLL_MS = 3_000;
@@ -49,6 +57,14 @@ export class TeamService {
         return (await this._host.store.all()).filter(task => task.team === team).sort((a, b) => a.createdAt - b.createdAt);
     }
 
+    /** The repositories and their dependency order, for the orchestrator's prompt (empty with a single repository). */
+    async repositoriesSection(): Promise<string> {
+        const repos = await this._host.repositories?.() ?? [];
+        if (repos.length < 2) { return ''; }
+        const info = describe(repos);
+        return repositoriesSection(info, dependencyOrder(info));
+    }
+
     async run(tool: TeamTool, call: TeamCall): Promise<string> {
         const tag = `[team ${tool.action}]`;
         try {
@@ -59,6 +75,8 @@ export class TeamService {
                 case 'review': return await this._review(tool, call, tag);
                 case 'message': return await this._message(tool, call, tag);
                 case 'merge': return await this._merge(tool, call, tag);
+                case 'integrate': return await this._integrate(tool, call, tag);
+                case 'publish': return await this._publish(tool, call, tag);
             }
         } catch (error) {
             return `${tag} ERROR: ${error instanceof Error ? error.message : String(error)}`;
@@ -83,6 +101,14 @@ export class TeamService {
             return `${tag} ERROR: ${running.length} workers are already running, the most allowed at once (the codico.teamMaxWorkers setting). Wait for one to finish first.`;
         }
         let from: string | undefined; let basedOn: string | undefined; let baseLabel = ''; let note = '';
+        // Which repository: one of several, by name; a worker built on another's branch stays in that one's
+        let repoRoot = call.repoRoot;
+        if (tool.repo && !tool.worker) {
+            const repos = await this._host.repositories?.() ?? [];
+            const repo = repos.find(r => r.name === tool.repo!.trim().toLowerCase());
+            if (!repo) { return `${tag} ERROR: no repository "${tool.repo}". ${repos.length ? `The repositories: ${repos.map(r => r.name).join(', ')}.` : 'This workspace has one repository: leave "repo" out.'}`; }
+            repoRoot = repo.root;
+        }
         if (tool.worker) {
             const base = await this._worker(tool, call, tag);
             if (typeof base === 'string') { return base; }
@@ -91,15 +117,15 @@ export class TeamService {
             const committed = await commitTaskWork(base.worktree, `Codico: ${firstLine(base.prompt)}`);
             if ('error' in committed) { return `${tag} ERROR: ${committed.error}`; }
             from = base.branch; basedOn = base.id; baseLabel = workerLabel(base);
-        } else if (call.repoRoot && await uncommittedCount(call.repoRoot) > 0) {
-            note = ' Note: it starts from the last commit, so uncommitted changes in the workspace are not part of it.';
+        } else if (repoRoot && await uncommittedCount(repoRoot) > 0) {
+            note = ` Note: it starts from the last commit, so uncommitted changes in ${repoRoot === call.repoRoot ? 'the workspace' : 'that repository'} are not part of it.`;
         }
         const role = tool.role ?? 'developer';
         // A name already used in the team gets a number: the orchestrator tells workers apart by it
         const taken = new Set((await this.workers(call.team)).map(task => task.name));
         const wanted = cleanWorkerName(tool.name);
         let name = wanted; for (let n = 2; name && taken.has(name); n++) { name = `${wanted}-${n}`; }
-        const task = await this._host.createTask({ prompt, permissions, role, name, team: call.team, from, basedOn });
+        const task = await this._host.createTask({ prompt, permissions, role, name, team: call.team, from, basedOn, ...(repoRoot && repoRoot !== call.repoRoot ? { repoRoot } : {}) });
         if ('error' in task) { return `${tag} ERROR: the worker could not be started: ${task.error}`; }
         await this._host.launch(task);
         return `${tag} Started worker ${workerLabel(task)} (${role}) on branch ${task.branch}${basedOn ? `, from worker ${baseLabel}'s work` : ''}${this._host.where ? ` ${this._host.where()}` : ''}.${note} ` +
@@ -183,25 +209,59 @@ export class TeamService {
         return `${tag} Sent to worker ${workerLabel(task)}. It reads it at its next step (or now, if it was done). Wait for it to see its answer.`;
     }
 
+    /** The workers named, or the team's unmerged workers that have stopped. */
+    private async _chosen(tool: TeamTool, call: TeamCall, tag: string): Promise<BackgroundTask[] | string> {
+        const team = await this.workers(call.team);
+        if (!tool.workers?.length) { return team.filter(task => !task.merged && settled(task, this._now())); }
+        const chosen: BackgroundTask[] = [];
+        for (const name of tool.workers) {
+            const task = findWorker(team, name);
+            if (!task) { return `${tag} ERROR: no worker "${name}". This team's workers: ${team.map(t => workerLabel(t)).join(', ') || 'none'}.`; }
+            if (!settled(task, this._now())) { return `${tag} ERROR: worker ${workerLabel(task)} is still running. Wait for it first.`; }
+            chosen.push(task);
+        }
+        return chosen;
+    }
+
+    private async _integrate(tool: TeamTool, call: TeamCall, tag: string): Promise<string> {
+        const repos = await this._host.repositories?.() ?? [];
+        if (!call.crossRepo || !this._host.integrationFolder || repos.length === 0) { return `${tag} ERROR: integration is not available here.`; }
+        const command = tool.command?.trim() ?? tool.text?.trim();
+        if (!command) { return `${tag} ERROR: give the integrated test command in "command".`; }
+        const workers = await this._chosen(tool, call, tag);
+        if (typeof workers === 'string') { return workers; }
+        const runIn = tool.repo?.trim().toLowerCase() ?? dependencyOrder(describe(repos)).order.at(-1)!;
+        return `${tag} ${await integrate({ repos, workers, folder: this._host.integrationFolder(call.team), command, runIn }, call.crossRepo)}`;
+    }
+
+    private async _publish(tool: TeamTool, call: TeamCall, tag: string): Promise<string> {
+        const repos = await this._host.repositories?.() ?? [];
+        if (!call.crossRepo || repos.length === 0) { return `${tag} ERROR: publishing is not available here.`; }
+        const workers = await this._chosen(tool, call, tag);
+        if (typeof workers === 'string') { return workers; }
+        if (workers.length === 0) { return `${tag} ERROR: no worker to publish: none has stopped unmerged.`; }
+        return `${tag} ${await publish({ repos, workers }, call.crossRepo)}`;
+    }
+
     private async _merge(tool: TeamTool, call: TeamCall, tag: string): Promise<string> {
         const task = await this._worker(tool, call, tag);
         if (typeof task === 'string') { return task; }
         if (task.merged) { return `${tag} Worker ${workerLabel(task)} was merged already.`; }
         if (!settled(task, this._now())) { return `${tag} ERROR: worker ${workerLabel(task)} is still running. Wait for it first.`; }
-        if (!call.repoRoot) { return `${tag} ERROR: the workspace is not in a git repository.`; }
         const changes = await taskChanges(task.worktree, task.baseCommit);
         if ('error' in changes) { return `${tag} ERROR: ${changes.error}`; }
         if (changes.files === 0) { return `${tag} Worker ${workerLabel(task)} has not changed any file: nothing to merge.`; }
         if (!await call.approveMerge(task, changes.stat)) { return `${tag} The user declined the merge of worker ${workerLabel(task)}. Do not merge it; ask the user what to change, or go on without it.`; }
         const committed = await commitTaskWork(task.worktree, `Codico: ${firstLine(task.prompt)}`);
         if ('error' in committed) { return `${tag} ERROR: ${committed.error}`; }
-        const merged = await mergeTask(call.repoRoot, task.branch);
+        // Into the repository it works in (one of several, or the workspace's)
+        const merged = await mergeTask(task.repoRoot, task.branch);
         if ('error' in merged) {
             return `${tag} Not merged: ${merged.error}. The merge was undone and nothing in the workspace changed. ` +
                 'Message the worker to bring its branch up to date with the current state and resolve the conflict, or make the change yourself.';
         }
         await this._host.store.update(task.id, { merged: true });
-        return `${tag} Merged worker ${workerLabel(task)} (${changes.files} file${changes.files === 1 ? '' : 's'}) into the workspace:\n${changes.stat}\n\n` +
+        return `${tag} Merged worker ${workerLabel(task)} (${changes.files} file${changes.files === 1 ? '' : 's'}) into ${task.repoRoot === call.repoRoot ? 'the workspace' : task.repoRoot}:\n${changes.stat}\n\n` +
             'Acceptance gate: run the build and the tests in the workspace now, before reporting the task as done.';
     }
 }

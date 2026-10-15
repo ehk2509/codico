@@ -316,6 +316,14 @@ Hand a task to Codico and keep working: the task runs in a git worktree and a br
 
 Things to know: a fresh worktree has no installed dependencies, build output or untracked files such as `.env`, and the agent is told so; a task running in this window ends if the window closes or reloads (its work so far stays on its branch, shown as stopped); and a task whose own window is closed is shown as stopped, not restarted.
 
+#### Across repositories
+A team can change several repositories at once — a backend, the shared SDK it uses, a frontend — test them together and open linked pull requests.
+
+- **Which repositories.** Every folder of the workspace that is a git repository, and those listed in `codico.repositories` (for example `["../sdk", "../frontend"]`). The orchestrator is told their names and the **dependency order** Codico reads from their manifests (`package.json` with its workspace packages, `go.mod`, `pyproject.toml`): a repository whose package another uses comes first.
+- **Workers per repository.** `start` with `repo: sdk` puts the worker in a worktree of that repository; merging a worker goes into its own repository.
+- **Integrated tests.** `integrate` checks every repository out side by side in one folder (so `../sdk` between them resolves as it does on your disk), each with its workers' branches merged in — a branch that conflicts is left out and said — and runs the test command there. It is asked for like any command, and its result is evidence in the change report.
+- **Linked pull requests.** `publish` pushes each repository's worker branch and opens a draft pull request in each, the dependency first. Each pull request then lists all of them in merge order, says which to merge first and what it depends on. It is asked for every time (it publishes), with the plan shown: which branches, which repositories, in which order.
+
 ### Automations
 Codico can take work from GitHub by itself and see it through: an issue or a CI failure becomes a fix, the fix a pull request, and feedback on that pull request more work, until it is merged.
 
@@ -786,6 +794,15 @@ Add a `.codicoignore` file (gitignore syntax) to any workspace root to exclude m
 Existing `.copilotignore` files are still read for compatibility; `.codicoignore` is the Codico-specific policy and its later rules can override legacy matches. Terminal commands are a separate permission boundary: an approved shell command can still access files that the operating system allows, so do not treat ignore rules as a shell sandbox. Terminal subprocesses no longer inherit arbitrary VS Code process secrets by default.
 
 ---
+
+### Marketplace
+**Codico: Marketplace** lists community packages — skills, agents, MCP servers and hooks — from a registry, searchable by name, description, tag or publisher. A package is installed into the project (`.codico/skills`, `.codico/agents`, `.codico/hooks.json`, `.mcp.json`), so it is shared with everyone who opens it, like the project's own.
+
+- **What was reviewed is what is installed.** The registry ([ehk2509/codico-registry](https://github.com/ehk2509/codico-registry); `codico.marketplaceRegistry` to use another, such as a company's own) pins each version to a commit of the publisher's GitHub repository and a hash of its content. Codico downloads that commit and refuses it if the content differs.
+- **Publisher.** A package's id starts with its publisher's GitHub account and must come from a repository of that account; *verified* publishers are confirmed by the registry's maintainers.
+- **Before installing**, you see what it adds (skills, agents, each MCP server's command line, each hook's command), the permissions it declares (commands, network, environment variables), and a **security scan** of every file: commands that download and run code, reads of keys or credentials, text written to steer the agent against you or around its approvals, hidden or encoded code, binaries, MCP servers without a fixed version, and commands or addresses it did not declare. Nothing in a package runs at install time; its MCP servers and hooks still ask before they first run.
+- **Updates and removal are exact.** What was installed is recorded in `.codico/packages.json`. Codico tells you once a day when an installed package has a new version; updating shows the same review. Uninstalling removes what the package added — files you have changed since are kept.
+- **Publishing.** Put a folder with a `codico-package.json` in a public GitHub repository, run `codico package check <folder>` (validation, scan, and the registry entry with the commit and the content hash), and open a pull request to the registry, whose CI runs `codico registry verify`. The registry's README has the format.
 
 ### MCP (Model Context Protocol) Servers
 

@@ -6,6 +6,11 @@ All notable changes to Codico will be documented in this file.
 
 ### Added
 - The agent drives the debugger (`debug` tool): starts a test or program under VS Code's debugger (a launch configuration, a file, or a command in the JavaScript debug terminal), stops where a failure is thrown, sets breakpoints (conditions, logpoints), continues, steps and pauses (each step answered with where it stopped, the source, the call stack, the variables' runtime values and the recent output), evaluates expressions (read-only ones without asking), and reruns the session after a fix. Starting a program, and evaluating anything but a plain read, are asked for like commands; only Codico's own sessions are stopped.
+- Agent teams across repositories. With several git repositories (the workspace's folders, and `codico.repositories`), the orchestrator is told their dependency order (from `package.json`, `go.mod`, `pyproject.toml`), starts workers in each (`repo`), runs integrated tests with every repository side by side and the workers' branches merged (`integrate`), and opens linked draft pull requests in dependency order, each naming the others and what to merge first (`publish`, asked every time). A worker is merged into its own repository.
+- **Codico: Marketplace**: community skills, agents, MCP servers and hooks from a registry, searchable, installed into the project. Each version is pinned to a commit of its publisher's repository and a content hash, checked on download; before installing you see what it adds, its declared permissions and a security scan of every file. Updates (checked daily) and uninstalls touch exactly what was installed, recorded in `.codico/packages.json`, and keep files you changed. `codico package check` and `codico registry verify` for publishers and the registry's CI. Setting: `codico.marketplaceRegistry`.
+
+### Fixed
+- A reply that ended with an offer ("If you meant a file containing `{}`, let me know and I'll adjust it") was taken for an announced step the agent had not taken, and the agent was sent back up to twice to "issue that tool call", for nothing: two extra requests on a finished task. Offers and replies that say the work is done now end the turn.
 
 ## 0.5.1 - 2026-10-15
 
