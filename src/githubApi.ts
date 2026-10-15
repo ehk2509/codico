@@ -7,7 +7,7 @@ export const GITHUB: GitHubApi = { protocol: 'https:', host: 'api.github.com' };
 
 export interface ApiAnswer { status: number; json: unknown }
 
-export function githubRequest(api: GitHubApi, method: 'GET' | 'POST', path: string, token: string, body?: unknown): Promise<ApiAnswer> {
+export function githubRequest(api: GitHubApi, method: 'GET' | 'POST' | 'PATCH', path: string, token: string, body?: unknown): Promise<ApiAnswer> {
     return new Promise((resolve, reject) => {
         const payload = body === undefined ? undefined : JSON.stringify(body);
         const request = (api.protocol === 'https:' ? https : http).request({

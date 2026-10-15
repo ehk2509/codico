@@ -7,8 +7,8 @@ import { BackgroundTask, WorkerRole } from './backgroundTasks';
  * result. This file holds the `team` tool and the rules about it; nothing here touches
  * VS Code, git or the disk.
  */
-export type TeamAction = 'start' | 'wait' | 'changes' | 'review' | 'message' | 'merge';
-export const TEAM_ACTIONS: readonly TeamAction[] = ['start', 'wait', 'changes', 'review', 'message', 'merge'];
+export type TeamAction = 'start' | 'wait' | 'changes' | 'review' | 'message' | 'merge' | 'integrate' | 'publish';
+export const TEAM_ACTIONS: readonly TeamAction[] = ['start', 'wait', 'changes', 'review', 'message', 'merge', 'integrate', 'publish'];
 
 export interface TeamTool {
     type: 'team';
@@ -17,6 +17,10 @@ export interface TeamTool {
     role?: WorkerRole;
     /** start: a short name for the worker, after its part of the work ("backend"). */
     name?: string;
+    /** start: the repository the worker works in (one of several); integrate: where the command runs. */
+    repo?: string;
+    /** integrate: the integrated test command. */
+    command?: string;
     /** start: the worker's task. message: the text sent. review: what to look at most. */
     text?: string;
     /** The worker acted on (its id); start: the worker whose branch the new one starts from. */
@@ -64,6 +68,8 @@ export function teamToolFromArgs(args: Record<string, unknown>): TeamTool | null
         type: 'team', action,
         ...(isRole(role) ? { role } : {}),
         ...(cleanWorkerName(str('name')) ? { name: cleanWorkerName(str('name')) } : {}),
+        ...(str('repo') ? { repo: str('repo') } : {}),
+        ...(str('command') ? { command: str('command') } : {}),
         ...(str('text') ? { text: str('text') } : {}),
         ...(str('worker') ? { worker: str('worker') } : {}),
         ...(workers && workers.length ? { workers } : {}),
@@ -107,7 +113,9 @@ export const TEAM_TOOL_DESCRIPTION = 'Lead a team of workers. Each worker is ano
     'you plan, hand out parts of the work, read their reports, review and merge their changes, and check the result. Actions: ' +
     '"start" a worker (role developer or tester, name = a short name for its part such as backend or frontend, text = its complete task; worker = an existing worker whose branch it starts from, so a tester checks a developer\'s work); ' +
     '"wait" until workers have finished (workers = ids, all by default); "changes" shows a worker\'s patch; "review" has a read-only reviewer check a worker\'s patch (text = what to look at); ' +
-    '"message" sends a worker a follow-up or an answer (text); "merge" merges a worker\'s branch into the workspace after the user approves.';
+    '"message" sends a worker a follow-up or an answer (text); "merge" merges a worker\'s branch into its repository after the user approves. ' +
+    'Across several repositories: "start" with repo = the repository; "integrate" checks every repository out side by side with the workers\' branches merged in and runs command (in repo, by default the last in dependency order); ' +
+    '"publish" pushes each repository\'s worker branch and opens linked draft pull requests in dependency order (workers = which, by default all unmerged).';
 
 /** What the orchestrator is told, in a team turn. */
 export function teamPromptSection(maxWorkers: number): string {

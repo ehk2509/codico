@@ -309,6 +309,14 @@ Hand a task to Codico and keep working: the task runs in a git worktree and a br
 
 Things to know: a fresh worktree has no installed dependencies, build output or untracked files such as `.env`, and the agent is told so; a task running in this window ends if the window closes or reloads (its work so far stays on its branch, shown as stopped); and a task whose own window is closed is shown as stopped, not restarted.
 
+#### Across repositories
+A team can change several repositories at once — a backend, the shared SDK it uses, a frontend — test them together and open linked pull requests.
+
+- **Which repositories.** Every folder of the workspace that is a git repository, and those listed in `codico.repositories` (for example `["../sdk", "../frontend"]`). The orchestrator is told their names and the **dependency order** Codico reads from their manifests (`package.json` with its workspace packages, `go.mod`, `pyproject.toml`): a repository whose package another uses comes first.
+- **Workers per repository.** `start` with `repo: sdk` puts the worker in a worktree of that repository; merging a worker goes into its own repository.
+- **Integrated tests.** `integrate` checks every repository out side by side in one folder (so `../sdk` between them resolves as it does on your disk), each with its workers' branches merged in — a branch that conflicts is left out and said — and runs the test command there. It is asked for like any command, and its result is evidence in the change report.
+- **Linked pull requests.** `publish` pushes each repository's worker branch and opens a draft pull request in each, the dependency first. Each pull request then lists all of them in merge order, says which to merge first and what it depends on. It is asked for every time (it publishes), with the plan shown: which branches, which repositories, in which order.
+
 ### Automations
 Codico can take work from GitHub by itself and see it through: an issue or a CI failure becomes a fix, the fix a pull request, and feedback on that pull request more work, until it is merged.
 

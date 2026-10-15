@@ -1052,6 +1052,42 @@ async function run() {
       results.push({ name: 'automation_lifecycle', ms: Date.now() - a0, requests: (await getLog()).length - aBefore, ok: ranHere && opened && resumed && withContext && pushed && done && ownToken,
         why: `${problem ? 'problem: ' + problem + '; ' : ''}the labelled issue became a job run in this window: ${ranHere}; its work became a draft pull request that resolves the issue, pushed: ${opened} (${afterFirst.state}${afterFirst.note ? ': ' + afterFirst.note : ''}; ${JSON.stringify((afterFirst.log || []).map(l => l.text))}); CI failing on it resumed the job: ${resumed}; the resumed agent had its earlier conversation (reloaded from disk) and the failing log: ${withContext}; the fix was pushed to the same pull request: ${pushed}; merged, the job is done: ${done}; only the test token was sent: ${ownToken}` });
       fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+
+      // A team across repositories: an SDK beside the workspace (codico.repositories), integrated tests, linked pull requests in dependency order
+      {
+        const x0 = Date.now(); const xBefore = (await getLog()).length;
+        const sdk = path.join(ws, '..', 'sdk-repo'); const sdkBare = path.join(ws, '..', 'sdk.git');
+        const sg = (...args) => require('node:child_process').execFileSync('git', args, { cwd: sdk, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        fs.mkdirSync(sdk);
+        fs.writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: '@acme/sdk' }));
+        fs.writeFileSync(path.join(sdk, 'lib.js'), 'module.exports = { version: 1 };\n');
+        require('node:child_process').execFileSync('git', ['init', '-q', '--bare', '-b', 'main', sdkBare]);
+        sg('init', '-q', '-b', 'main'); sg('config', 'user.email', 't@example.com'); sg('config', 'user.name', 'T');
+        sg('remote', 'add', 'origin', 'https://github.com/acme/sdk.git'); sg('config', `url.${sdkBare}.insteadOf`, 'https://github.com/acme/sdk.git');
+        sg('add', '-A'); sg('commit', '-q', '-m', 'sdk'); sg('push', '-q', 'origin', 'main');
+        // The workspace (repository "ws") uses the SDK and tests against it, next to it
+        fs.writeFileSync(path.join(ws, 'package.json'), JSON.stringify({ name: 'app', dependencies: { '@acme/sdk': 'file:../sdk-repo' } }));
+        fs.writeFileSync(path.join(ws, 'live/xr-app.js'), 'module.exports = { uses: 1 };\n');
+        fs.writeFileSync(path.join(ws, 'live/xr-test.js'), "const sdk = require('../../sdk-repo/lib.js'); const app = require('./xr-app.js'); if (sdk.version !== 2 || app.uses !== 2) { console.error('XR-FAIL', sdk.version, app.uses); process.exit(1); } console.log('XR-INTEGRATED-OK');\n");
+        git('add', '-A'); git('commit', '-q', '-m', 'app uses the sdk'); git('push', '-q', 'origin', 'HEAD:main');
+        await set('repositories', ['../sdk-repo']);
+        await ghState({ created: [], patched: [] });
+        await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'createThread' });
+        let xError = null;
+        try { await Promise.race([vscode.commands.executeCommand('codico.__evalRunTask', '/team [SCENARIO:team_xrepo] change the SDK and the app together'), new Promise((_, rej) => setTimeout(() => rej(new Error('timed out after 150 s')), 150000))]); } catch (e) { xError = String(e && e.message || e); }
+        const xReqs = (await getLog()).slice(xBefore).filter(e => e.scenario === 'team_xrepo' && e.stream);
+        const xSaid = xReqs.map(r => r.lastUser).join('\n');
+        const inSdk = (((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.team && t.name === 'sdk') || {}).repoRoot === fs.realpathSync(sdk);
+        const integrated = /\[team integrate\] Integrated test PASSED: `node live\/xr-test\.js` in ws[\s\S]*sdk-repo: with sdk[\s\S]*XR-INTEGRATED-OK/.test(xSaid);
+        const gh = await ghState();
+        const prs = (gh.created || []).map(c => c.repo);
+        const linked = (gh.patched || []).some(p => p.repo === 'app' && /\*\*Depends on\*\* acme\/sdk#\d+/.test(p.body)) && (gh.patched || []).some(p => p.repo === 'sdk' && /Merge this one first/.test(p.body));
+        const published = /\[team publish\] Opened 2 linked draft pull requests, to be merged in this order:\n1\. https:\/\/github\.com\/acme\/sdk\/pull\/\d+ \(sdk-repo\)\n2\. https:\/\/github\.com\/acme\/app/.test(xSaid) && prs.join() === 'sdk,app' && linked;
+        await set('repositories', undefined);
+        results.push({ name: 'team_cross_repo', ms: Date.now() - x0, requests: xReqs.length, ok: !xError && inSdk && integrated && published,
+          why: `a worker started in the SDK repository beside the workspace: ${inSdk}; the integrated test, with both repositories side by side and both workers merged, passed: ${integrated}; linked draft pull requests, the SDK first, each naming the other: ${published} (${prs.join(', ')})${xError ? '; error: ' + xError : ''}` });
+        fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+      }
       git('remote', 'remove', 'origin');
     }
     try { git('worktree', 'remove', '--force', worker.worktree); } catch { /* reported by the checks */ }

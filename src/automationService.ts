@@ -28,6 +28,19 @@ function githubApi(evaluationMode: boolean): GitHubApi {
     return url ? apiFrom(url) : GITHUB;
 }
 
+/** GitHub for a repository: its "origin" on github.com, and the token. */
+export async function githubForRepository(context: vscode.ExtensionContext, root: string, mode: { evaluationMode: boolean; headless?: { githubApi?: string } }): Promise<GitHubEvents | { error: string }> {
+    // As configured: "get-url" would apply the user's URL rewriting (insteadOf) and hide the GitHub address
+    const remote = await git(root, ['config', '--get', 'remote.origin.url'], 10_000);
+    const repo = remote.ok ? parseGitHubRemote(remote.stdout) : undefined;
+    if (!repo) { return { error: 'this repository has no "origin" remote on github.com' }; }
+    // Automated tests never use the developer's own token; with nobody at the screen it comes from the environment
+    const token = mode.evaluationMode ? process.env.CODICO_TEST_GITHUB_TOKEN
+        : mode.headless ? (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || await githubToken(context)) : await githubToken(context);
+    if (!token) { return { error: 'no GitHub token: set one with "Codico: Set GitHub Token", or sign in to the GitHub CLI' }; }
+    return new GitHubEvents(mode.headless?.githubApi ? apiFrom(mode.headless.githubApi) : githubApi(mode.evaluationMode), token, repo);
+}
+
 /**
  * Automations in the editor: on for a repository only when the user turns them on there (kept
  * in this workspace's state, never in a file of the project). While the window is open,
@@ -112,15 +125,7 @@ export class AutomationService implements vscode.Disposable {
     private async _github(): Promise<GitHubEvents | { error: string }> {
         const root = await this._repo();
         if (!root) { return { error: 'this folder is not a git repository' }; }
-        // As configured: "get-url" would apply the user's URL rewriting (insteadOf) and hide the GitHub address
-        const remote = await git(root, ['config', '--get', 'remote.origin.url'], 10_000);
-        const repo = remote.ok ? parseGitHubRemote(remote.stdout) : undefined;
-        if (!repo) { return { error: 'this repository has no "origin" remote on github.com' }; }
-        // Automated tests never use the developer's own token; with nobody at the screen it comes from the environment
-        const token = this._evaluationMode ? process.env.CODICO_TEST_GITHUB_TOKEN
-            : this._headless ? (process.env.GITHUB_TOKEN || process.env.GH_TOKEN || await githubToken(this._context)) : await githubToken(this._context);
-        if (!token) { return { error: 'no GitHub token: set one with "Codico: Set GitHub Token", or sign in to the GitHub CLI' }; }
-        return new GitHubEvents(this._headless?.githubApi ? apiFrom(this._headless.githubApi) : githubApi(this._evaluationMode), token, repo);
+        return githubForRepository(this._context, root, { evaluationMode: this._evaluationMode, headless: this._headless });
     }
 
     private async _task(job: Job): Promise<BackgroundTask | undefined> { return (await this._tasks.tasks()).find(task => task.id === job.taskId); }

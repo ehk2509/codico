@@ -111,6 +111,11 @@ export class GitHubEvents {
         } catch { return false; }
     }
 
+    /** Changes a pull request's description; true when GitHub took it. */
+    async updatePull(number: number, change: { body?: string; title?: string }): Promise<boolean> {
+        try { return (await githubRequest(this._api, 'PATCH', `${this._base}/pulls/${number}`, this._token, change)).status === 200; } catch { return false; }
+    }
+
     /** Opens a pull request; returns its number and address, or GitHub's reason. */
     async createPull(input: { title: string; body: string; head: string; base: string; draft: boolean }): Promise<{ number: number; url: string } | { error: string }> {
         try {
