@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -549,7 +549,9 @@
         },
         "codico.repositories": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Agent teams across repositories: other git repositories a team may work in, besides the workspace's folders (paths, absolute or relative to the first folder, e.g. \"../sdk\"). Their dependency order is read from package.json, go.mod and pyproject.toml."
         },

@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.6.0 - 2026-10-15
 
 ### Added
 - The agent drives the debugger (`debug` tool): starts a test or program under VS Code's debugger (a launch configuration, a file, or a command in the JavaScript debug terminal), stops where a failure is thrown, sets breakpoints (conditions, logpoints), continues, steps and pauses (each step answered with where it stopped, the source, the call stack, the variables' runtime values and the recent output), evaluates expressions (read-only ones without asking), and reruns the session after a fix. Starting a program, and evaluating anything but a plain read, are asked for like commands; only Codico's own sessions are stopped.
