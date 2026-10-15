@@ -18,6 +18,7 @@ import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { shouldRunAgentIteration } from './iterationBudget';
+import { classifyCheck } from './patchPassport';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { TaskUsage } from './taskUsage';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -136,7 +137,9 @@ export class AgentTurn {
                 onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens, usage.promptTokens, usage.completionTokens, 'subagent'); this._host.post({ type: 'tokenUsage', subagent: true, taskRequests: taskUsage.requests, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
             };
 
-            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
+            // A check run in the last step: its result is read before the budget can end the loop
+            let checkResultUnread = false;
+            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
                     this._host.evalPromptTokens + this._host.evalCompletionTokens >= this._host.evaluationTokenBudget) {
@@ -183,6 +186,7 @@ export class AgentTurn {
                 // Once a loop is detected, the rest of this response is not executed either
                 let loopDetected = false;
                 let ranTool = false;
+                let ranCheck = false;
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
@@ -221,6 +225,7 @@ export class AgentTurn {
                             });
                         }
                         ranTool = true;
+                    if (tool.type === 'get_diagnostics' || (tool.type === 'run_terminal' && classifyCheck(tool.command))) { ranCheck = true; }
                         await this._host.dispatchTool(tool, msgId, signal);
                         loopGuard.ran(tool);
                         let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
@@ -253,6 +258,7 @@ export class AgentTurn {
                         });
                     }
                     ranTool = true;
+                    if (tool.type === 'get_diagnostics' || (tool.type === 'run_terminal' && classifyCheck(tool.command))) { ranCheck = true; }
                     await this._host.dispatchTool(tool, msgId, signal);
                     loopGuard.ran(tool);
                     let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
@@ -588,6 +594,7 @@ export class AgentTurn {
                 // The model is calling tools again, so reminders are no longer "stalled"
                 verificationNudges = 0;
                 blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
+                checkResultUnread = ranCheck;
                 if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
                     this._host.post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }

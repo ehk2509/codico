@@ -27,7 +27,8 @@ test('coding holdout v7 is frozen, non-trivial, and internally consistent', () =
     ids.add(task.id);
     assert.match(task.baseCommit, /^[0-9a-f]{40}$/);
     assert.ok(task.prompt.length >= 80);
-    assert.ok(task.maxIterations >= 8 && task.maxIterations <= 16);
+    // v7 has no step limit: a run ends when the agent stops
+    assert.equal(task.maxIterations, 0);
     assert.match(task.verifierCommit, /^[0-9a-f]{40}$/);
 
     if (task.verifierPath) {
@@ -89,11 +90,12 @@ test('holdout covers multiple historical failure families', () => {
   }
 });
 
-test('v7 keeps exactly the v6 tasks that could be scored, unchanged', () => {
+test('v7 keeps exactly the v6 tasks that could be scored, unchanged but for the step limit', () => {
   const carried = ['stream-unexpected-eof', 'stream-resume-overlap', 'agent-unfulfilled-action', 'tools-unclosed-fence', 'tools-fingerprint-arguments',
     'tools-write-nested-fences', 'tools-four-backtick-envelope', 'tools-edit-nested-fences', 'tools-stream-closing-line'];
   for (const id of carried) {
-    assert.deepEqual(suite.tasks.find(t => t.id === id), v6.tasks.find(t => t.id === id), id);
+    // Unchanged but for the step limit, which v7 removes
+    assert.deepEqual({ ...suite.tasks.find(t => t.id === id), maxIterations: 16 }, v6.tasks.find(t => t.id === id), id);
   }
   assert.equal(suite.tasks.filter(t => v6.tasks.some(o => o.id === t.id)).length, carried.length);
 });

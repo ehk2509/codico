@@ -25,6 +25,8 @@ const SCRIPTS = (port) => ({
   ignored: [tool('read_file', 'filepath: fixtures/secret.txt'), 'I could not read it.'],
   fetch_local: [tool('fetch_url', `url: http://127.0.0.1:${port}/log`), 'Done.'],
   loop: [1, 2, 3, 4].map(() => tool('read_file', 'filepath: fixtures/config.txt')).concat(['Stopping.']),
+  // The step budget is reached by the step that runs the tests: the next step still runs, to read them
+  check_read: [tool('run_terminal', 'command: node --test live/check-read.test.js'), 'The tests pass: CHECK-READ-DONE.'],
   timeout: [tool('run_terminal', 'command: sleep 30'), 'It timed out.'],
   bigoutput: [tool('run_terminal', 'command: seq 1 200000'), 'Lots of output.'],
   plain_code: ['To delete it you would run:\n\n' + F + 'bash\nrm -f live/keep-me.txt\n' + F + '\n\nI have not run it.'],

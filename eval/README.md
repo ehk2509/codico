@@ -21,7 +21,7 @@ That gives 30 scored tasks, against the 9 that v6 could score (see the audit bel
 - **Prompts:** each reads like an issue report or feature request, and names a function or module only when the hidden test imports one that does not exist yet.
 - **Categories:** tool parsing, context management, agent loop, chat panel, providers, streaming, security, terminal and native tools.
 
-Like v6, v7 has no evaluator ceilings:
+v7 has **no step limit** (`maxIterations: 0`, as Codico runs by default), so a run ends when the agent stops. A first run with v6's 16-step limit cut 22 of 30 runs off mid-work (see below). Like v6, it has no evaluator ceilings:
 
 - **no evaluator wall-clock timeout** (`maxTaskMinutes: 0`);
 - **no cumulative token ceiling** (`maxTotalTokens: 0`).
@@ -124,7 +124,7 @@ In the oracle run of v7, two historical fixes broke an existing test that a late
 
 Tests that a fix deliberately rewrote are not counted as regressions. For example, checkpoint-credentials changes what a rewind lists.
 
-### First v7 run (2026-10-15): Codico with DeepSeek V4 Flash
+### First v7 run (2026-10-15, still with v6's 16-step limit): Codico with DeepSeek V4 Flash
 
 The run was split into ten workflow runs of 3 tasks each and combined with `node scripts/eval/summarize.js <artifacts>`.
 

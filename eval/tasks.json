@@ -1,7 +1,7 @@
 {
   "suiteVersion": "codico-coding-holdout-v7",
   "frozen": true,
-  "description": "Oracle-validated historical Codico tasks: each verifier fails at the base without the fix and passes with the historical fix applied (scripts/eval/mine.js, --agent oracle / noop). 9 tasks carried over from v6 (the ones that can be scored) and 21 mined from fix commits. Same scoring as v6: no evaluator wall-clock or cumulative-token ceiling.",
+  "description": "Oracle-validated historical Codico tasks: each verifier fails at the base without the fix and passes with the historical fix applied (scripts/eval/mine.js, --agent oracle / noop). 9 tasks carried over from v6 (the ones that can be scored) and 21 mined from fix commits. No step limit (maxIterations 0, as Codico runs by default), no evaluator wall-clock and no cumulative-token ceiling: a run ends when the agent stops. A first run with v6's 16-step limit cut 22 of 30 runs off mid-work.",
   "maxTotalTokens": 0,
   "maxTaskMinutes": 0,
   "tasks": [
@@ -12,7 +12,7 @@
       "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker emits a stream_error describing the premature interruption instead of being silently accepted as complete. Keep normally completed streams unchanged.",
       "verifierFile": "streamCompletion.test.js",
       "testNamePattern": "unexpected provider EOF is reported without flagging normal completion",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "47b55a29aad01898645d02743d09559b1ecc5281",
       "verifierPath": "eval/verifiers/streamUnexpectedEof.verifier.js"
     },
@@ -23,7 +23,7 @@
       "prompt": "When an interrupted model stream resumes, prevent text from the end of the partial response from being repeated at the seam. Add a general overlap calculation rather than hard-coded string trimming.",
       "verifierFile": "streamCompletion.test.js",
       "testNamePattern": "resume overlap calculation is applied at the recovery seam",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb",
       "verifierPath": "eval/verifiers/streamResumeOverlapIntegrated.verifier.js"
     },
@@ -34,7 +34,7 @@
       "prompt": "Prevent the agent from stopping when it merely announces an action such as reading or searching a file but emits no tool call. Detect this stalled-turn pattern conservatively so normal final answers are not treated as stalled.",
       "verifierFile": "streamCompletion.test.js",
       "testNamePattern": "detects action announcements that were never followed by a tool call",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -44,7 +44,7 @@
       "prompt": "Make tool parsing recover a tool call when the model reaches a clean end of response without writing the final closing fence. Do not execute genuinely incomplete streaming drafts early.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "finds a tool fence the model never closed",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -54,7 +54,7 @@
       "prompt": "Improve repeated-tool loop detection so fingerprints include the tool arguments. Calls to the same tool with different paths, commands, or values must not be mistaken for identical repetitions.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "tool fingerprints distinguish calls by their arguments",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb",
       "verifierPath": "eval/verifiers/toolFingerprintArguments.verifier.js"
     },
@@ -65,7 +65,7 @@
       "prompt": "Allow write_file content to contain Markdown code fences without truncating or corrupting the outer tool call. Preserve the exact inner content.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "write_file content may contain its own code blocks",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -75,7 +75,7 @@
       "prompt": "Support a four-backtick outer tool fence so file content containing ordinary triple-backtick Markdown fences is parsed as content rather than as the end of the tool call.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "four-backtick tool fences treat inner fences as content",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -85,7 +85,7 @@
       "prompt": "Make edit_file parsing preserve old/new strings that themselves contain Markdown code fences. The nested fences must not terminate the tool call.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "edit_file strings may contain code blocks",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -95,7 +95,7 @@
       "prompt": "During streaming, do not consider a tool fence complete until its closing fence line is actually complete. Avoid premature execution when a closing delimiter is still fragmented.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "scanner waits for a complete closing line while streaming",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb"
     },
     {
@@ -106,7 +106,7 @@
       "prompt": "The change report (patch passport) shown under a reply disappears when the thread is reopened: it is posted to the panel before the reply ends, but it is not saved with the reply, so replaying a saved thread does not show it again. Make the change report part of what is saved with a reply and replayed when a thread is reopened.",
       "verifierFile": "patchPassport.test.js",
       "testNamePattern": "^(?:the report is saved with the reply, so a reopened thread shows it again)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "d0b308153cac201b298d4dd28afd8dbedd8fff44"
     },
     {
@@ -117,7 +117,7 @@
       "prompt": "Reading a very large file without a range pages through it a few hundred lines at a time. As a first step, add `formatOutline(symbols, max?)` to src/fileReadWindow.ts. It formats a file outline for the model: each symbol is `{ name, kind, startLine, endLine, depth }`, and each becomes a line `L<start>\u2013<end>  <kind> <name>`. The dash between the numbers is an en dash, and there are two spaces after the range. Nested symbols (depth 1) are indented by two spaces. Only one level of nesting is shown. When there are more symbols than `max`, the list ends with `\u2026 N more symbols`.",
       "verifierFile": "fileReadWindow.test.js",
       "testNamePattern": "^(?:a large file outline lists symbols with line ranges, nested one level)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "91b9d15074f5eb0a5d8da76a90fb010ae82f0b81"
     },
     {
@@ -128,7 +128,7 @@
       "prompt": "projectHistoryForModel (src/contextProjection.ts) replaces older large tool results with a short 'compacted' note, keeping only the newest few. File reads are trimmed even when they are still accurate, so the agent has to read the same files again. Change the rule for read_file results. A read stays in full while it is still current, within a total budget of 120,000 characters for such reads (the newest are kept when over budget). A read stops being current when:\n- its file was edited or written successfully after it (a failed edit doesn't count);\n- a later read of the same file covers its lines. If that later read itself left those lines out because they were already in the conversation, the older read stays.\n\nStale or repeated reads fall under the existing rules. This must work both for native tool messages and for the text tool format, where results come as a user message starting with \"[Tool Results]\". The model-facing projection changes; the stored history must not.",
       "verifierFile": "contextProjection.test.js",
       "testNamePattern": "^(?:a large read stays while its file is unchanged, however many other large results came after it|a read is trimmed once it is stale or repeated, and current reads are bounded in total|the text tool format: a read result inside \"\\[Tool Results\\]\" is kept the same way)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "6cb1dc7d988e959736d58ba71a6ea282a1efba49"
     },
     {
@@ -139,7 +139,7 @@
       "prompt": "Security report: the checkpoint store (used to rewind file changes) copies every file .gitignore does not exclude. That includes a `.env` or a private key in a project that does not ignore them, so secrets end up in the store. Credential files must never be copied into checkpoints, whatever .gitignore says:\n- covered: .env and .env.* (except .env.example), *.pem, *.key, SSH private keys such as id_ed25519, .npmrc, terraform state, service-account and credentials JSON files, and .aws/credentials;\n- not covered: ordinary files whose names merely contain such words.\n\nA rewind must leave credential files exactly as they are, and they must not appear in the list of changes a rewind shows. Export the list of patterns as `SENSITIVE` from src/checkpointGit.ts.",
       "verifierFile": "checkpoints.test.js",
       "testNamePattern": "^(?:files that hold credentials are never copied into the store, even when \\.gitignore does not list them|a rewind leaves credential files exactly as they are)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "49963520d40e3709834ea30d9660135db145863d"
     },
     {
@@ -150,7 +150,7 @@
       "prompt": "Two problems with run_terminal (src/terminalProcess.ts):\n- A command that waits for input (a prompt) hangs until the timeout. It should get end-of-input at once, and fail or continue.\n- When the output passes the capture limit (`maxCapturedBytes`), the end is lost. The end is where failures and test summaries are printed. Keep the start, and also keep the end, with a line `\u2026 (output beyond N bytes omitted; its end follows) \u2026` between them.\n\nAlso add `clipTerminalOutput(output, maxChars = 4000)`, which shortens output shown to the model. It keeps a short start and mostly the end, with `\u2026 (N characters omitted) \u2026` between them, and returns short output unchanged.",
       "verifierFile": "terminalProcess.test.js",
       "testNamePattern": "^(?:a command waiting for input gets end-of-input instead of hanging until the timeout|past the capture limit the end of the output is kept|output shown to the model keeps its start and mostly its end)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "1b47260633a412c6283e2b7185d1967ce8ef7aa0"
     },
     {
@@ -161,7 +161,7 @@
       "prompt": "A real compaction returned the end of the transcript, in its own format (\"### TOOL RESULT\", \"[tool calls: \u2026]\"), instead of a summary. It replaced the history, and the agent forgot its work. Fix compaction (src/historyCompaction.ts):\n- The summarizer prompt must put the transcript between `<transcript>` and `</transcript>`, and repeat the instruction after it (\"Now write the summary \u2026\"), so the instruction is the last thing the model reads.\n- Add `summaryProblem(summary, plan)`. It returns null for a usable summary, or else a reason: the summary was empty; the model copied the transcript instead of summarising it; or the summary is far too short for what it would replace.",
       "verifierFile": "historyCompaction.test.js",
       "testNamePattern": "^(?:the summary prompt delimits the transcript and repeats the instruction after it|a summary that copies the transcript, or is far too short, is rejected)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "3ab3ef4d52226cc7469871e394f5ff1ad25d9d68"
     },
     {
@@ -172,7 +172,7 @@
       "prompt": "Two streaming bugs in the OpenRouter client:\n- A multi-byte character (\u00e9, \u65e5\u672c\u8a9e, an emoji) split across network chunks comes out as U+FFFD replacement characters. Text must be decoded across chunk boundaries.\n- A provider that stops sending, with the connection left open, makes the request wait forever. Drop a stream that receives nothing for a configurable time, and report it as a recoverable stream interruption so the normal reconnect handles it. Add `setStreamStallTimeout(seconds)` to src/streamCompletion.ts; the default is 300 seconds.",
       "verifierFile": "openRouterTransport.test.js",
       "testNamePattern": "^(?:a character split across network chunks is decoded intact|a provider that stops sending is reported as a recoverable interruption)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "1279ae6a376c86cc8d453c9906501e2f8c3b9ed2"
     },
     {
@@ -183,7 +183,7 @@
       "prompt": "The codico.accoEnabled setting (the ACCO request optimizer) does nothing with a direct provider model: the optimizer is only used on the OpenRouter path. streamDirect (src/directProviderClient.ts) should take the optimizer as an optional last parameter, after `endpoint`; it is an object with `optimize(provider, body)`. Every direct request should then pass through it before it is sent.\n- The name given to the optimizer is the request shape, not the provider id, because ACCO refuses names it does not know: \"openai\" for OpenAI-compatible providers, \"anthropic\" for Anthropic and \"gemini\" for Google.\n- What it returns is what is sent.\n- A retry after the provider refused an option is optimized again.\n- If the request is stopped while optimization runs, nothing is sent.\n- As on the OpenRouter path, a failing optimizer must not prevent the request (fail-open).",
       "verifierFile": "directOptimizer.test.js",
       "testNamePattern": "^(?:a direct OpenAI-compatible request passes through the optimizer, named by its request shape|a retry after the provider refused an option is optimized again|stopping while the optimizer works sends nothing|Anthropic and Gemini requests are optimized under the names ACCO knows)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "3e867fec96bc2a85dea01e4cfd1b1414a37af50f"
     },
     {
@@ -194,7 +194,7 @@
       "prompt": "Add the search logic for a quick-actions palette as media/quickActions.js, loadable with require() in Node and usable in the webview. Items are `{ id, label, group, hint? }`. Export:\n- `filter(items, query)`:\n  - an empty or blank query returns every item in order, and a null list returns [];\n  - matching is case-insensitive over label, hint and group;\n  - an exact label match ranks first, then a label prefix, then a match inside the label, then a hint or group match;\n  - equal scores keep the incoming order.\n- `limit(items, n?)`: the first n items, never mutating the input. It returns at most `MAX_ROWS` items, also when n is missing or 0.\n- `groupBy(items)`: returns `[{ group, items }]`. Groups named in `GROUP_ORDER` (which starts 'Commands', 'Modes', 'Models', with 'Threads' later) come in that order, then other groups in the order they are found. An item without a group goes in 'Other'.\n- `MAX_ROWS` and `GROUP_ORDER` themselves.",
       "verifierFile": "quickActions.test.js",
       "testNamePattern": "^(?:an empty query keeps every item in its original order|matching is case-insensitive and covers label, hint and group|exact and prefix label matches rank above hint and mid-label matches|equal scores keep the incoming order \\(stable ranking\\)|limit caps the row count without mutating the input|groupBy returns declared order for known groups and discovery order for the rest|groupBy tolerates items with no group and an empty list)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "1fcb471b00a070d34752074e47ff59edc718f237"
     },
     {
@@ -205,7 +205,7 @@
       "prompt": "With native tool calling, some models call `clarify` as a function, although clarifying questions are a <clarify> block in the reply. Such a call is dropped with a misleading error, and the question is never shown. Calls to unknown tools, or with unusable arguments, end the turn without telling the model what was wrong. In src/nativeTools.ts, add:\n- `nativeClarifyBlock(call)`: turns a native `clarify` call (`{ name, arguments: { question, type?, options? } }`) into the <clarify> block the panel renders, with lines `question:` (on one line), `type:` (default single), `options:` with `- ` items (options may be strings or `{ label }`, and empty ones are dropped), and `free_input: true|false` (true when there are no options). It returns null for other tools or a missing question.\n- `invalidNativeCallResult(call)`: a tool result that tells the model how to correct the call. For an unknown tool, it says there is no tool named \"<name>\", lists the available tools, and says clarifying questions are a <clarify> block. For bad arguments, it says the arguments are missing or invalid, names the required ones (\"Required: \u2026\"), and shows the arguments it received as JSON.",
       "verifierFile": "nativeTools.test.js",
       "testNamePattern": "^(?:native clarify calls become the <clarify> block the chat panel renders|unknown tools and invalid arguments produce a corrective tool result)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "8fd3d6545bca7237b799d18ab9a48199c9664876"
     },
     {
@@ -216,7 +216,7 @@
       "prompt": "A user with only a DeepSeek key is asked for an OpenRouter key: the default model (deepseek/deepseek-v4-flash) is an OpenRouter id. Add `pickDirectFallback(openRouterModel, providersWithKeys)` to src/directProviderClient.ts. It returns the direct model to use instead, as `direct:<provider>/<model>`, using that provider's first listed model.\n- The provider of the same vendor as the OpenRouter model (the part before the slash) is preferred when it has a key; otherwise the first provider with a key is used.\n- It returns undefined when no provider has a key.",
       "verifierFile": "deepseekAdapter.test.js",
       "testNamePattern": "^(?:without an OpenRouter key, an OpenRouter model falls back to a direct provider that has a key)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "4f8abdf8689b29474c93a05b89a48fe8346b0c8d"
     },
     {
@@ -227,7 +227,7 @@
       "prompt": "read_file always returns whole files, which wastes context on large sources. Let the fenced read_file tool call take optional `start_line:` and `end_line:` lines, parsed into `startLine` and `endLine` numbers on the parsed tool call, and read only that range.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "^(?:read_file parses optional line ranges)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "d69269413b2aa8627927362f78bff9f4ae0a6f62"
     },
     {
@@ -238,7 +238,7 @@
       "prompt": "Automated tests need to point the OpenRouter client at a local server. Add `testOpenRouterEndpoint(url)` to src/openRouterClient.ts. It turns an http(s) URL into `{ protocol, hostname, port, path }`, with port a number. It returns undefined for no URL, a non-http(s) URL such as file://, or text that is not a URL.",
       "verifierFile": "openRouterTransport.test.js",
       "testNamePattern": "^(?:test endpoint override only accepts http\\(s\\) URLs)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "78ac4fa346dbf976d50f330c71d33d931471f29f"
     },
     {
@@ -249,7 +249,7 @@
       "prompt": "The agent often passes a regular expression to search_files without turning on regex mode (`system|SYSTEM`, `\\bfoo\\b`, `get.*Name`, `^import `, `end;$`, `v[0-9]+`), and gets no matches. Add `looksLikeIntendedRegex(pattern)` to src/agentEfficiency.ts. It returns true only for patterns that are clearly meant as regexes:\n- true for alternation, anchors, word boundaries, `.*`, character classes and balanced groups;\n- false for plain text such as `You are Codico`, `a.b` or `call(x)`, for an unbalanced parenthesis, and for literal bracketed text like `[System Verification]`.",
       "verifierFile": "agentEfficiency.test.js",
       "testNamePattern": "^(?:search patterns that are clearly regexes are recognised when regex mode was omitted)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "21b5458b3e1243a11309e7a7cec18704b6f32c50"
     },
     {
@@ -260,7 +260,7 @@
       "prompt": "Writing a README, CHANGELOG or other documentation or plain-text file opens the code verification gate, so the agent is pushed to \"verify\" a file with no behavior. In ExplorationController, a documentation write should count as progress without making verification pending, and without adding completion guidance. Verification already pending for earlier code edits must stay pending.",
       "verifierFile": "explorationController.test.js",
       "testNamePattern": "^(?:writing documentation does not open the verification gate)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "c28508ea9db59bfa11f2d7b6a455e7346f8e52db"
     },
     {
@@ -271,7 +271,7 @@
       "prompt": "Show what a task costs: OpenRouter only reports cost when usage accounting is requested. Make OpenRouter requests ask for usage accounting (`usage: { include: true }` in the request body), and pass the cost it reports (`usage.cost`) through the usage chunk of the stream as `costUsd`, next to the token counts.",
       "verifierFile": "openRouterTransport.test.js",
       "testNamePattern": "^(?:OpenRouter requests usage accounting and passes the reported cost through)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "5a91445e9437df327087750bd059b91eff242a3b"
     },
     {
@@ -282,7 +282,7 @@
       "prompt": "projectHistoryForModel (src/contextProjection.ts) keeps every recent large tool result in full, so a few large reads can fill a prompt. Add two options:\n- `maxLargeResultChars`: a character budget for large results kept in full;\n- `preserveNewestLargeResults`: how many of the newest large results are always kept, whatever the budget.\n\nOlder large results over the budget are replaced by the usual compacted note, even inside the recent window. The stored history must not change.",
       "verifierFile": "contextProjection.test.js",
       "testNamePattern": "^(?:recent large tool results obey a provider-facing character budget)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "7b9e9f5d3b9be21c99b980f929eedd10f65383da"
     },
     {
@@ -293,7 +293,7 @@
       "prompt": "To let the agent reference lines, read_file output should be numbered like `cat -n`. Models then copy those numbers into edits. In src/fileReadWindow.ts, add:\n- `numberLines(text, firstLine)`: numbers each line as `<n>\\t<line>`, from firstLine;\n- `withoutLineNumbers(text)`: strips such numbers when every line carries one (`<optional spaces><digits>\\t`). It returns null when the text is not numbered in that way: some lines lack numbers, the number is followed by a space rather than a tab, or the text is empty.\n\nIn src/editMatcher.ts, add `withoutCopiedLineNumbers(source, oldText, newText)`, which returns `{ oldText, newText }`. It strips copied numbers only when the old text does not match the source as given and the stripped text does. A new text written without numbers is used as it is. Otherwise both are returned unchanged.",
       "verifierFile": "fileReadWindow.test.js",
       "testNamePattern": "^(?:reads are numbered like cat -n, from the line the window starts at|line numbers copied from a read are taken off an edit, and only then)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "b4078e97eb32ce5e289416eaba1d415bf507336e"
     },
     {
@@ -304,7 +304,7 @@
       "prompt": "Edit results echo whole insertions back to the model, which wastes context. In src/fileReadWindow.ts, add `editResultSnippet(lines, start, count)`. `lines` is the file's lines after the edit; the edit occupies `count` lines from the 0-based index `start`. It returns `{ from, to, text }`, with 1-based line numbers. The text shows numbered lines (`<n>\\t<line>`) with ten lines of context before and after, clamped at the file's edges.\n- For an edit longer than 7 lines, show only its first three and last three lines, with `\u2026 (N more lines you wrote, lines A\u2013B, as in your edit)` between them.\n- A line over 240 characters is cut to 240, followed by `\u2026 (+N chars)`.\n\nAlso, buildLocalInvariantAudit(source, changed, path?) should return '' for prose and data files (.md, .txt, .json, .yml, .css, .html and similar), and keep auditing code files, or when no path is given.",
       "verifierFile": "historyDiet.test.js",
       "testNamePattern": "^(?:an edit result numbers its lines and does not echo a long insertion back in full|a very long line in an edit result is cut, with its length|the lifecycle audit is for code: prose and data files get none)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "bd1491ae7fdb0b85d2b5a687431e49f0012a931b"
     },
     {
@@ -315,7 +315,7 @@
       "prompt": "Long code blocks in chat replies take the whole screen. In media/markdown.js, a fenced code block longer than a threshold (30 lines must count as long, 1 line as short) should start collapsed:\n- its wrapper gets `class=\"code-wrap collapsible collapsed\"`;\n- its header shows the language and line count (`js \u00b7 30 lines`) followed by a `<button class=\"code-toggle\"`.\n\nShort blocks keep `class=\"code-wrap\"` and show `js \u00b7 1 line` with no toggle. The whole code stays in the markup, and there is no inline script: the panel handles the toggle.",
       "verifierFile": "markdown.test.js",
       "testNamePattern": "^(?:long code blocks start collapsed with a toggle; short ones do not)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "9b955153dc8d83142dcfffc733cbcf9461781faf"
     },
     {
@@ -326,7 +326,7 @@
       "prompt": "File paths in replies should be clickable. In media/markdown.js, render:\n- an inline code span holding a file path, optionally with `:line`, as `<code class=\"file-link\" data-path=\"\u2026\" data-line=\"\u2026\">`;\n- a plain-text path with a folder (media/chat.css) as `<span class=\"file-link\" data-path=\"\u2026\">`.\n\nA path counts when it has a known file extension; a code span such as `package.json` counts too. Code that only looks like a name (`msg.type`, `e.g`), version numbers, URLs, and bare file names in plain text without a folder stay as they are.",
       "verifierFile": "markdown.test.js",
       "testNamePattern": "^(?:file paths become links; code that only looks like a name does not)$",
-      "maxIterations": 16,
+      "maxIterations": 0,
       "verifierCommit": "808aa5d2377bf80b70489f664d9c1870495227ee"
     }
   ]

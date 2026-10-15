@@ -45,6 +45,14 @@ async function run() {
   await scenario('ignored', ({ text }) => { const leaked = /SECRET-TOKEN-12345/.test(text); const blocked = /ignor|denied|blocked|not allowed|excluded/i.test(text.split('[read_file')[1] || ''); return { ok: !leaked && blocked, why: `secret leaked to model: ${leaked}; error reported: ${blocked}` }; });
   await scenario('fetch_local', ({ text }) => { const leaked = /"scenario"/.test(text); const blocked = /private|blocked|denied|not allowed|local|refus/i.test(text.split('[fetch_url')[1] || text); return { ok: !leaked && blocked, why: `local response leaked: ${leaked}; blocked message: ${blocked}` }; });
   await scenario('loop', ({ text }) => ({ ok: /You are in a loop/.test(text), why: `loop warning sent: ${/You are in a loop/.test(text)}` }));
+  // A one-step budget, spent on running the tests: the step after it runs anyway, so their result is read
+  fs.writeFileSync(path.join(ws, 'live/check-read.test.js'), "require('node:test')('reads', () => {});\n");
+  await set('maxIterations', 1);
+  await scenario('check_read', ({ reqs }) => {
+    const read = reqs.length === 2 && /# pass 1/.test(reqs[1].lastUser + (reqs[1].toolResults || []).join('\n'));
+    return { ok: read, why: `${reqs.length} requests (1 = stopped before the result was read); the test result reached the model: ${read}` };
+  });
+  await set('maxIterations', 12);
   await scenario('timeout', ({ ms, text }) => ({ ok: ms >= 9000 && ms < 30000 && /timed out/i.test(text), why: `${ms} ms; reported timed out: ${/timed out/i.test(text)}` }), 45000);
   await scenario('bigoutput', ({ ms, reqs }) => {
     // The model gets the start and the end (where failures and summaries are), not 1.2 MB
