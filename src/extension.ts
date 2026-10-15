@@ -5,9 +5,11 @@ import { clearCheckpoints, undoLastRewind } from './rewind';
 import { WEB_SEARCH_KEY } from './externalToolRuntime';
 import { BackgroundTask } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
-import { BackgroundTaskManager, runInPanel } from './backgroundTaskManager';
+import { BackgroundTaskManager, runInPanel, worktreesRoot } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
+import { nameRepositories } from './repositories';
+import { repositoryRoot } from './backgroundGit';
 import { TeamWorkers } from './teamWorkers';
 import { AutomationService } from './automationService';
 import { BackgroundPermissions } from './backgroundTasks';
@@ -17,6 +19,7 @@ import { createUserExtension } from './userExtensionsLoader';
 import { createHooksFile } from './hookRunner';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { AgentProvider } from './agentProvider';
 import { WebviewMessage } from './chatProtocol';
 import { InlineCompletionProvider } from './inlineCompletionProvider';
@@ -173,6 +176,18 @@ export function activate(context: vscode.ExtensionContext): void {
     // /background tasks run here too, unless the setting says each gets a window
     backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };
     provider.team = new TeamService({
+        // The repositories a team works across: the workspace's folders that are git repositories, and those the setting adds
+        repositories: async () => {
+            const roots: string[] = [];
+            for (const folder of vscode.workspace.workspaceFolders ?? []) { const root = await repositoryRoot(folder.uri.fsPath); if (root) { roots.push(root); } }
+            const base = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.homedir();
+            for (const entry of vscode.workspace.getConfiguration('codico').get<string[]>('repositories', [])) {
+                const root = await repositoryRoot(path.resolve(base, entry.replace(/^~(?=$|[\\/])/, os.homedir())));
+                if (root) { roots.push(root); }
+            }
+            return nameRepositories(roots);
+        },
+        integrationFolder: team => path.join(worktreesRoot(), 'integration', team.replace(/[^A-Za-z0-9-]/g, '').slice(0, 16) || 'team'),
         store: backgroundStore, createTask: options => backgroundTasks.createTask(options),
         launch: async task => { if (inWindows()) { await backgroundTasks.openWindow(task); } else { teamWorkers.launch(task); } },
         where: () => inWindows() ? 'in a window of its own' : 'in this window (the user follows it in the Agents view of the panel)',

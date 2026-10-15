@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Agent teams across repositories. With several git repositories (the workspace's folders, and `codico.repositories`), the orchestrator is told their dependency order (from `package.json`, `go.mod`, `pyproject.toml`), starts workers in each (`repo`), runs integrated tests with every repository side by side and the workers' branches merged (`integrate`), and opens linked draft pull requests in dependency order, each naming the others and what to merge first (`publish`, asked every time). A worker is merged into its own repository.
+
 ## 0.5.1 - 2026-10-15
 
 ### Fixed

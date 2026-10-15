@@ -126,6 +126,15 @@ const SCRIPTS = (port) => ({
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
   auto_fix: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V2'), 'Fixed: AUTO-V2 now.'],
   // A /background task run in this window, then answered by the user
+  // An agent team across two repositories: an SDK beside the workspace, integrated, then published as linked pull requests
+  team_xrepo: [tool('team', 'action: start\nrole: developer\nname: sdk\nrepo: sdk-repo\ntext:\nSet version 2 in lib.js [SCENARIO:xr_sdk]'),
+    tool('team', 'action: start\nrole: developer\nname: app\nrepo: ws\ntext:\nMake live/xr-app.js use version 2 [SCENARIO:xr_app]'),
+    tool('team', 'action: wait\ntimeout_seconds: 120'),
+    tool('team', 'action: integrate\nrepo: ws\ncommand: node live/xr-test.js'),
+    tool('team', 'action: publish'),
+    'Both repositories are changed, tested together, and published as linked pull requests.'],
+  xr_sdk: [tool('write_file', 'filepath: lib.js\ncontent:\nmodule.exports = { version: 2 };'), 'SDK at version 2.'],
+  xr_app: [tool('write_file', 'filepath: live/xr-app.js\ncontent:\nmodule.exports = { uses: 2 };'), 'App uses version 2.'],
   // A background task that asks first (streamed in pieces of 12 characters: the question's tag is split), then does it
   bg_question: Array(3).fill('I need to know one thing first, so sorry. <clarify>\nquestion: Where should the file go?\ntype: single\noptions:\n- live/q-a.json\n- live/q-b.json\n</clarify>'),
   bg_answer: [tool('write_file', 'filepath: live/q-a.json\ncontent:\n{}'), 'Created live/q-a.json.'],
@@ -213,17 +222,18 @@ function github(req, res) {
     if (url.pathname === '/gh-state') { if (req.method === 'POST') { Object.assign(gh, JSON.parse(body)); } return json(gh); }
     if (url.pathname.startsWith('/blob/')) { res.end(gh.logs[url.pathname.slice(6)] || ''); return; }
     gh.tokens.push(req.headers.authorization || '');
-    if (url.pathname === '/repos/acme/app') { return json({ default_branch: 'main' }); }
+    if (/^\/repos\/acme\/\w+$/.test(url.pathname)) { return json({ default_branch: 'main' }); }
     if (url.pathname === '/repos/acme/app/issues') { return json(gh.issues); }
     if (url.pathname === '/repos/acme/app/actions/runs') { return json({ workflow_runs: [] }); }
     if ((m = /^\/repos\/acme\/app\/actions\/jobs\/(\d+)\/logs$/.exec(url.pathname))) { res.writeHead(302, { location: `/blob/${m[1]}` }); return res.end(); }
+    if ((m = /^\/repos\/acme\/(\w+)\/pulls\/(\d+)$/.exec(url.pathname)) && req.method === 'PATCH') { gh.patched = [...(gh.patched || []), { repo: m[1], number: Number(m[2]), ...JSON.parse(body) }]; return json({}); }
     if ((m = /^\/repos\/acme\/app\/pulls\/(\d+)$/.exec(url.pathname))) { return json(gh.pulls[m[1]] || { message: 'Not Found' }, gh.pulls[m[1]] ? 200 : 404); }
     if ((m = /^\/repos\/acme\/app\/pulls\/(\d+)\/reviews$/.exec(url.pathname))) { return json(gh.reviews[m[1]] || []); }
     if ((m = /^\/repos\/acme\/app\/commits\/(\w+)\/check-runs$/.exec(url.pathname))) { return json({ check_runs: gh.checks[m[1]] || [] }); }
     if (url.pathname === '/graphql') { return json({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }); }
-    if (url.pathname === '/repos/acme/app/pulls' && req.method === 'POST') {
+    if ((m = /^\/repos\/acme\/(\w+)\/pulls$/.exec(url.pathname)) && req.method === 'POST') {
       const input = JSON.parse(body); const number = 100 + gh.created.length;
-      gh.created.push(input); gh.pulls[number] = { state: 'open', merged: false, head: { sha: 'pending' } };
+      gh.created.push({ ...input, repo: m[1] }); gh.pulls[number] = { state: 'open', merged: false, head: { sha: 'pending' } };
       return json({ number, html_url: `https://github.com/acme/app/pull/${number}` }, 201);
     }
     json({ message: 'Not Found' }, 404);

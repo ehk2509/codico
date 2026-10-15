@@ -34,6 +34,7 @@ import { EditProposalManager } from './editProposalManager';
 import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
 import { TeamService } from './teamService';
+import { teamCall } from './teamCall';
 import { TeamWorkers } from './teamWorkers';
 import { VerifyRuntime } from './verifyRuntime';
 import { teamLabel, teamPromptSection } from './teamTools';
@@ -963,7 +964,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // What goes before Codico's own system prompt. Project memory is read once per turn: a note saved during the task does not change the prompt under it
         let effectivePrefix = systemPrefix({ repoInstructions: this._repoInstructions, customPrefix, mcpSection: this._mcp.buildSystemPromptSection(), skillsSection: skillsPromptSection(userExtensions.skills),
             memorySection: await projectMemorySection(), editsMode: this._editsMode, summary: config.get<boolean>('responseSummaryEnabled', true), acceptance: !this._readOnly && config.get<boolean>('acceptanceChecks', true) });
-        if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 3))))].filter(Boolean).join('\n\n'); }
+        if (this._teamMode) { effectivePrefix = [effectivePrefix, teamPromptSection(Math.max(1, Math.min(6, config.get<number>('teamMaxWorkers', 3)))), await this.team!.repositoriesSection()].filter(Boolean).join('\n\n'); }
 
         // Detect @agent mention and apply agent-specific context
         const { agent, strippedText } = parseAgentMention(text);
@@ -1282,11 +1283,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 this._post({ type: 'toolStart', id: msgId, tool: 'team', label: teamLabel(tool) });
                 const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
                 result = !this.team || !this._teamMode ? '[team] ERROR: this thread does not lead a team. The user starts one with /team <goal>.'
-                    : await this.team.run(tool, { team: this._activeThreadId || 'team', repoRoot: folder ? await repositoryRoot(folder) : undefined, signal,
-                        // A merge changes the workspace like a command does: it is asked for like one
-                        approveMerge: task => this._approvals.allowAllCommands ? Promise.resolve(true)
-                            : this._approvals.askCommand(permId => ({ type: 'terminalPermissionRequest', id: msgId, permId, command: `git merge --no-ff ${task.branch}`, rules: [] })),
-                        review: async task => (await this._delegate({ type: 'delegate', task }, msgId, signal, [])).text });
+                    : await this.team.run(tool, teamCall({ team: this._activeThreadId || 'team', repoRoot: folder ? await repositoryRoot(folder) : undefined, msgId, signal, approvals: this._approvals, tools: this._tools,
+                        passport: () => this._passport, delegate: async task => (await this._delegate({ type: 'delegate', task }, msgId, signal, [])).text, context: this._context, evaluationMode: this._evaluationMode, post: message => this._post(message) }));
                 this._post({ type: 'toolResult', id: msgId, tool: 'team', label: teamLabel(tool), success: !/^\[team(?: \w+)?\] ERROR/.test(result), error: /^\[team(?: \w+)?\] ERROR: (.{0,120})/.exec(result)?.[1] });
                 break;
             }

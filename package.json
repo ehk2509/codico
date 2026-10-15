@@ -536,6 +536,12 @@
           "maximum": 6,
           "description": "Agent teams (/team): how many workers may run at once. Each one makes its own model requests; with codico.backgroundTasksRunIn set to windows, each is also a VS Code window."
         },
+        "codico.repositories": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Agent teams across repositories: other git repositories a team may work in, besides the workspace's folders (paths, absolute or relative to the first folder, e.g. \"../sdk\"). Their dependency order is read from package.json, go.mod and pyproject.toml."
+        },
         "codico.teamWorkerPermissions": {
           "type": "string",
           "enum": [

@@ -145,8 +145,8 @@ export class BackgroundTaskManager implements vscode.Disposable {
      * Makes a task's branch, worktree and entry without asking anything; the caller opens its window.
      * @param options.from a branch to start from instead of the last commit (a tester starts from a developer's work)
      */
-    async createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; name?: string; team?: string; from?: string; basedOn?: string; automation?: boolean }): Promise<BackgroundTask | { error: string }> {
-        const repo = await this._repo();
+    async createTask(options: { prompt: string; permissions: BackgroundPermissions; role?: WorkerRole; name?: string; team?: string; from?: string; basedOn?: string; automation?: boolean; /** Another repository than this window's (a team working across several). */ repoRoot?: string }): Promise<BackgroundTask | { error: string }> {
+        const repo = options.repoRoot ?? await this._repo();
         if (!repo) { return { error: 'this folder is not in a git repository' }; }
         const id = nodeCrypto.randomBytes(8).toString('hex');
         const branch = branchName(options.prompt, id);
