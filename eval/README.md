@@ -2,18 +2,39 @@
 
 Codico's coding-quality evidence is measured with a frozen historical-regression suite rather than toy generation prompts.
 
-## Frozen suite v6
+## Frozen suite v7
 
-`eval/tasks.json` contains **26 tasks** derived from historical Codico bugs and hardening gaps.
+`eval/tasks.json` contains **30 tasks** from historical Codico bug fixes and features. Every one is proven valid:
 
-v6 preserves the v5 task corpus and behavior-level verifiers, including the requirement that resume-overlap logic is actually called from the recovery path. It changes only the evaluation ceilings:
+- **Its hidden verifier fails with no change.** `--agent noop` fails all 30.
+- **It passes with the historical fix applied.** `--agent oracle` passes all 30.
+
+That gives 30 scored tasks, against the 9 that v6 could score (see the audit below).
+
+- **9 tasks carried over from v6, unchanged:** the ones that can be scored.
+- **21 tasks mined from fix commits** with `scripts/eval/mine.js`.
+  - A candidate is a commit that changed source files and a unit-test file.
+  - The tests it added are run at its parent, with only the new test file in place; the ones that fail there make up the task's verifier.
+  - The commit's source changes are then applied, and the same tests must pass twice.
+  - Commits whose tests load a module the fix itself created are rejected.
+- **Selection:** of the 32 valid commits, these 21 were kept because their tested behaviour can be stated in a prompt without dictating test wording. Some tasks use only a subset of a commit's new tests, for the same reason.
+- **Prompts:** each reads like an issue report or feature request, and names a function or module only when the hidden test imports one that does not exist yet.
+- **Categories:** tool parsing, context management, agent loop, chat panel, providers, streaming, security, terminal and native tools.
+
+Like v6, v7 has no evaluator ceilings:
 
 - **no evaluator wall-clock timeout** (`maxTaskMinutes: 0`);
 - **no cumulative token ceiling** (`maxTotalTokens: 0`).
 
 While a required change or post-edit verification is pending the iteration budget does not stop the agent; a turn ends once the model stops calling tools after 3 consecutive reminders. Writes to documentation and plain-text files do not require verification. Hidden verifiers still determine correctness. Periodic checkpoints preserve evidence if the host or CI process is interrupted externally.
 
-Burned v1-v5 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v5.json`. v5 retains its original 15-minute / 400k-token policy for reproducibility.
+Burned v1-v6 suites remain archived as `eval/tasks-v1.json` through `eval/tasks-v6.json`. v5 retains its original 15-minute / 400k-token policy for reproducibility.
+
+Finding more candidates (for a future version):
+
+```bash
+node scripts/eval/mine.js --jobs 4 --out eval/results/mined-candidates.json
+```
 
 ### Execution protocol
 
@@ -88,14 +109,20 @@ Limits:
 
 Use `--no-regression-check` to skip the two extra test runs.
 
-### Oracle audit of v6 (2026-10-15)
+### Oracle audit of v6 (2026-10-15), the reason for v7
 
 With the historical fix applied by the oracle, only **9 of the 26 tasks can be scored**, and all 9 pass:
 
 - **16 tasks are skipped before any model request.** Each one's verifier imports a module that the historical fix itself created (`streamCompletion`, `nativeTools`, `networkSecurity`, `providerConversation`, `mcpEnvironment`, `terminalProcess`, `urlFetcher`, `browserNetworkPolicy`), so the module does not exist at the task's base. These are: stream-recoverable-classification, stream-finish-normalization, native-fragmented-arguments, native-malformed-arguments, network-block-private, network-dns-private, network-dns-pinning, mcp-environment-secrets, terminal-user-abort, url-html-sanitization, history-openai-tool-linkage, history-anthropic-tool-linkage, history-gemini-tool-linkage, history-compatibility-flattening, browser-private-network-policy and browser-private-network-optin.
 - **`terminal-timeout` cannot load its verifier.** `tests/terminalProcess.test.js` does not exist at its `verifierCommit`.
 
-The scorecard lists the tasks it could not score. A larger, oracle-validated suite would be a new version (v7).
+The scorecard lists the tasks it could not score. v7 replaces v6 as the active suite.
+
+### Regressions in the historical fixes themselves
+
+In the oracle run of v7, two historical fixes broke an existing test that a later commit repaired: read-file-line-ranges and projection-large-result-budget. The reference fix therefore scores 28/30 regression-free, and an agent can do better than it.
+
+Tests that a fix deliberately rewrote are not counted as regressions. For example, checkpoint-credentials changes what a rewind lists.
 
 ### Reference agents and comparisons
 
@@ -136,6 +163,6 @@ combination, not a universal savings percentage.
 
 ## Freeze policy
 
-`codico-coding-holdout-v1` through `v5` are burned evidence and stay reproducible. `codico-coding-holdout-v6` is active and frozen.
+`codico-coding-holdout-v1` through `v6` are burned evidence and stay reproducible. `codico-coding-holdout-v7` is active and frozen.
 
 Any semantic scoring or quality-budget change creates a new suite version. Harness-only diagnostics improvements may land in place when they do not change what constitutes success.

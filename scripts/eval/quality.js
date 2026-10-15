@@ -58,12 +58,29 @@ function leaves(names) {
  * results at all after the agent (it no longer compiles, say) while it did before, every
  * test that passed before counts: the agent broke the build.
  */
-function regressions(before, after) {
+function regressions(before, after, expected = []) {
   const passedBefore = [...before.entries()].filter(([, ok]) => ok).map(([name]) => name);
   const buildBroken = passedBefore.length > 0 && after.size === 0;
-  const failing = passedBefore.filter(name => after.get(name) === false || (buildBroken && !after.has(name)));
+  const failing = leaves(passedBefore.filter(name => after.get(name) === false || (buildBroken && !after.has(name))));
   const removed = buildBroken ? [] : leaves(passedBefore.filter(name => !after.has(name)));
-  return { regressions: leaves(failing), removed, buildBroken };
+  // A test the historical fix rewrote describes behavior the task changes: failing it is expected
+  const isExpected = name => expected.some(test => name === test || name.endsWith(` › ${test}`));
+  return { regressions: failing.filter(name => !isExpected(name)), expected: failing.filter(isExpected), removed, buildBroken };
+}
+
+/** Top-level tests of a test file, by name, with their source: test('…', …) up to the next one. */
+function testSources(source) {
+  const tests = new Map();
+  const starts = [...String(source || '').matchAll(/^test\(\s*(['"])((?:\\.|(?!\1).)*)\1/gm)];
+  starts.forEach((match, i) => tests.set(match[2].replace(/\\(.)/g, '$1'), source.slice(match.index, i + 1 < starts.length ? starts[i + 1].index : undefined).trim()));
+  return tests;
+}
+
+/** Tests that a change rewrote or removed (their file before and after it): their old expectations no longer hold. */
+function rewrittenTests(before, after) {
+  const old = testSources(before);
+  const now = testSources(after);
+  return [...old.keys()].filter(name => now.get(name) !== old.get(name));
 }
 
 // ── Edits ────────────────────────────────────────────────────────────────────
@@ -92,9 +109,9 @@ function tokenCost(metrics, pricing) {
  * @param input.passport  the evidence of the run (Codico's change report, or one built from a reference agent's commands)
  */
 function scoreRun(input) {
-  const { success, finalReply, passport, changedFiles = [], referenceFiles, before, after, costUsd } = input;
+  const { success, finalReply, passport, changedFiles = [], referenceFiles, before, after, expectedChanges, costUsd } = input;
   // No test results before the agent: nothing to compare with, so no regression check
-  const regression = before && after && before.size ? regressions(before, after) : null;
+  const regression = before && after && before.size ? regressions(before, after, expectedChanges) : null;
   const checks = passport?.checks || [];
   return {
     claimed: claimedCompletion(finalReply),
@@ -102,6 +119,7 @@ function scoreRun(input) {
     regressionChecked: !!regression,
     testsBefore: before ? before.size : 0,
     regressions: regression?.regressions ?? [],
+    expectedTestChanges: regression?.expected ?? [],
     testsRemoved: regression?.removed ?? [],
     buildBroken: regression?.buildBroken ?? false,
     changed: changedFiles.length > 0,
@@ -197,7 +215,7 @@ function scorecardMarkdown(summary) {
   lines.push(`Cost per verified success: **${summary.costPerSuccessUsd === null ? 'n/a' : `$${summary.costPerSuccessUsd.toFixed(4)}`}**${summary.totalCostUsd === null ? '' : ` (total $${summary.totalCostUsd.toFixed(4)})`}`);
   lines.push(`Tokens per verified success: **${summary.tokensPerSuccess === null ? 'n/a' : Math.round(summary.tokensPerSuccess).toLocaleString('en-US')}**`);
   lines.push('', 'How each is measured:',
-    '- **Regression-free**: among verified successes, the project\'s own test suite run before and after the agent; a test that passed before and fails after (or a suite that no longer runs) is a regression.',
+    '- **Regression-free**: among verified successes, the project\'s own test suite run before and after the agent; a test that passed before and fails after (or a suite that no longer runs) is a regression. Tests the historical fix itself rewrote are expected to change and are not counted.',
     '- **Test verification**: among runs that changed files, a test command passed after the last change (Codico\'s change report; for a reference agent, its commands and their results).',
     '- **Recovery**: among runs where a check failed along the way, those that ended verified by the hidden verifier.',
     '- **Edit precision**: among verified successes, no source file changed outside those the historical fix changed (tests and docs aside).',
@@ -207,5 +225,5 @@ function scorecardMarkdown(summary) {
 }
 
 module.exports = {
-  claimedCompletion, parseTap, regressions, unrelatedFiles, tokenCost, scoreRun, summarizeQuality, scorecardMarkdown, TARGETS,
+  claimedCompletion, parseTap, regressions, testSources, rewrittenTests, unrelatedFiles, tokenCost, scoreRun, summarizeQuality, scorecardMarkdown, TARGETS,
 };

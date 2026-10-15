@@ -89,6 +89,13 @@ function referenceFiles(root, baseCommit, fixCommit) {
   return diff.status === 0 ? diff.stdout.split(/\r?\n/).filter(Boolean) : null;
 }
 
+/** Tests the historical fix rewrote or removed in files that existed before it: what the task is expected to change. */
+function expectedTestChanges(root, baseCommit, fixCommit, rewrittenTests) {
+  const files = referenceFiles(root, baseCommit, fixCommit) || [];
+  const show = (commit, file) => { const r = cp.spawnSync('git', ['show', `${commit}:${file}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }); return r.status === 0 ? r.stdout : ''; };
+  return files.filter(file => /^tests\/[^/]+\.test\.js$/.test(file)).flatMap(file => rewrittenTests(show(baseCommit, file), show(fixCommit, file)));
+}
+
 /** The oracle: the historical fix's source changes, applied to the workspace (its tests are left out: they are the verifier's). */
 function applyOracle(root, workspace, baseCommit, fixCommit) {
   const patch = cp.spawnSync('git', ['diff', '--binary', baseCommit, fixCommit, '--', '.', ':(exclude)tests', ':(exclude)eval', ':(exclude)*.md'], { cwd: root, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 });
@@ -100,4 +107,4 @@ function applyOracle(root, workspace, baseCommit, fixCommit) {
     : { ok: false, finalReply: `The reference fix did not apply: ${apply.stderr.trim()}` };
 }
 
-module.exports = { claudeCodeEvidence, runClaudeCode, referenceFiles, applyOracle };
+module.exports = { claudeCodeEvidence, runClaudeCode, referenceFiles, expectedTestChanges, applyOracle };

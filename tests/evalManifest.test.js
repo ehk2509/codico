@@ -5,17 +5,18 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const suite = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks.json'), 'utf8'));
+const v6 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v6.json'), 'utf8'));
 const v5 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v5.json'), 'utf8'));
 const v4 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v4.json'), 'utf8'));
 const v3 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v3.json'), 'utf8'));
 const v2 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v2.json'), 'utf8'));
 const v1 = JSON.parse(fs.readFileSync(path.join(root, 'eval', 'tasks-v1.json'), 'utf8'));
 
-test('coding holdout v6 is frozen, non-trivial, and internally consistent', () => {
-  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v6');
+test('coding holdout v7 is frozen, non-trivial, and internally consistent', () => {
+  assert.equal(suite.suiteVersion, 'codico-coding-holdout-v7');
   assert.equal(suite.frozen, true);
   assert.ok(Array.isArray(suite.tasks));
-  assert.ok(suite.tasks.length >= 25);
+  assert.ok(suite.tasks.length >= 30);
   assert.equal(suite.maxTotalTokens, 0);
   assert.equal(suite.maxTaskMinutes, 0);
 
@@ -35,13 +36,18 @@ test('coding holdout v6 is frozen, non-trivial, and internally consistent', () =
       assert.ok(fs.readFileSync(verifierPath, 'utf8').includes(task.testNamePattern));
     } else {
       assert.match(task.verifierFile, /\.test\.js$/);
+      // Mined tasks: the verifier is the historical fix's own test, run only for the tests the fix made pass
+      if (task.fixCommit) {
+        assert.equal(task.verifierCommit, task.fixCommit);
+        assert.match(task.testNamePattern, /^\^\(\?:.+\)\$$/);
+      }
     }
 
     assert.equal(task.prompt.toLowerCase().includes(task.testNamePattern.toLowerCase()), false);
   }
 });
 
-test('burned v1-v5 suites remain archived', () => {
+test('burned v1-v6 suites remain archived', () => {
   assert.equal(v1.suiteVersion, 'codico-coding-holdout-v1');
   assert.equal(v2.suiteVersion, 'codico-coding-holdout-v2');
   assert.equal(v3.suiteVersion, 'codico-coding-holdout-v3');
@@ -49,13 +55,14 @@ test('burned v1-v5 suites remain archived', () => {
   assert.equal(v5.suiteVersion, 'codico-coding-holdout-v5');
   assert.equal(v5.maxTotalTokens, 400000);
   assert.equal(v5.maxTaskMinutes, 15);
-  for (const archived of [v1, v2, v3, v4, v5]) {
+  assert.equal(v6.suiteVersion, 'codico-coding-holdout-v6');
+  for (const archived of [v1, v2, v3, v4, v5, v6]) {
     assert.equal(archived.frozen, true);
-    assert.equal(archived.tasks.length, suite.tasks.length);
+    assert.equal(archived.tasks.length, v6.tasks.length);
   }
 });
 
-test('v6 retains integrated resume-overlap scoring from v5', () => {
+test('v7 retains integrated resume-overlap scoring from v5', () => {
   const task = suite.tasks.find(t => t.id === 'stream-resume-overlap');
   assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.verifier.js');
   const source = fs.readFileSync(path.join(root, task.verifierPath), 'utf8');
@@ -63,7 +70,7 @@ test('v6 retains integrated resume-overlap scoring from v5', () => {
   assert.match(source, /used directly or through an exported streamCompletion recovery helper/);
 });
 
-test('v6 retains behavior-level fingerprint and EOF verifiers', () => {
+test('v7 retains behavior-level fingerprint and EOF verifiers', () => {
   assert.equal(
     suite.tasks.find(t => t.id === 'stream-unexpected-eof').verifierPath,
     'eval/verifiers/streamUnexpectedEof.verifier.js',
@@ -76,7 +83,17 @@ test('v6 retains behavior-level fingerprint and EOF verifiers', () => {
 
 test('holdout covers multiple historical failure families', () => {
   const categories = new Set(suite.tasks.map(task => task.category));
-  for (const required of ['streaming', 'agent-loop', 'tool-parser', 'terminal', 'native-tools', 'native-history', 'security']) {
+  // v6's native-history tasks could never be scored (their verifiers load modules the fix created): v7 has none
+  for (const required of ['streaming', 'agent-loop', 'tool-parser', 'terminal', 'native-tools', 'security', 'context', 'providers', 'chat-panel']) {
     assert.equal(categories.has(required), true, `missing category: ${required}`);
   }
+});
+
+test('v7 keeps exactly the v6 tasks that could be scored, unchanged', () => {
+  const carried = ['stream-unexpected-eof', 'stream-resume-overlap', 'agent-unfulfilled-action', 'tools-unclosed-fence', 'tools-fingerprint-arguments',
+    'tools-write-nested-fences', 'tools-four-backtick-envelope', 'tools-edit-nested-fences', 'tools-stream-closing-line'];
+  for (const id of carried) {
+    assert.deepEqual(suite.tasks.find(t => t.id === id), v6.tasks.find(t => t.id === id), id);
+  }
+  assert.equal(suite.tasks.filter(t => v6.tasks.some(o => o.id === t.id)).length, carried.length);
 });

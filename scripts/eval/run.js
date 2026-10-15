@@ -4,8 +4,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { missingVerifierOutModules } = require('./verifierPreflight');
 const { evaluateHoldoutResult } = require('./resultPolicy');
-const { parseTap, scoreRun, summarizeQuality, scorecardMarkdown, tokenCost } = require('./quality');
-const { runClaudeCode, referenceFiles, applyOracle } = require('./agents');
+const { parseTap, scoreRun, summarizeQuality, scorecardMarkdown, tokenCost, rewrittenTests } = require('./quality');
+const { runClaudeCode, referenceFiles, expectedTestChanges, applyOracle } = require('./agents');
 
 const root = path.resolve(__dirname, '../..');
 
@@ -102,7 +102,8 @@ async function modelPricing(model) {
   }
 }
 
-const AGENTS = ['codico', 'claude-code', 'oracle'];
+// oracle and noop check the tasks themselves: every task must pass with the historical fix, and fail without any change
+const AGENTS = ['codico', 'claude-code', 'oracle', 'noop'];
 
 async function main() {
   const agentName = arg('--agent', 'codico');
@@ -112,7 +113,7 @@ async function main() {
     throw new Error('OPENROUTER_API_KEY is required. The benchmark never writes this key to results.');
   }
 
-  const model = arg('--model', agentName === 'codico' ? 'deepseek/deepseek-v4-flash' : agentName === 'oracle' ? 'reference-fix' : '');
+  const model = arg('--model', agentName === 'codico' ? 'deepseek/deepseek-v4-flash' : agentName === 'oracle' ? 'reference-fix' : agentName === 'noop' ? 'no-change' : '');
   const regressionCheck = !has('--no-regression-check');
   const filterRaw = arg('--filter', '.*');
   const repetitions = Math.max(1, Number(arg('--repetitions', '1')));
@@ -215,6 +216,7 @@ async function main() {
         record.agent = agentName;
         const fixCommit = task.fixCommit || task.verifierCommit;
         record.referenceFiles = fixCommit ? referenceFiles(root, task.baseCommit, fixCommit) : null;
+        record.expectedTestChanges = fixCommit ? expectedTestChanges(root, task.baseCommit, fixCommit, rewrittenTests) : [];
         // The project's own tests before the agent: what it must not break
         const testsBefore = regressionCheck ? projectTests(workspace) : null;
         let finalReply = '';
@@ -270,6 +272,11 @@ async function main() {
           record.metrics = result.metrics;
           ({ finalReply, passport, costUsd } = result);
           if (!result.ok) { record.agentError = tail(result.stderr, 4000) || 'Claude Code reported an error'; }
+        } else if (agentName === 'noop') {
+          record.agentOk = true;
+          record.metrics = { steps: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          finalReply = '';
+          costUsd = 0;
         } else {
           const result = applyOracle(root, workspace, task.baseCommit, fixCommit);
           record.agentOk = result.ok;
@@ -323,7 +330,7 @@ async function main() {
         record.evidence = passport;
         record.quality = scoreRun({
           success: record.success, finalReply, passport, changedFiles: record.changedFiles,
-          referenceFiles: record.referenceFiles, before: testsBefore, after: testsAfter, costUsd,
+          referenceFiles: record.referenceFiles, before: testsBefore, after: testsAfter, expectedChanges: record.expectedTestChanges, costUsd,
         });
 
         try { fs.unlinkSync(verifierDest); } catch {}

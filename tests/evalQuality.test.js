@@ -43,7 +43,7 @@ test('skipped', { skip: true }, () => {});
 test('regressions: tests that passed before and fail after, innermost only; a suite that stops running breaks all', () => {
   const before = new Map([['a', true], ['g', true], ['g › x', true], ['g › y', true], ['old failure', false], ['gone', true]]);
   const after = new Map([['a', true], ['g', false], ['g › x', true], ['g › y', false], ['old failure', false]]);
-  assert.deepEqual(regressions(before, after), { regressions: ['g › y'], removed: ['gone'], buildBroken: false });
+  assert.deepEqual(regressions(before, after), { regressions: ['g › y'], expected: [], removed: ['gone'], buildBroken: false });
   const broken = regressions(before, new Map());
   assert.equal(broken.buildBroken, true);
   assert.deepEqual(broken.regressions, ['a', 'g › x', 'g › y', 'gone']);
@@ -125,4 +125,25 @@ test('two results compared task by task, with a sign test', () => {
   assert.match(md, /A better on \*\*1\*\*, B better on \*\*0\*\*, equal on \*\*1\*\*/);
   assert.match(md, /\| t1 \| 1\/1 \| 0\/1 \| A \|/);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('tests the historical fix rewrote are expected to change; others that start failing are regressions', () => {
+  const { rewrittenTests, testSources } = require('../scripts/eval/quality.js');
+  const before = "test('kept', () => { a(); });\ntest('rewritten', () => { b(1); });\ntest(\"it's removed\", () => {});\n";
+  const after = "test('kept', () => { a(); });\ntest('rewritten', () => { b(2); });\ntest('new', () => {});\n";
+  assert.deepEqual([...testSources(before).keys()], ['kept', 'rewritten', "it's removed"]);
+  assert.deepEqual(rewrittenTests(before, after), ['rewritten', "it's removed"]);
+  const result = regressions(new Map([['file › rewritten', true], ['kept', true]]), new Map([['file › rewritten', false], ['kept', false]]), ['rewritten']);
+  assert.deepEqual([result.regressions, result.expected], [['kept'], ['file › rewritten']]);
+  assert.deepEqual(scoreRun({ success: true, before: new Map([['rewritten', true]]), after: new Map([['rewritten', false]]), expectedChanges: ['rewritten'] }).regressions, []);
+});
+
+test('mining: the tests a file declares, and a name pattern matching exactly those', () => {
+  const { testNames, namePattern } = require('../scripts/eval/mine.js');
+  assert.deepEqual(testNames("test('a (b) c', () => {});\n  test('nested', () => {});\ntest(\"it's\", async () => {});\ntest(`template ${x}`, () => {});"), ['a (b) c', "it's"]);
+  const pattern = new RegExp(namePattern(['a (b) c', 'x.y']));
+  assert.equal(pattern.test('a (b) c'), true);
+  assert.equal(pattern.test('x.y'), true);
+  assert.equal(pattern.test('xzy'), false, 'dots are literal');
+  assert.equal(pattern.test('a (b) c and more'), false, 'whole names only');
 });
