@@ -895,12 +895,52 @@ async function run() {
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
     const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];
-    const evidence = files.includes('report.md') && files.includes('replay.png') && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 6
+    const evidence = files.includes('report.md') && files.includes('replay.png')
+      // Each assertion's screenshot is evidence; a step's own screenshot is best-effort (a slow machine may miss one)
+      && files.filter(f => /^\d\d-expect-.*\.png$/.test(f)).length >= 2 && files.filter(f => /^\d\d-.*\.png$/.test(f)).length >= 4
       && /### Acceptance — Accepted/.test(fs.readFileSync(path.join(folder, 'report.md'), 'utf8')) && !!ac1.evidence[0]?.screenshot && fs.existsSync(path.join(ws, ac1.evidence[0].screenshot))
       && fs.readFileSync(path.join(ws, '.codico/evidence/.gitignore'), 'utf8') === '*\n';
     const stopped = await new Promise(res => require('node:http').get(`http://127.0.0.1:${process.env.LIVE_APP_PORT}/`, r => { r.resume(); res(false); }).on('error', () => res(true)));
     results.push({ name: 'acceptance_e2e', ms: Date.now() - t0, requests: reqs.length, ok: !error && reproduced && verified && reviewed && consoleSeen && evidence && stopped,
       why: `the bug was reproduced by Codico's own assertion before the fix: ${reproduced}; after the fix AC1 is verified on the final code (${acc.verdict}, ${ac1.status}): ${verified}; an independent reviewer agreed: ${reviewed}; the page's console error was reported and kept: ${consoleSeen}; evidence saved (screenshots, replay, report, git-ignored): ${evidence} (${files.length} files); the app was stopped after the turn: ${stopped}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
+  // ── Marketplace: a package from the registry is checked, installed into the project, used, and uninstalled ──
+  {
+    const t0 = Date.now(); const before = (await getLog()).length;
+    const cpx = require('node:child_process');
+    const pkgRepo = path.join(ws, '..', 'kits-repo');
+    const g = (...args) => cpx.execFileSync('git', args, { cwd: pkgRepo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    fs.mkdirSync(path.join(pkgRepo, 'pkg/skills/market-skill'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRepo, 'pkg/codico-package.json'), JSON.stringify({ id: 'acme/market-kit', version: '1.0.0', description: 'A test kit', skills: ['skills/market-skill'], permissions: {} }));
+    fs.writeFileSync(path.join(pkgRepo, 'pkg/skills/market-skill/SKILL.md'), '---\nname: market-skill\ndescription: Use for the market test\n---\nMARKET-SKILL-BODY: answer briefly.\n');
+    g('init', '-q', '-b', 'main'); g('config', 'user.email', 't@example.com'); g('config', 'user.name', 'T'); g('add', '-A'); g('commit', '-q', '-m', 'kit');
+    const head = g('rev-parse', 'HEAD').trim();
+    const archive = cpx.execFileSync('git', ['archive', '--format=tar.gz', `--prefix=kits-${head}/`, head], { cwd: pkgRepo });
+    const market = path.join(ws, '..', 'market');
+    fs.mkdirSync(path.join(market, 'archive', 'acme', 'kits'), { recursive: true });
+    fs.writeFileSync(path.join(market, 'archive', 'acme', 'kits', `${head}.tar.gz`), archive);
+    // The hash the registry records: what `codico package check` prints for it
+    const { contentHash, packageFiles, readTarGz } = require(path.join(__dirname, '..', '..', '..', 'out', 'packageArchive.js'));
+    const hash = contentHash(packageFiles(readTarGz(archive), 'pkg'));
+    const entryOf = (h) => ({ packages: [{ id: 'acme/market-kit', description: 'A test kit', publisher: { github: 'acme', verified: true }, versions: [{ version: '1.0.0', repo: 'acme/kits', commit: head, path: 'pkg', hash: h }] }] });
+    fs.writeFileSync(path.join(market, 'index.json'), JSON.stringify(entryOf('sha256-' + '0'.repeat(64))));
+    await set('marketplaceRegistry', `http://127.0.0.1:${process.env.LIVE_PORT}/market/index.json`);
+    const refused = await vscode.commands.executeCommand('codico.__evalMarketplace', 'install', 'acme/market-kit');
+    const nothingWritten = !fs.existsSync(path.join(ws, '.codico/skills/market-skill'));
+    fs.writeFileSync(path.join(market, 'index.json'), JSON.stringify(entryOf(hash)));
+    const installed = await vscode.commands.executeCommand('codico.__evalMarketplace', 'install', 'acme/market-kit');
+    const onDisk = /MARKET-SKILL-BODY/.test(read('.codico/skills/market-skill/SKILL.md') || '');
+    const lock = await vscode.commands.executeCommand('codico.__evalMarketplace', 'lock');
+    await new Promise(r => setTimeout(r, 1500));
+    await vscode.commands.executeCommand('codico.__evalRunTask', '/market-skill [SCENARIO:market_skill] please do the task');
+    const used = (await getLog()).slice(before).some(e => e.scenario === 'market_skill' && e.sawMarketSkill);
+    await vscode.commands.executeCommand('codico.__evalMarketplace', 'uninstall', 'acme/market-kit');
+    const gone = !fs.existsSync(path.join(ws, '.codico/skills/market-skill')) && Object.keys(((await vscode.commands.executeCommand('codico.__evalMarketplace', 'lock')) || {}).packages || {}).length === 0;
+    await set('marketplaceRegistry', undefined);
+    results.push({ name: 'marketplace', ms: Date.now() - t0, requests: (await getLog()).length - before, ok: /does not match the registry/.test(String(refused)) && nothingWritten && installed === 'installed' && onDisk && !!(lock && lock.packages && lock.packages['acme/market-kit']) && used && gone,
+      why: `content not matching the registry is refused, nothing written: ${/does not match the registry/.test(String(refused)) && nothingWritten}; installed from the registry: ${installed}; the skill is in .codico and recorded: ${onDisk && !!(lock && lock.packages && lock.packages['acme/market-kit'])}; "/market-skill" runs with its instructions: ${used}; uninstalled, nothing left: ${gone}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 

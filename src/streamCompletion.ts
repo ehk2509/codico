@@ -49,6 +49,12 @@ export function normalizeFinishReason(reason: string): string {
     return normalized;
 }
 
+/**
+ * A closing offer ("If you meant X, let me know and I'll adjust it") or a statement that the work
+ * is done: what it says the agent would do depends on the user, so it is not an unfinished step.
+ */
+const OFFER_OR_DONE_RE = /\b(?:if (?:you|that|this|needed|necessary|wanted|preferred)|let me know|just (?:say|tell|ask)|feel free|should you|happy to|would you like|want me to)\b|\b(?:task|work|change|fix) (?:is|was) (?:complete|completed|done|finished)\b|^\s*(?:final answer|done)\b/i;
+
 const ACTION_ANNOUNCEMENT_RE = /\b(?:I['’]ll|I will|I['’]m going to|I am going to|let me|I['’]m (?:now )?(?:searching|locating|looking|checking|reading|opening|running|writing|creating|updating|fixing|inspecting))\b/i;
 
 /**
@@ -62,7 +68,7 @@ export function isUnfulfilledActionAnnouncement(content: string): boolean {
     if (!text || text.includes('<clarify>') || text.endsWith('?')) { return false; }
     const lastParagraph = text.split(/\n\s*\n/).pop() ?? '';
     if (lastParagraph.length > 300 || lastParagraph.includes('```')) { return false; }
-    return ACTION_ANNOUNCEMENT_RE.test(lastParagraph);
+    return ACTION_ANNOUNCEMENT_RE.test(lastParagraph) && !OFFER_OR_DONE_RE.test(lastParagraph);
 }
 
 /** How much of the pre-cutoff text is compared against the start of a resumed response. */

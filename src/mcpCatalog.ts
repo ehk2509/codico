@@ -66,9 +66,9 @@ function parseMcpJson(text: string | undefined): McpJson {
  * The text of a `.mcp.json` with one server added, everything else in the file kept.
  * @throws when the existing file cannot be understood: it is never overwritten
  */
-export function addToMcpJson(text: string | undefined, entry: Pick<McpCatalogEntry, 'id' | 'command' | 'args'>): string {
+export function addToMcpJson(text: string | undefined, entry: Pick<McpCatalogEntry, 'id' | 'command' | 'args'> & { env?: Record<string, string> }): string {
     const json = parseMcpJson(text);
-    json.mcpServers = { ...json.mcpServers, [entry.id]: { command: entry.command, args: entry.args } };
+    json.mcpServers = { ...json.mcpServers, [entry.id]: { command: entry.command, args: entry.args, ...(entry.env && Object.keys(entry.env).length ? { env: entry.env } : {}) } };
     return JSON.stringify(json, null, 2) + '\n';
 }
 

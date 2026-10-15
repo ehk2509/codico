@@ -788,6 +788,15 @@ Existing `.copilotignore` files are still read for compatibility; `.codicoignore
 
 ---
 
+### Marketplace
+**Codico: Marketplace** lists community packages — skills, agents, MCP servers and hooks — from a registry, searchable by name, description, tag or publisher. A package is installed into the project (`.codico/skills`, `.codico/agents`, `.codico/hooks.json`, `.mcp.json`), so it is shared with everyone who opens it, like the project's own.
+
+- **What was reviewed is what is installed.** The registry ([ehk2509/codico-registry](https://github.com/ehk2509/codico-registry); `codico.marketplaceRegistry` to use another, such as a company's own) pins each version to a commit of the publisher's GitHub repository and a hash of its content. Codico downloads that commit and refuses it if the content differs.
+- **Publisher.** A package's id starts with its publisher's GitHub account and must come from a repository of that account; *verified* publishers are confirmed by the registry's maintainers.
+- **Before installing**, you see what it adds (skills, agents, each MCP server's command line, each hook's command), the permissions it declares (commands, network, environment variables), and a **security scan** of every file: commands that download and run code, reads of keys or credentials, text written to steer the agent against you or around its approvals, hidden or encoded code, binaries, MCP servers without a fixed version, and commands or addresses it did not declare. Nothing in a package runs at install time; its MCP servers and hooks still ask before they first run.
+- **Updates and removal are exact.** What was installed is recorded in `.codico/packages.json`. Codico tells you once a day when an installed package has a new version; updating shows the same review. Uninstalling removes what the package added — files you have changed since are kept.
+- **Publishing.** Put a folder with a `codico-package.json` in a public GitHub repository, run `codico package check <folder>` (validation, scan, and the registry entry with the commit and the content hash), and open a pull request to the registry, whose CI runs `codico registry verify`. The registry's README has the format.
+
 ### MCP (Model Context Protocol) Servers
 
 **The catalog.** Click **🔌 MCP** in the chat header for a short list of known servers, each checked to connect with Codico and pinned to a version:
