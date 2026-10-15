@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import { ExtensionMessage } from './chatProtocol';
 import { BackgroundTask, HEARTBEAT_MS, taskPreface } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
+import { lastQuestion } from './clarify';
 
 /** What the runner needs from the agent of this window. */
 export interface BackgroundAgent {
@@ -75,12 +76,15 @@ export async function runTask(store: BackgroundTaskStore, task: BackgroundTask, 
     let writes: Promise<unknown> = Promise.resolve();
     const put = (change: Partial<BackgroundTask>) => { writes = writes.then(() => store.update(task.id, change), () => undefined); return writes; };
     let question = false;
+    let replyText = '';
     let failure: string | undefined;
     let firstDone = false;
     agent.backgroundListener = message => {
         // After the first reply, a team worker's later replies (answers to the orchestrator) update its report too
-        // A reply that ends with a question to the user is not finished work, and an error is not either
-        if (message.type === 'appendContent' && message.text.includes('<clarify>')) { question = true; }
+        // A reply that ends with a question to the user is not finished work, and an error is not either.
+        // The reply arrives in pieces, and a piece can end in the middle of the question's tag: the whole reply is looked at
+        if (message.type === 'startMessage') { replyText = ''; }
+        if (message.type === 'appendContent') { replyText += message.text; question = !!lastQuestion(replyText); }
         if (firstDone && message.type === 'endMessage') {
             const after = question ? { status: 'waiting' as const, note: 'answer its question' } : { status: 'finished' as const, note: undefined };
             current = after.status; question = false;

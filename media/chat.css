@@ -1755,3 +1755,12 @@ body.hide-reasoning .think-wrap{display:none!important}
 .passport-review.disputes{color:var(--vscode-editorWarning-foreground,#d4a017)}
 .passport-evidence{font:inherit;font-size:10.5px;padding:0 6px;border-radius:4px;cursor:pointer;background:transparent;color:inherit;border:1px solid var(--vscode-panel-border,rgba(128,128,128,.35))}
 .passport-evidence:hover{border-color:var(--vscode-focusBorder,#a78bfa)}
+
+/* An agent's question in the Agents view */
+#team-view .tv-ask:empty{display:none}
+#team-view .tv-ask{margin:4px 0 2px 13px;padding:5px 8px;border-left:2px solid var(--vscode-editorWarning-foreground,#d4a017);background:var(--vscode-textBlockQuote-background,rgba(127,127,127,.08));border-radius:0 4px 4px 0}
+#team-view .tv-ask.answered{opacity:.5;pointer-events:none}
+#team-view .tv-ask-q{font-weight:600;margin-bottom:4px;overflow-wrap:anywhere}
+#team-view .tv-ask-options{display:flex;flex-wrap:wrap;gap:4px}
+#team-view .tv-ask-opt{font:inherit;font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;background:transparent;color:inherit;border:1px solid var(--vscode-button-background,#0e639c);max-width:100%;overflow-wrap:anywhere;text-align:left}
+#team-view .tv-ask-opt:hover,#team-view .tv-ask-opt.on{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff)}

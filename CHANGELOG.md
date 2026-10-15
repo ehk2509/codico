@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- A background task or a team's worker that ended with a question was reported as finished, and its question showed only as raw text in its collapsed log. The question's tag usually arrives split across the pieces a model streams, and only single pieces were looked at; the whole reply is now. Such a task now says it needs you, and the Agents view shows its question in its card with the options as buttons (several choices: select, then Send; "Other…" to write an answer). `codico run` exits with 2 for such a reply, as documented.
+
 ## 0.5.0 - 2026-10-15
 
 ### Added

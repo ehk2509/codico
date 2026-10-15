@@ -5,6 +5,7 @@ import { ExtensionMessage } from './chatProtocol';
 import { directSecretKey } from './directProviderClient';
 import { AutomationService } from './automationService';
 import { jobLine } from './automations';
+import { lastQuestion } from './clarify';
 
 /**
  * Headless runs: Codico working on one task with nobody at the screen (a script, CI, a
@@ -145,7 +146,7 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
     const task = headlessTask();
     if (!task) { throw new Error('The headless task file is missing or not valid.'); }
     const write = headlessWriter(task);
-    let denied = 0; let failed: string | undefined; let question = false;
+    let denied = 0; let failed: string | undefined; let question = false; let replyText = '';
     await prepareHeadless(context, task, write, () => { denied++; });
 
     await vscode.commands.executeCommand('workbench.view.extension.codico-container');
@@ -157,7 +158,9 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
         const event = headlessEvent(message);
         if (event) { write(event); }
         if (message.type === 'error') { failed = message.message; }
-        if (message.type === 'appendContent' && message.text.includes('<clarify>')) { question = true; }
+        // The whole reply, not one piece of it: a piece can end in the middle of the question's tag
+        if (message.type === 'startMessage') { replyText = ''; }
+        if (message.type === 'appendContent') { replyText += message.text; question = !!lastQuestion(replyText); }
         // A request for approval that the rules of this run did not grant: declined, and said
         if (message.type === 'writePermissionRequest' || message.type === 'terminalPermissionRequest' || message.type === 'checkpoint') {
             denied++;

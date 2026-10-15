@@ -226,6 +226,12 @@ test('a reply that ends with a question, an error, or a panel that never opens i
   };
   const asked = await run(async emit => emit({ type: 'appendContent', id: 'm', text: '<clarify>\nquestion: Which database?\n</clarify>' }));
   assert.deepEqual([asked.status, asked.note], ['waiting', 'answer its question']);
+  // As a real model streams it: the tag split across pieces
+  const streamed = await run(async emit => { for (const text of ['Where should it go? <clar', 'ify>\nquestion: Where?\nty', 'pe: single\noptions:\n- src/a.json\n</clar', 'ify>']) { emit({ type: 'appendContent', id: 'm', text }); } });
+  assert.deepEqual([streamed.status, streamed.note], ['waiting', 'answer its question']);
+  // A reply that only mentions the tag is not a question
+  const mentioned = await run(async emit => { emit({ type: 'appendContent', id: 'm', text: 'The panel shows <clarify> blocks as buttons.' }); });
+  assert.equal(mentioned.status, 'finished');
   const failed = await run(async emit => emit({ type: 'error', message: 'No API key is set for DeepSeek.' }));
   assert.deepEqual([failed.status, failed.note], ['failed', 'No API key is set for DeepSeek.']);
   const threw = await run(async () => { throw new Error('boom'); });
@@ -234,4 +240,14 @@ test('a reply that ends with a question, an error, or a panel that never opens i
   assert.deepEqual([noPanel.status, noPanel.note], ['failed', 'the Codico panel did not open in the task\'s window']);
   assert.equal(statusFromMessage({ type: 'writePermissionRequest', id: 'm', permId: 'p', filepath: 'a', preview: '', diff: '' }).note, 'approve a file change');
   assert.equal(statusFromMessage({ type: 'appendContent', id: 'm', text: 'x' }), undefined);
+});
+
+test('an agent\'s question: the last <clarify> block of its reply, read like the panel reads it', () => {
+  const { lastQuestion, withoutQuestion } = require('../out/clarify.js');
+  const reply = 'I need one thing.\n<clarify>\nquestion: Where should the file live?\ntype: single\noptions:\n- package.empty.json (repo root)\n- src/empty.json\nfree_input: true\n</clarify>';
+  assert.deepEqual(lastQuestion(reply), { question: 'Where should the file live?', multi: false, options: ['package.empty.json (repo root)', 'src/empty.json'], freeInput: true });
+  assert.equal(lastQuestion('<clarify>\nquestion: Which?\ntype: multi\noptions:\n- a\n- b\n</clarify>').multi, true);
+  assert.equal(lastQuestion('No question here.'), undefined);
+  assert.equal(lastQuestion('Half <clarify>\nquestion: cut off'), undefined, 'an unfinished block is not a question yet');
+  assert.equal(withoutQuestion(reply), 'I need one thing.');
 });

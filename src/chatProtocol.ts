@@ -76,6 +76,8 @@ export interface TeamWorkerView {
     verdict?: string;
     /** Processes its commands left running. */
     processes?: number;
+    /** The question its last reply asks the user, shown with its options as buttons. */
+    question?: { question: string; multi: boolean; options: string[]; freeInput: boolean };
 }
 
 export type WebviewMessage =

@@ -4,6 +4,7 @@ import { BackgroundTask, lostItsWindow } from './backgroundTasks';
 import { BackgroundTaskStore } from './backgroundTaskStore';
 import { ExtensionMessage, TeamWorkerAction, TeamWorkerView, WebviewMessage } from './chatProtocol';
 import { workerId } from './teamTools';
+import { lastQuestion, withoutQuestion } from './clarify';
 import { WorkerAgent, WorkerDeps } from './workerAgent';
 
 /** Steps and words kept per worker for the Agents view. */
@@ -23,7 +24,7 @@ interface Running {
 
 /** Keeps the last `max` entries. */
 const pushLog = (view: TeamWorkerView, entry: TeamWorkerView['log'][number]) => { view.log.push(entry); if (view.log.length > WORKER_LOG_ENTRIES) { view.log.splice(0, view.log.length - WORKER_LOG_ENTRIES); } };
-const withoutToolBlocks = (text: string) => text.replace(/(`{3,})[a-z_]+\n[\s\S]*?(?:\1|$)/g, '').replace(/<\/?clarify>/g, '').trim();
+const withoutToolBlocks = (text: string) => text.replace(/(`{3,})[a-z_]+\n[\s\S]*?(?:\1|$)/g, '').trim();
 
 /**
  * A team's workers running in this window, next to the orchestrator: each is a WorkerAgent in
@@ -76,7 +77,7 @@ export class TeamWorkers implements vscode.Disposable {
         if (!running) { return; }
         const { view } = running;
         switch (message.type) {
-            case 'startMessage': running.text = ''; running.tokensBefore = view.tokens; view.status = 'running'; break;
+            case 'startMessage': running.text = ''; running.tokensBefore = view.tokens; view.status = 'running'; view.question = undefined; break;
             case 'appendContent': running.text = (running.text + message.text).slice(-6000); break;
             case 'toolStart': view.steps++; view.activity = `${message.tool} ${message.label}`.trim(); break;
             case 'toolResult': view.activity = undefined; pushLog(view, { tool: message.tool, label: message.label, ok: message.success, error: message.error }); break;
@@ -86,7 +87,9 @@ export class TeamWorkers implements vscode.Disposable {
             case 'tokenUsage': if (!message.subagent || message.taskTokens !== undefined) { view.tokens = running.tokensBefore + (message.taskTokens ?? message.totalTokens); view.costUsd = message.taskCostUsd ?? view.costUsd; } break;
             case 'error': pushLog(view, { error: message.message }); break;
             case 'endMessage': {
-                const said = withoutToolBlocks(running.text);
+                // A question is shown apart, with its options as buttons, not as raw text in the log
+                view.question = lastQuestion(running.text);
+                const said = withoutToolBlocks(withoutQuestion(running.text));
                 if (said) { pushLog(view, { text: said.length > 600 ? '…' + said.slice(-600) : said }); }
                 running.text = ''; view.activity = undefined;
                 view.verdict = running.agent.passport?.verdict;
