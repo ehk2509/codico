@@ -58,8 +58,10 @@ export function checkKey(command: string): string {
     return command
         .replace(/^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)+/, '')
         .replace(/\s*\d?>&\d|\s*2>\s*\/dev\/null/g, '')
-        .replace(/\s*\|\s*(?:tail|head|grep|cat|tee|less|sed|awk|cut|sort|uniq|wc)\b(?:'[^']*'|"[^"]*"|[^|'"])*/g, '')
+        // An output filter ends where the next command starts (&&, ;): `npm run compile | tail -5 && node --test` is a test run
+        .replace(/\s*\|\s*(?:tail|head|grep|cat|tee|less|sed|awk|cut|sort|uniq|wc)\b(?:'[^']*'|"[^"]*"|(?!&&)[^|'";])*/g, '')
         .replace(/(^|&&\s*|;\s*)(?:env\s+)?(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/g, '$1')
+        .replace(/\s*&&\s*/g, ' && ')
         .replace(/\b(?:timeout|time|nice)\s+(?:-\S+\s+)*\d*[smh]?\s+/g, '')
         .replace(/\s+/g, ' ')
         .trim();

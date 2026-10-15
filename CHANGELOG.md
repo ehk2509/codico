@@ -17,6 +17,9 @@ All notable changes to Codico will be documented in this file.
   A new system-prompt rule says the same: reproduce first, then fix what was asked. In the coding holdout, most false completions passed checks the agent had written for its own variant of the problem. One example: it added a four-backtick tool form instead of fixing the parser for the normal form.
 
 ### Fixed
+- A check chained after an output filter, such as `npm run compile | tail -5 && node --test …`, was taken for a build whose result was hidden by the pipe. The test run was missed, every such run counted as not passed, and the acceptance criteria that cited them were reported as failing. The filter now ends at the next command, and the test result is read from its summary.
+- A failed run of a check no longer fails a criterion once a later run of the same check has passed. This covers reproducing a bug by restoring the old code in the terminal, for example with `git stash`.
+- Criteria that fail on the final code are now included in the reminder before a reply may end. Before, only unchecked criteria were, so a reply could present the work as complete while its own report said it failed.
 - With a step limit set (`codico.maxIterations`), a task could end right after the agent ran its tests or build, before it read the result. It then never learned whether its change worked, and its last message announced a check it never saw. The step after a check now always runs, up to 5 steps past the limit.
 
 ## 0.6.0 - 2026-10-15

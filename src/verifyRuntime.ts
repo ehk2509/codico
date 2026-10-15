@@ -131,7 +131,8 @@ export class VerifyRuntime {
         const request = this._requestGuidance();
         if (request) { return request; }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
-        const pending = report?.criteria.filter(c => c.status !== 'verified' && c.status !== 'failing') ?? [];
+        // Failing criteria too: a reply must not present the work as complete while one fails
+        const pending = report?.criteria.filter(c => c.status !== 'verified') ?? [];
         if (pending.length === 0) { return undefined; }
         this._reminders++;
         return `[System Acceptance] Not verified on the final code yet:\n${pending.map(criterionLine).join('\n')}\n` +

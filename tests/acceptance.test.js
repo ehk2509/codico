@@ -192,3 +192,22 @@ test('an app is started in the background, reached when its address answers, and
   assert.match(silent.text, /nothing answered .* within 1 s; the command was stopped/);
   assert.match((await runner.start({ command: 'x', url: 'https://example.com', cwd: root, timeoutMs: 1000, signal })).text, /not an address on this machine/);
 });
+
+test('a failed run that a later run of the same check passed does not fail the criterion (old code restored with git stash to reproduce)', () => {
+  const p = new PassportRecorder();
+  const a = p.acceptance;
+  p.recordChange('src/toolParser.ts', 'old', 'fixed');
+  a.setCriteria(['A normal write_file call keeps inner code fences']);
+  // The fix stashed in the terminal (Codico sees no file change), the tests run on the old code, then the fix restored
+  const onOldCode = p.recordCommand('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1', 1, '# pass 4\n# fail 3\n');
+  const onFix = p.recordCommand('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1', 0, '# pass 7\n# fail 0\n');
+  a.claim('AC1', 'pass', 'failed on the old code, passes with the fix', [onOldCode, onFix]);
+  assert.equal(p.build().acceptance.criteria[0].status, 'verified');
+  // A failure that nothing later passed still fails it
+  const p2 = new PassportRecorder();
+  p2.recordChange('src/a.ts', 'x', 'y');
+  p2.acceptance.setCriteria(['works']);
+  const failed = p2.recordCommand('node --test tests/a.test.js', 1, '# pass 1\n# fail 1\n');
+  p2.acceptance.claim('AC1', 'pass', 'ran it', [failed]);
+  assert.equal(p2.build().acceptance.criteria[0].status, 'failing');
+});

@@ -137,8 +137,11 @@ export class AcceptanceRecorder {
             // A failure shown before the code changed is the reproduction of what was to be fixed
             const reproduced = lastChange > 0 && criterion.claims.some(claim => claim.at < lastChange
                 && (claim.result === 'fail' || claim.evidence.some(id => byId.get(id)?.passed === false)));
-            // Only evidence about the final code counts; what failed before the change is the reproduction
-            const current = evidence.filter(e => e.at > lastChange);
+            // Only evidence about the final code counts; what failed before the change is the reproduction.
+            // A failed run that a later run of the same check passed is superseded (as when the old code was
+            // restored in the terminal, with git stash, to reproduce the failure).
+            const superseded = (e: Evidence) => !e.passed && this._evidence.some(later => later.at > e.at && later.passed && later.kind === e.kind && later.description === e.description);
+            const current = evidence.filter(e => e.at > lastChange && !superseded(e));
             let status: CriterionStatus;
             if (!last) { status = 'open'; }
             else if ((last.result === 'fail' && last.at > lastChange) || current.some(e => !e.passed)) { status = 'failing'; }
