@@ -14,7 +14,15 @@ export interface DebugCall {
 interface Stop { session: vscode.DebugSession; threadId: number; reason: string; description?: string; text?: string }
 
 /** A debugging run started by Codico: its first session and the child sessions it makes (one per Node process). */
-interface Run { name: string; config: vscode.DebugConfiguration; folder?: vscode.WorkspaceFolder; sessions: Map<string, vscode.DebugSession>; ended: boolean; exitCode?: number; exceptions: 'all' | 'uncaught' | 'none' }
+interface Run {
+    name: string; config: vscode.DebugConfiguration; folder?: vscode.WorkspaceFolder; sessions: Map<string, vscode.DebugSession>; ended: boolean; exitCode?: number; exceptions: 'all' | 'uncaught' | 'none';
+    /** A program Codico starts pauses on entry, so that exception settings are in force before its first line; that pause is not reported. */
+    entryPause?: boolean;
+    /** It is a configuration of launch.json: used as the user wrote it. */
+    fromLaunchJson?: boolean;
+    /** The configuration as made, before Codico's additions: what a rerun starts from. */
+    original: vscode.DebugConfiguration;
+}
 
 const OUTPUT_LINES = 60;
 let counter = 0;
@@ -39,15 +47,6 @@ export class DebugController implements vscode.Disposable {
         this._disposables.push(
             vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: session => ({
                 onDidSendMessage: message => this._message(session, message),
-                // VS Code sends its own exception settings (by default: none) once the adapter is ready; ours go right after,
-                // before the program is let go (configurationDone), so that they are the ones in force
-                onWillReceiveMessage: (message: { type?: string; command?: string }) => {
-                    const run = this._run;
-                    if (message.type !== 'request' || message.command !== 'setExceptionBreakpoints' || !run || run.exceptions === 'none' || this._exceptionsSet.has(session.id)) { return; }
-                    if (!(this._ours(session) || session.name === run.name)) { return; }
-                    this._exceptionsSet.add(session.id);
-                    void session.customRequest('setExceptionBreakpoints', { filters: run.exceptions === 'all' ? ['all', 'uncaught'] : ['uncaught'] }).then(undefined, () => undefined);
-                },
             }) }),
             vscode.debug.onDidStartDebugSession(session => {
                 const run = this._run;
@@ -71,12 +70,26 @@ export class DebugController implements vscode.Disposable {
     private _ours(session: vscode.DebugSession): boolean { return !!this._run?.sessions.has(session.id); }
 
     private _message(session: vscode.DebugSession, message: { type?: string; event?: string; body?: Record<string, unknown> }): void {
-        if (message.type !== 'event') { return; }
         const run = this._run;
         const ours = this._ours(session) || session.name === run?.name;
-        if (!ours) { return; }
+        if (!ours || !run) { return; }
+        // VS Code sends its own exception settings (by default: none) when the adapter is ready. Ours are sent once the
+        // adapter has answered those, so that they are the ones in force
+        if (message.type === 'response' && (message as { command?: string }).command === 'setExceptionBreakpoints' && !this._exceptionsSet.has(session.id)) {
+            this._exceptionsSet.add(session.id);
+            void this._setExceptions(session, run);
+            return;
+        }
+        if (message.type !== 'event') { return; }
         switch (message.event) {
             case 'stopped':
+                // The pause on entry Codico asked for itself: its exception settings are now surely in force; on it goes
+                if (run.entryPause && message.body?.reason === 'entry') {
+                    run.entryPause = false;
+                    const threadId = Number(message.body?.threadId ?? 1);
+                    void this._setExceptions(session, run).then(() => session.customRequest('continue', { threadId })).then(undefined, () => undefined);
+                    break;
+                }
                 this._stop = { session, threadId: Number(message.body?.threadId ?? 1), reason: String(message.body?.reason ?? 'stopped'), description: message.body?.description as string | undefined, text: message.body?.text as string | undefined };
                 this._wake();
                 break;
@@ -95,6 +108,11 @@ export class DebugController implements vscode.Disposable {
                 if (run && typeof message.body?.exitCode === 'number' && (run.exitCode === undefined || message.body.exitCode !== 0)) { run.exitCode = message.body.exitCode; }
                 break;
         }
+    }
+
+    private async _setExceptions(session: vscode.DebugSession, run: Run): Promise<void> {
+        if (run.exceptions === 'none') { return; }
+        await session.customRequest('setExceptionBreakpoints', { filters: run.exceptions === 'all' ? ['all', 'uncaught'] : ['uncaught'] }).then(undefined, () => undefined);
     }
 
     /** Waits until the program stops or ends, the time runs out, or the user presses Stop. */
@@ -228,7 +246,7 @@ export class DebugController implements vscode.Disposable {
         let config: vscode.DebugConfiguration; let folder: vscode.WorkspaceFolder | undefined; let exceptions: Run['exceptions'];
         if (tool.action === 'rerun') {
             if (!this._run) { return 'ERROR: nothing to run again: start a session first.'; }
-            ({ config, folder, exceptions } = this._run);
+            ({ original: config, folder, exceptions } = this._run);
         } else {
             folder = vscode.workspace.workspaceFolders?.[0];
             const made = await this._configuration(tool, folder);
@@ -239,7 +257,10 @@ export class DebugController implements vscode.Disposable {
         if (!await call.askToRun(`debugger: run ${what}`)) { return 'Not started: the user declined.'; }
         if (this._run && !this._run.ended) { await this._end(); }
         const name = `Codico debug ${++counter}`;
-        this._run = { name, config: { ...config, name }, folder, sessions: new Map(), ended: false, exceptions };
+        // A program (not a launch.json configuration, not a terminal command) waits on entry for the exception settings, unless the user's configuration says otherwise
+        const entryPause = exceptions !== 'none' && (config.type === 'node' || config.type === 'debugpy') && config.stopOnEntry === undefined && !(tool.action === 'start' ? tool.config : this._run?.fromLaunchJson);
+        this._run = { name, config: { ...config, name, ...(entryPause ? { stopOnEntry: true } : {}) }, original: config, fromLaunchJson: tool.action === 'start' ? !!tool.config : this._run?.fromLaunchJson, folder, sessions: new Map(), ended: false, exceptions, entryPause };
+        this._exceptionsSet.clear();
         this._stop = undefined; this._output = [];
         const started = await vscode.debug.startDebugging(folder, this._run.config, { suppressDebugToolbar: false });
         if (!started) { this._run.ended = true; return `ERROR: the debugger did not start for "${what}" (is a debugger for ${config.type} installed?).`; }
