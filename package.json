@@ -141,6 +141,11 @@
         "icon": "$(radio-tower)"
       },
       {
+        "command": "codico.marketplace",
+        "title": "Codico: Marketplace",
+        "icon": "$(extensions)"
+      },
+      {
         "command": "codico.addAutomationWorkflow",
         "title": "Codico: Add GitHub Actions Workflow for Automations"
       },
@@ -479,6 +484,12 @@
           "maximum": 3000,
           "description": "Debounce delay in ms before requesting an inline completion"
         },
+        "codico.marketplaceRegistry": {
+          "type": "string",
+          "default": "https://raw.githubusercontent.com/ehk2509/codico-registry/main/index.json",
+          "scope": "machine",
+          "description": "The marketplace's registry: an index.json of packages, each version pinned to a commit and a content hash. A company can point this to its own."
+        },
         "codico.automationPollSeconds": {
           "type": "number",
           "default": 120,
@@ -749,7 +760,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./ && npm run bundle",
-    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --external:playwright-core --sourcemap --outfile=dist/extension.js",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --external:playwright-core --sourcemap --outfile=dist/extension.js && esbuild src/packageTools.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/package-tools.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test",

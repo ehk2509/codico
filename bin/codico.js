@@ -13,8 +13,14 @@ const EXIT = { done: 0, failed: 1, needsInput: 2, denied: 3, usage: 64 };
 
 const HELP = `Usage: codico run "<task>" [options]
        codico automate [options]
+       codico package check [folder] [--json]
+       codico registry verify <index.json> [<package id>…] [--json]
 
 run       Runs one task with the Codico agent, in a VS Code started for it, and prints the result.
+package   Checks a marketplace package before it is submitted: its codico-package.json, a security scan,
+          and the content hash of what git will serve for the commit. Prints its registry entry.
+registry  Verifies a registry's index (its CI runs this): each package's latest version is downloaded at
+          its commit and its hash, manifest, publisher's account and scan are checked.
 automate  Runs the repository's automations once (or with --watch, on and on): GitHub issues with
           the label and new CI failures on the default branch become jobs, finished jobs become
           draft pull requests, and CI failures or requested changes on those resume their job with
@@ -153,7 +159,56 @@ function render(event) {
   }
 }
 
+/** `codico package check` and `codico registry verify`: no editor needed. */
+async function packageTools(argv) {
+  const json = argv.includes('--json');
+  const words = argv.filter(a => a !== '--json');
+  let tools;
+  try { tools = require(path.join(EXTENSION_ROOT, 'dist', 'package-tools.js')); } catch { process.stderr.write('codico: the package tools are missing (dist/package-tools.js); run "npm run compile".\n'); return EXIT.failed; }
+  const mark = { danger: '⛔', warning: '⚠', info: '·' };
+  if (words[0] === 'package' && words[1] === 'check') {
+    const dir = path.resolve(words[2] || '.');
+    const result = tools.checkPackage(dir);
+    if (json) { process.stdout.write(JSON.stringify(result, null, 2) + '\n'); }
+    else {
+      for (const p of result.problems) { process.stderr.write(`✗ ${p}\n`); }
+      for (const w of result.warnings) { process.stderr.write(`⚠ ${w}\n`); }
+      if (result.scan) {
+        process.stderr.write(`\nScan: ${{ high: 'HIGH RISK', medium: 'things to check', low: 'nothing found' }[result.scan.risk]}\n`);
+        for (const f of result.scan.findings) { process.stderr.write(`  ${mark[f.severity]} ${f.file}${f.line ? ':' + f.line : ''} — ${f.text}\n`); }
+      }
+      if (result.entry) { process.stderr.write('\nRegistry entry (add it to index.json in a pull request to the registry):\n'); process.stdout.write(JSON.stringify(result.entry, null, 2) + '\n'); }
+    }
+    return result.problems.length ? EXIT.failed : result.scan && result.scan.risk === 'high' ? EXIT.denied : 0;
+  }
+  if (words[0] === 'registry' && words[1] === 'verify' && words[2]) {
+    const download = (url) => new Promise((resolve, reject) => {
+      const get = (u, hops) => require(u.startsWith('https:') ? 'node:https' : 'node:http').get(u, { headers: { 'User-Agent': 'Codico' } }, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops > 0) { res.resume(); get(new URL(res.headers.location, u).toString(), hops - 1); return; }
+        if (res.statusCode !== 200) { res.resume(); reject(new Error(`HTTP ${res.statusCode}`)); return; }
+        const chunks = []; res.on('data', c => chunks.push(c)); res.on('end', () => resolve(Buffer.concat(chunks)));
+      }).on('error', reject);
+      get(url, 4);
+    });
+    const archive = process.env.CODICO_ARCHIVE_URL ? (repo, commit) => `${process.env.CODICO_ARCHIVE_URL}/${repo}/${commit}.tar.gz` : undefined;
+    const { results, problems } = await tools.verifyRegistry(fs.readFileSync(words[2], 'utf8'), download, words.slice(3), archive);
+    if (json) { process.stdout.write(JSON.stringify({ results, problems }, null, 2) + '\n'); }
+    else {
+      for (const p of problems) { process.stderr.write(`✗ ${p}\n`); }
+      for (const r of results) {
+        process.stderr.write(`${r.ok ? '✓' : '✗'} ${r.id} ${r.version}${r.risk ? ` (scan: ${r.risk})` : ''}\n`);
+        for (const p of r.problems) { process.stderr.write(`    ✗ ${p}\n`); }
+        for (const f of (r.findings || []).filter(f => f.severity !== 'info')) { process.stderr.write(`    ${mark[f.severity]} ${f.file}${f.line ? ':' + f.line : ''} — ${f.text}\n`); }
+      }
+    }
+    return problems.length || results.some(r => !r.ok) ? EXIT.failed : results.some(r => r.risk === 'high') ? EXIT.denied : 0;
+  }
+  process.stderr.write(`codico: ${HELP.split('\n').slice(0, 5).join('\n')}\n`);
+  return EXIT.usage;
+}
+
 async function main(argv) {
+  if (argv[0] === 'package' || argv[0] === 'registry') { return packageTools(argv); }
   let options;
   try { options = parseArgs(argv); } catch (error) { process.stderr.write(`codico: ${error.message}\n\n${HELP}\n`); return EXIT.usage; }
   if (options.help) { process.stdout.write(HELP + '\n'); return 0; }

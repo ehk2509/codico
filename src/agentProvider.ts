@@ -804,6 +804,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     /** For a team's workers: their view and questions, and what their file tools share with this conversation. */
     public postToPanel(message: ExtensionMessage): void { this._post(message); }
     public get editProposals(): EditProposalManager { return this._editProposals; }
+    /** MCP servers configured anew (a marketplace package added or removed one): reconnected when no task needs them. */
+    public refreshMcp(): Promise<void> { return this._onWebviewMessage({ type: 'refreshMcp' }); }
     public showBackgroundTasks(text: string, needsUser: boolean): void { this._post({ type: 'backgroundTasks', text, needsUser }); }
     public evaluationTurns(thread?: boolean): string[] { return thread ? [this._activeThreadId] : this._displayMessages.filter(m => m.role === 'user' && !!m.id).map(m => m.id as string); }
     public getEvaluationSnapshot(): EvaluationRunMetrics {
