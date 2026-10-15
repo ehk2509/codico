@@ -105,9 +105,10 @@ test('v7 keeps exactly the v6 tasks that could be scored, unchanged but for the 
 
 test('no task can only be passed by guessing a name: what a verifier imports exists at the base or is named in the prompt', (t) => {
   const { unguessableNames } = require('../scripts/eval/suiteCheck.js');
-  // Needs the history of the base and verifier commits (a shallow checkout does not have it)
-  if (unguessableNames(suite.tasks[0]) === null) { t.skip('repository history not available'); return; }
-  for (const task of suite.tasks) {
-    assert.deepEqual(unguessableNames(task), [], task.id);
+  // Needs the history of the base and verifier commits, which a shallow checkout (CI) does not have
+  const found = suite.tasks.map(task => [task.id, unguessableNames(task)]);
+  if (found.some(([, names]) => names === null)) { t.skip('repository history not available'); return; }
+  for (const [id, names] of found) {
+    assert.deepEqual(names, [], id);
   }
 });
