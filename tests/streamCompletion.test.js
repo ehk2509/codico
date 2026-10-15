@@ -50,6 +50,14 @@ test('detects action announcements that were never followed by a tool call', () 
   assert.equal(isUnfulfilledActionAnnouncement('Should I also add tests? I will wait for your answer?'), false);
   assert.equal(isUnfulfilledActionAnnouncement('<clarify>\nquestion: Which framework?\n</clarify>'), false);
   assert.equal(isUnfulfilledActionAnnouncement(''), false);
+
+  // A closing offer, or a reply saying the work is done, is not an announced step (both cost extra requests when nudged)
+  assert.equal(isUnfulfilledActionAnnouncement("Done. Created `empty.json`.\n\nIf you meant a file containing an empty JSON object (`{}`) or a specific filename/path, let me know and I'll adjust."), false);
+  assert.equal(isUnfulfilledActionAnnouncement("The task is complete — no further action is needed.\n\nIf you wanted a different filename, or a file containing `{}`, just say so and I'll adjust it."), false);
+  assert.equal(isUnfulfilledActionAnnouncement('Final answer: the task is complete. No further tool calls are required. I will not change anything else.'), false);
+  assert.equal(isUnfulfilledActionAnnouncement('Want me to also add tests? Let me know.'), false);
+  // An announcement after a finished step is still one
+  assert.equal(isUnfulfilledActionAnnouncement('The config is read.\n\nNow I\'ll update the parser to use it.'), true);
 });
 
 test('drops text a resumed response repeats from before the cutoff', () => {
