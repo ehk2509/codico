@@ -3139,7 +3139,7 @@
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',
       write_file: '\uD83D\uDCDD', lsp_symbol: '\uD83E\uDDE0', mcp_call: '\uD83E\uDDE9',
-      debug_get_variables: '\uD83D\uDD0D', debug_get_callstack: '\uD83E\uDDF5', debug_list_breakpoints: '\uD83D\uDED1'
+      debug_get_variables: '\uD83D\uDD0D', debug_get_callstack: '\uD83E\uDDF5', debug_list_breakpoints: '\uD83D\uDED1', debug: '\uD83D\uDC1E'
     };
     var pill = document.createElement('div');
     pill.className = 'step-pill';
@@ -3154,7 +3154,7 @@
         browser_navigate: 'Navigating', browser_click: 'Clicking',
         browser_type: 'Typing', browser_get_text: 'Reading', browser_screenshot: 'Capturing',
         browser_close: 'Closing', lsp_symbol: 'Resolving', mcp_call: 'Calling',
-        debug_get_variables: 'Inspecting', debug_get_callstack: 'Reading stack', debug_list_breakpoints: 'Listing'
+        debug_get_variables: 'Inspecting', debug_get_callstack: 'Reading stack', debug_list_breakpoints: 'Listing', debug: 'Debugging'
       }[tool] || 'Running') + '\u2026</span>' +
       _pillLabelHtml(tool, label);
     _progress.set('activity', (pill.querySelector('.step-pill-verb') || {}).textContent + ' ' + label);
@@ -3252,7 +3252,7 @@
       browser_type: 'Typed', browser_get_text: 'Read page',
       browser_screenshot: 'Screenshot', browser_close: 'Closed browser',
       write_file: 'Written', lsp_symbol: 'Resolved', mcp_call: 'Called',
-      debug_get_variables: 'Inspected', debug_get_callstack: 'Read stack', debug_list_breakpoints: 'Listed'
+      debug_get_variables: 'Inspected', debug_get_callstack: 'Read stack', debug_list_breakpoints: 'Listed', debug: 'Debugged'
     };
     var icons = {
       read_file: '\uD83D\uDCC4', list_directory: '\uD83D\uDCC1', run_terminal: '\u26A1',
@@ -3262,7 +3262,7 @@
       browser_type: '\u2328\uFE0F', browser_get_text: '\uD83D\uDCDD',
       browser_screenshot: '\uD83D\uDCF8', browser_close: '\u274C',
       write_file: '\uD83D\uDCDD', lsp_symbol: '\uD83E\uDDE0', mcp_call: '\uD83E\uDDE9',
-      debug_get_variables: '\uD83D\uDD0D', debug_get_callstack: '\uD83E\uDDF5', debug_list_breakpoints: '\uD83D\uDED1'
+      debug_get_variables: '\uD83D\uDD0D', debug_get_callstack: '\uD83E\uDDF5', debug_list_breakpoints: '\uD83D\uDED1', debug: '\uD83D\uDC1E'
     };
 
     var verb = success ? (verbs[tool] || 'Done') : 'Failed';

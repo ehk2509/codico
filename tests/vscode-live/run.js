@@ -62,6 +62,10 @@ async function main() {
     { event: 'beforeCommand', match: '*hook-forbidden*', command: 'node -e "process.exit(2)"' },
   ] }));
   fs.writeFileSync(path.join(ws, 'fixtures/approve-write.txt'), 'original\n');
+  // A program with a bug, for the debugger: an item without a quantity makes the total NaN
+  fs.mkdirSync(path.join(ws, 'debugme'), { recursive: true });
+  fs.writeFileSync(path.join(ws, 'debugme/calc.js'), 'function total(items) {\n  let sum = 0;\n  for (const item of items) {\n    sum += item.price * item.qty;\n  }\n  return sum;\n}\nmodule.exports = { total };\n');
+  fs.writeFileSync(path.join(ws, 'debugme/run.js'), "const { total } = require('./calc');\nconst t = total([{ price: 2, qty: 3 }, { price: 5 }]);\nif (Number.isNaN(t)) { throw new Error('total is NaN'); }\nconsole.log('TOTAL ' + t);\n");
   // A small web app with a bug, for end-to-end verification: "Add" shows "Count: 01" instead of "Count: 1"
   fs.mkdirSync(path.join(ws, 'webapp'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'webapp/server.js'), "const http = require('http'), fs = require('fs'), path = require('path');\nhttp.createServer((q, s) => { const f = q.url === '/app.js' ? 'app.js' : 'index.html'; s.setHeader('content-type', f.endsWith('.js') ? 'text/javascript' : 'text/html'); s.end(fs.readFileSync(path.join(__dirname, f))); }).listen(Number(process.argv[2]), '127.0.0.1', () => console.log('webapp ready on ' + process.argv[2]));\n");

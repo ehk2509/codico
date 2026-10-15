@@ -8,6 +8,7 @@ import { BackgroundTaskStore } from './backgroundTaskStore';
 import { BackgroundTaskManager, runInPanel, worktreesRoot } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
+import { DebugController } from './debugController';
 import { nameRepositories } from './repositories';
 import { repositoryRoot } from './backgroundGit';
 import { TeamWorkers } from './teamWorkers';
@@ -174,6 +175,9 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()),
         vscode.commands.registerCommand('codico.addAutomationWorkflow', () => automations.addWorkflow()));
     if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalAutomations', (action: 'configure' | 'tick' | 'get' | 'publish', value?: unknown) => automations.evaluation(action, value))); }
+    // The debugger, driven by the agent (the debug tool)
+    provider.debug = new DebugController();
+    context.subscriptions.push(provider.debug);
     // The marketplace: community skills, agents, MCP servers and hooks, installed into this project
     const marketplace = new MarketplaceService(async mcpChanged => { if (mcpChanged) { await provider.refreshMcp(); } },
         evaluationMode && process.env.CODICO_TEST_ARCHIVE_URL ? (repo, commit) => `${process.env.CODICO_TEST_ARCHIVE_URL}/${repo}/${commit}.tar.gz` : undefined);

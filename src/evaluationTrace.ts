@@ -35,6 +35,8 @@ export function evaluationToolTarget(tool: ToolCall): string {
             return clip(`${tool.selector ?? 'page'} ${tool.text ?? tool.state ?? ''}`);
         case 'acceptance':
             return clip(tool.action === 'criteria' ? `${tool.criteria?.length ?? 0} criteria` : `${tool.criterion} ${tool.result}`);
+        case 'debug':
+            return clip(`${tool.action} ${tool.file ?? tool.config ?? tool.command ?? tool.program ?? tool.expression ?? ''}`);
         case 'team':
             return clip(`${tool.action} ${tool.worker ?? tool.text ?? ''}`);
         case 'search_code':

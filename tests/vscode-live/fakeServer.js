@@ -126,6 +126,19 @@ const SCRIPTS = (port) => ({
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
   auto_fix: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V2'), 'Fixed: AUTO-V2 now.'],
   // A /background task run in this window, then answered by the user
+  // Debugging a NaN: a breakpoint, the real variables, a step, the exception where it is thrown, then the fix and a rerun
+  debug_trace: [
+    tool('debug', 'action: breakpoint\nfile: debugme/calc.js\nline: 4'),
+    tool('debug', 'action: start\nprogram: debugme/run.js\nexceptions: uncaught'),
+    tool('debug', 'action: evaluate\nexpression: item.price * item.qty'),
+    tool('debug', 'action: step\nstep: over'),
+    tool('debug', 'action: continue'),
+    tool('debug', 'action: evaluate\nexpression: item.qty'),
+    tool('debug', 'action: breakpoint\nfile: debugme/calc.js\nline: 4\nremove: true') + tool('debug', 'action: continue'),
+    tool('debug', 'action: continue'),
+    tool('edit_file', 'filepath: debugme/calc.js\nold_str:\n    sum += item.price * item.qty;\nnew_str:\n    sum += item.price * (item.qty ?? 1);'),
+    tool('debug', 'action: rerun'),
+    'The second item had no qty; it now counts as 1, and the program prints TOTAL 11.'],
   // An agent team across two repositories: an SDK beside the workspace, integrated, then published as linked pull requests
   team_xrepo: [tool('team', 'action: start\nrole: developer\nname: sdk\nrepo: sdk-repo\ntext:\nSet version 2 in lib.js [SCENARIO:xr_sdk]'),
     tool('team', 'action: start\nrole: developer\nname: app\nrepo: ws\ntext:\nMake live/xr-app.js use version 2 [SCENARIO:xr_app]'),
