@@ -2694,7 +2694,7 @@
     el = document.createElement('div');
     el.className = 'tv-worker'; el.id = 'tv-' + id;
     el.innerHTML = '<div class="tv-row"><span class="tv-dot"></span><strong class="tv-name"></strong><span class="tv-role"></span><span class="tv-status"></span><span class="tv-meta"></span><span class="tv-actions"></span></div>' +
-      '<div class="tv-task"></div><div class="tv-activity"></div><div class="tv-q" id="team-q-' + id + '"></div><div class="tv-log" style="display:none"></div>';
+      '<div class="tv-task"></div><div class="tv-activity"></div><div class="tv-ask"></div><div class="tv-q" id="team-q-' + id + '"></div><div class="tv-log" style="display:none"></div>';
     el.querySelector('.tv-row').addEventListener('click', function () { _teamLogsOpen[id] = !_teamLogsOpen[id]; el.querySelector('.tv-log').style.display = _teamLogsOpen[id] ? 'block' : 'none'; });
     var list = teamView.querySelector('.tv-list');
     list.appendChild(el);
@@ -2738,6 +2738,7 @@
       actions.appendChild(teamButton('Open', 'Open its worktree in a separate window, to look at its files (it goes on running here)', w.id, 'open'));
       if (live) { actions.appendChild(teamButton('Stop', 'Stop this worker; its work so far stays on its branch', w.id, 'stop')); }
       else { actions.appendChild(teamButton('\u2715', 'Remove it from this view (its branch and worktree stay; see Background Tasks)', w.id, 'dismiss')); }
+      renderTeamQuestion(el.querySelector('.tv-ask'), w);
       var log = el.querySelector('.tv-log');
       log.innerHTML = '';
       w.log.forEach(function (entry) {
@@ -2752,6 +2753,45 @@
     Array.prototype.forEach.call(teamView.querySelectorAll('.tv-worker'), function (el) { if (!keep[el.id.slice(3)]) { el.remove(); } });
     teamView.querySelector('.tv-sum').textContent = Object.keys(counts).map(function (k) { return counts[k] + ' ' + k; }).join(' \u00b7 ');
   }
+  /** The question an agent asked, with its options as buttons: an answer is sent to it as a reply. Redrawn only when the question changes. */
+  function renderTeamQuestion(box, w) {
+    var key = w.question ? JSON.stringify(w.question) : '';
+    if (box.dataset.key === key) { return; }
+    box.dataset.key = key;
+    box.innerHTML = '';
+    // A new question is answerable, whatever happened to the one before it
+    box.classList.remove('answered');
+    if (!w.question) { return; }
+    var q = w.question;
+    var send = function (text) { box.classList.add('answered'); vscode.postMessage({ type: 'teamWorker', worker: w.id, action: 'reply', text: text }); };
+    var head = document.createElement('div');
+    head.className = 'tv-ask-q';
+    head.textContent = '\u2753 ' + (q.question || 'It asks you to choose:');
+    box.appendChild(head);
+    var row = document.createElement('div');
+    row.className = 'tv-ask-options';
+    var picked = [];
+    q.options.forEach(function (option) {
+      var b = document.createElement('button');
+      b.className = 'tv-ask-opt'; b.textContent = option; b.title = q.multi ? 'Select; then Send' : 'Answer with this';
+      b.addEventListener('click', function () {
+        if (!q.multi) { send(option); return; }
+        var at = picked.indexOf(option);
+        if (at >= 0) { picked.splice(at, 1); b.classList.remove('on'); } else { picked.push(option); b.classList.add('on'); }
+      });
+      row.appendChild(b);
+    });
+    if (q.multi) { row.appendChild(teamAskButton('Send', 'Answer with the selected options', function () { if (picked.length) { send(picked.join(', ')); } })); }
+    row.appendChild(teamAskButton('Other\u2026', 'Write your own answer', function () { vscode.postMessage({ type: 'teamWorker', worker: w.id, action: 'reply' }); }));
+    box.appendChild(row);
+  }
+  function teamAskButton(label, title, onClick) {
+    var b = document.createElement('button');
+    b.className = 'tv-btn'; b.textContent = label; b.title = title;
+    b.addEventListener('click', onClick);
+    return b;
+  }
+
   function showTeamCheckpoint(worker, reason) {
     var wrap = teamQuestions(worker);
     var card = document.createElement('div');

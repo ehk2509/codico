@@ -126,6 +126,9 @@ const SCRIPTS = (port) => ({
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
   auto_fix: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V2'), 'Fixed: AUTO-V2 now.'],
   // A /background task run in this window, then answered by the user
+  // A background task that asks first (streamed in pieces of 12 characters: the question's tag is split), then does it
+  bg_question: Array(3).fill('I need to know one thing first, so sorry. <clarify>\nquestion: Where should the file go?\ntype: single\noptions:\n- live/q-a.json\n- live/q-b.json\n</clarify>'),
+  bg_answer: [tool('write_file', 'filepath: live/q-a.json\ncontent:\n{}'), 'Created live/q-a.json.'],
   bg_panel: [tool('write_file', 'filepath: live/bg-panel.txt\ncontent:\nBG-PANEL'), 'Wrote live/bg-panel.txt.'],
   bg_panel_reply: ['The panel task got the reply.'],
   // The worker: a real agent in the same window, working in its own worktree

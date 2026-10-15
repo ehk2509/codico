@@ -953,6 +953,22 @@ async function run() {
       why: `a /background task ran in this window, in its own worktree, and finished with its report: ${bgHere} (${bgDone.status}); the user's reply reached it and its answer became the report: ${bgReplied}` });
     try { git('worktree', 'remove', '--force', bg.worktree); } catch { /* reported by the checks */ }
 
+    // A task that asks a question (its tag split across streamed pieces) needs the user, and goes on with the answer
+    {
+      const q0 = Date.now(); const qBefore = (await getLog()).length;
+      const qTask = await vscode.commands.executeCommand('codico.__evalStartBackground', '[SCENARIO:bg_question] create a json file');
+      let asked = {};
+      for (let i = 0; i < 150 && asked.status !== 'waiting' && asked.status !== 'finished'; i++) { await new Promise(r => setTimeout(r, 200)); asked = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === qTask.id) || {}; }
+      const needsYou = asked.status === 'waiting' && asked.note === 'answer its question';
+      await vscode.commands.executeCommand('codico.__evalWebviewMessage', { type: 'teamWorker', worker: qTask.id.slice(0, 8), action: 'reply', text: '[SCENARIO:bg_answer] live/q-a.json' });
+      let answered = {};
+      for (let i = 0; i < 150 && answered.status !== 'finished'; i++) { await new Promise(r => setTimeout(r, 200)); answered = ((await vscode.commands.executeCommand('codico.__evalBackground')) || []).find(t => t.id === qTask.id) || {}; }
+      const done = answered.status === 'finished' && (() => { try { return fs.readFileSync(path.join(qTask.worktree, 'live/q-a.json'), 'utf8').trim() === '{}'; } catch { return false; } })();
+      results.push({ name: 'background_question', ms: Date.now() - q0, requests: (await getLog()).length - qBefore, ok: needsYou && done,
+        why: `a question whose tag arrived split across pieces makes the task wait for the user: ${needsYou} (${asked.status}, ${asked.note}); answered, it did the work and finished: ${done} (${answered.status})` });
+      try { git('worktree', 'remove', '--force', qTask.worktree); } catch { /* reported by the checks */ }
+    }
+
     // Automations: a labelled issue becomes a job in this window and a draft pull request; CI failing on it resumes the same agent from its saved conversation
     {
       const a0 = Date.now(); const aBefore = (await getLog()).length;

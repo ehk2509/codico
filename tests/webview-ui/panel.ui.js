@@ -993,6 +993,37 @@ test('the team view: each worker with its status, steps, tokens and log; its que
   assert.deepEqual(errors, []);
 });
 
+test('an agent\'s question is shown in its card with its options as buttons, and an answer goes back to it', async () => {
+  const { page, send, posted, errors } = await openPanel();
+  const agent = (over) => ({ id: 'dddd4444', role: 'background task', task: 'create empty json file', branch: 'codico/create-dddd44', status: 'waiting', note: 'answer its question', steps: 3, tokens: 18287, log: [], ...over });
+  await send({ type: 'teamState', workers: [agent({ question: { question: 'Where should the file live?', multi: false, options: ['package.empty.json (repo root)', 'src/empty.json'], freeInput: true } })] });
+  const card = page.locator('#tv-dddd4444');
+  assert.match(await card.locator('.tv-row').textContent(), /needs you/);
+  // Visible without opening the log
+  assert.equal(await card.locator('.tv-ask').isVisible(), true);
+  assert.match(await card.locator('.tv-ask-q').textContent(), /Where should the file live\?/);
+  assert.deepEqual(await card.locator('.tv-ask-opt').allTextContents(), ['package.empty.json (repo root)', 'src/empty.json']);
+  await card.locator('.tv-ask-opt', { hasText: 'src/empty.json' }).click();
+  assert.deepEqual(await posted('teamWorker'), [{ type: 'teamWorker', worker: 'dddd4444', action: 'reply', text: 'src/empty.json' }]);
+  assert.equal(await card.locator('.tv-ask').evaluate(e => e.classList.contains('answered')), true);
+  // Several choices: selected, then sent together; "Other…" asks for the user's own words
+  await send({ type: 'teamState', workers: [agent({ question: { question: 'Which checks?', multi: true, options: ['lint', 'tests', 'build'], freeInput: false } })] });
+  await card.locator('.tv-ask-opt', { hasText: 'lint' }).click();
+  await card.locator('.tv-ask-opt', { hasText: 'build' }).click();
+  assert.equal((await posted('teamWorker')).length, 1, 'nothing sent before Send');
+  await card.locator('.tv-ask .tv-btn', { hasText: 'Send' }).click();
+  assert.deepEqual((await posted('teamWorker')).at(-1), { type: 'teamWorker', worker: 'dddd4444', action: 'reply', text: 'lint, build' });
+  await send({ type: 'teamState', workers: [agent({ question: { question: 'Name?', multi: false, options: [], freeInput: true } })] });
+  await card.locator('.tv-ask .tv-btn', { hasText: 'Other' }).click();
+  assert.deepEqual((await posted('teamWorker')).at(-1), { type: 'teamWorker', worker: 'dddd4444', action: 'reply' });
+  // Answered and working again: the question goes
+  await send({ type: 'teamState', workers: [agent({ status: 'running', note: undefined })] });
+  assert.equal(await card.locator('.tv-ask').isVisible(), false);
+  await page.setViewportSize({ width: 240, height: 700 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  assert.deepEqual(errors, []);
+});
+
 test('/background starts a task elsewhere: it is not sent to this conversation', async () => {
   const { page, posted, errors } = await openPanel();
   await page.fill('#msg-input', '/back');
