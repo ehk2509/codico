@@ -31,7 +31,7 @@
       "id": "agent-unfulfilled-action",
       "category": "agent-loop",
       "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
-      "prompt": "Prevent the agent from stopping when it merely announces an action such as reading or searching a file but emits no tool call. Detect this stalled-turn pattern conservatively so normal final answers are not treated as stalled. Export the detector as `isUnfulfilledActionAnnouncement(content)` from src/streamCompletion.ts: true for a reply that only announces a step (\"I'll locate the file.\", \"Let me check what's in src.\"), false for a final answer, a question, a <clarify> block or an empty reply.",
+      "prompt": "Prevent the agent from stopping when it merely announces an action such as reading or searching a file but emits no tool call. Detect this stalled-turn pattern conservatively so normal final answers are not treated as stalled. Export the detector as `isUnfulfilledActionAnnouncement(content)` from src/streamCompletion.ts: true for a reply that only announces a step, written as models write them, curly apostrophes included (\"I\u2019ll locate the file.\", \"I\u2019m searching for the guard in the Map component.\", \"Let me check what's in src.\"), false for a final answer, a question, a <clarify> block or an empty reply.",
       "verifierFile": "streamCompletion.test.js",
       "testNamePattern": "detects action announcements that were never followed by a tool call",
       "maxIterations": 0,
