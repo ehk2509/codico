@@ -9,14 +9,26 @@
 
 const ADMITS = /\b(?:could(?:n['’]t| not)|was(?:n['’]t| not) able|were(?:n['’]t| not) able|unable to|cannot (?:fix|complete|resolve|reproduce|finish)|can['’]t (?:fix|complete|resolve|reproduce|finish)|did(?:n['’]t| not) (?:manage|succeed|fix|resolve|finish|complete)|not (?:yet )?(?:fixed|resolved|complete|done|working)|(?:still|remains?) (?:fail|failing|broken|unresolved)|partially (?:fixed|done|implemented)|gave up|ran out of)\b/i;
 
+// Codico's own test for a reply that announces a step without taking it ("Let me run the tests:"),
+// when the extension is compiled; otherwise a simpler test of the reply's last sentence
+let announcesStep = text => /(?:^|[.!?]\s+)(?:now\s+)?(?:let me|let's|i(?:'ll| will)|next,? i(?:'ll| will))\b[^.!?]*[:.]?\s*$/i.test(text) || /:\s*$/.test(text);
+try { announcesStep = require('../../out/streamCompletion.js').isUnfulfilledActionAnnouncement; } catch { /* not compiled */ }
+
+/** The run ended on an announced next step: it was cut off (at the step limit), not finished. */
+function stoppedMidWork(reply) {
+  const text = String(reply || '').trim();
+  return !!text && announcesStep(text);
+}
+
 /**
- * Whether the agent's final reply presents the task as done: it neither asks a question nor
- * says that something is left undone. A heuristic on wording; an empty reply claims nothing.
+ * Whether the agent's final reply presents the task as done: it neither asks a question, nor
+ * says that something is left undone, nor announces a step it has yet to take. A heuristic on
+ * wording; an empty reply claims nothing.
  */
 function claimedCompletion(reply) {
   const text = String(reply || '').trim();
   if (!text) { return false; }
-  if (/<clarify>/i.test(text)) { return false; }
+  if (/<clarify>/i.test(text) || stoppedMidWork(text)) { return false; }
   const lastLine = text.split(/\r?\n/).filter(line => line.trim()).pop() || '';
   if (/\?\s*$/.test(lastLine) && !/\b(?:let me know|want me to|should I)\b/i.test(lastLine)) { return false; }
   return !ADMITS.test(text);
@@ -109,13 +121,15 @@ function tokenCost(metrics, pricing) {
  * @param input.passport  the evidence of the run (Codico's change report, or one built from a reference agent's commands)
  */
 function scoreRun(input) {
-  const { success, finalReply, passport, changedFiles = [], referenceFiles, before, after, expectedChanges, costUsd } = input;
+  const { success, finalReply, passport, changedFiles = [], referenceFiles, before, after, expectedChanges, costUsd, steps, maxSteps } = input;
   // No test results before the agent: nothing to compare with, so no regression check
   const regression = before && after && before.size ? regressions(before, after, expectedChanges) : null;
   const checks = passport?.checks || [];
   return {
     claimed: claimedCompletion(finalReply),
     falseCompletion: claimedCompletion(finalReply) && !success,
+    // Ended on an announced step, with the step limit reached: cut off rather than finished
+    stoppedAtLimit: stoppedMidWork(finalReply) && !!maxSteps && (steps || 0) >= maxSteps,
     regressionChecked: !!regression,
     testsBefore: before ? before.size : 0,
     regressions: regression?.regressions ?? [],
@@ -179,6 +193,7 @@ function summarizeQuality(records) {
     recovery: rate(failedOnce.filter(r => r.success).length, failedOnce.length),
     editPrecision: rate(precise.filter(r => r.quality.unrelatedFiles.length === 0).length, precise.length),
     falseCompletion: rate(claimed.filter(r => !r.success).length, claimed.length),
+    stoppedAtLimit: rate(valid.filter(r => r.quality.stoppedAtLimit).length, valid.length),
     totalCostUsd: totalCost,
     costPerSuccessUsd: totalCost !== null && passed.length ? totalCost / passed.length : null,
     tokensPerSuccess: passed.length ? valid.reduce((n, r) => n + (r.metrics?.totalTokens || 0), 0) / passed.length : null,
@@ -211,6 +226,9 @@ function scorecardMarkdown(summary) {
     row('falseCompletion', summary.falseCompletion),
     '',
   ];
+  if (summary.stoppedAtLimit && summary.stoppedAtLimit.numerator) {
+    lines.push(`**${summary.stoppedAtLimit.numerator} of ${summary.stoppedAtLimit.denominator} runs were cut off at the step limit**, ending on a step they had announced (often the check of their own change). They do not count as claims of completion.`, '');
+  }
   if (summary.repetitions > 1) { lines.push(`Solved in every repetition: **${pct(summary.allRepetitions.value)}** (${summary.allRepetitions.numerator}/${summary.allRepetitions.denominator} tasks)`); }
   lines.push(`Cost per verified success: **${summary.costPerSuccessUsd === null ? 'n/a' : `$${summary.costPerSuccessUsd.toFixed(4)}`}**${summary.totalCostUsd === null ? '' : ` (total $${summary.totalCostUsd.toFixed(4)})`}`);
   lines.push(`Tokens per verified success: **${summary.tokensPerSuccess === null ? 'n/a' : Math.round(summary.tokensPerSuccess).toLocaleString('en-US')}**`);
@@ -225,5 +243,5 @@ function scorecardMarkdown(summary) {
 }
 
 module.exports = {
-  claimedCompletion, parseTap, regressions, testSources, rewrittenTests, unrelatedFiles, tokenCost, scoreRun, summarizeQuality, scorecardMarkdown, TARGETS,
+  claimedCompletion, stoppedMidWork, parseTap, regressions, testSources, rewrittenTests, unrelatedFiles, tokenCost, scoreRun, summarizeQuality, scorecardMarkdown, TARGETS,
 };

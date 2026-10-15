@@ -124,6 +124,21 @@ In the oracle run of v7, two historical fixes broke an existing test that a late
 
 Tests that a fix deliberately rewrote are not counted as regressions. For example, checkpoint-credentials changes what a rewind lists.
 
+### First v7 run (2026-10-15): Codico with DeepSeek V4 Flash
+
+The run was split into ten workflow runs of 3 tasks each and combined with `node scripts/eval/summarize.js <artifacts>`.
+
+| Measure | Result |
+|---|---|
+| Task success (pass@1) | **17/30 (56.7%)** |
+| Regression-free (verified successes) | 17/17 |
+| Edit precision (verified successes) | 17/17 |
+| Test passed after the last change | 15/30 |
+| Recovery after a failing check | 3/7 |
+| Cost per verified success | **$0.14** ($2.46 in total; 1.47M tokens per success) |
+
+**22 of the 30 runs were cut off by the 16-step limit.** Each ended on a step it had just announced, most often the compile or test run of its own change, before reading the result. Those runs count as neither claims of completion nor verified work. Of the 8 runs that did present the task as done, 5 were rejected by the hidden verifier.
+
 ### Reference agents and comparisons
 
 ```bash

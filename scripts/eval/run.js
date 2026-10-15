@@ -331,6 +331,7 @@ async function main() {
         record.quality = scoreRun({
           success: record.success, finalReply, passport, changedFiles: record.changedFiles,
           referenceFiles: record.referenceFiles, before: testsBefore, after: testsAfter, expectedChanges: record.expectedTestChanges, costUsd,
+          steps: record.metrics?.steps, maxSteps: agentName === 'codico' ? record.maxIterations : 0,
         });
 
         try { fs.unlinkSync(verifierDest); } catch {}

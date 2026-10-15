@@ -17,6 +17,14 @@ test('a reply that presents the task as done is a claim; questions and admission
   assert.equal(claimedCompletion("I couldn't reproduce the failure, so nothing was changed."), false);
   assert.equal(claimedCompletion('The parser is updated, but two tests still fail on Windows paths.'), false);
   assert.equal(claimedCompletion(''), false);
+  // Cut off at the step limit, on the step it announced: not a claim
+  assert.equal(claimedCompletion('All tests pass. Now let me compile and run the focused test:'), false);
+  assert.equal(claimedCompletion('Edited the parser. Let me verify the changes compile:'), false);
+  const { stoppedMidWork } = require('../scripts/eval/quality.js');
+  assert.equal(stoppedMidWork('Let me check the final state and compile:'), true);
+  assert.equal(stoppedMidWork('Fixed: all 11 tests pass.'), false);
+  assert.equal(scoreRun({ success: false, finalReply: 'Now let me run the tests:', steps: 18, maxSteps: 16 }).stoppedAtLimit, true);
+  assert.equal(scoreRun({ success: false, finalReply: 'Now let me run the tests:', steps: 5, maxSteps: 16 }).stoppedAtLimit, false);
 });
 
 // A child of a test reports to its parent runner, not as TAP, unless it is told it runs on its own
