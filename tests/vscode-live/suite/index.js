@@ -53,6 +53,11 @@ async function run() {
     return { ok: read, why: `${reqs.length} requests (1 = stopped before the result was read); the test result reached the model: ${read}` };
   });
   await set('maxIterations', 12);
+  await scenario('request_check', ({ reqs, error }) => {
+    const asked = reqs.filter(r => /\[System Acceptance\] Before you finish, show that the request itself is met/.test(r.lastUser)).length;
+    const ended = !error && reqs.length <= 8;
+    return { ok: asked === 1 && ended, why: `asked to show the request is met: ${asked} time(s) (once expected); the turn then ended: ${ended} (${reqs.length} requests)` };
+  });
   await scenario('timeout', ({ ms, text }) => ({ ok: ms >= 9000 && ms < 30000 && /timed out/i.test(text), why: `${ms} ms; reported timed out: ${/timed out/i.test(text)}` }), 45000);
   await scenario('bigoutput', ({ ms, reqs }) => {
     // The model gets the start and the end (where failures and summaries are), not 1.2 MB
