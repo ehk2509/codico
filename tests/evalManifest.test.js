@@ -90,12 +90,24 @@ test('holdout covers multiple historical failure families', () => {
   }
 });
 
-test('v7 keeps exactly the v6 tasks that could be scored, unchanged but for the step limit', () => {
+test('v7 keeps exactly the v6 tasks that could be scored, unchanged but for the step limit and the interface its prompt names', () => {
   const carried = ['stream-unexpected-eof', 'stream-resume-overlap', 'agent-unfulfilled-action', 'tools-unclosed-fence', 'tools-fingerprint-arguments',
     'tools-write-nested-fences', 'tools-four-backtick-envelope', 'tools-edit-nested-fences', 'tools-stream-closing-line'];
   for (const id of carried) {
-    // Unchanged but for the step limit, which v7 removes
-    assert.deepEqual({ ...suite.tasks.find(t => t.id === id), maxIterations: 16 }, v6.tasks.find(t => t.id === id), id);
+    // Unchanged but for the step limit, which v7 removes, and a prompt that may name the function the verifier imports
+    const now = suite.tasks.find(t => t.id === id);
+    const then = v6.tasks.find(t => t.id === id);
+    assert.ok(now.prompt.startsWith(then.prompt), id);
+    assert.deepEqual({ ...now, maxIterations: 16, prompt: then.prompt }, then, id);
   }
   assert.equal(suite.tasks.filter(t => v6.tasks.some(o => o.id === t.id)).length, carried.length);
+});
+
+test('no task can only be passed by guessing a name: what a verifier imports exists at the base or is named in the prompt', (t) => {
+  const { unguessableNames } = require('../scripts/eval/suiteCheck.js');
+  // Needs the history of the base and verifier commits (a shallow checkout does not have it)
+  if (unguessableNames(suite.tasks[0]) === null) { t.skip('repository history not available'); return; }
+  for (const task of suite.tasks) {
+    assert.deepEqual(unguessableNames(task), [], task.id);
+  }
 });

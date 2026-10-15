@@ -1,0 +1,66 @@
+/**
+ * Checks a holdout suite for tasks no agent can pass without guessing: the hidden verifier
+ * imports a function that neither exists at the task's base nor is named in its prompt.
+ *
+ *   node scripts/eval/suiteCheck.js [eval/tasks.json]
+ *
+ * Needs the repository's history (the base commits and the verifiers' commits).
+ */
+const cp = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const root = path.resolve(__dirname, '../..');
+const show = (commit, file) => {
+  const r = cp.spawnSync('git', ['show', `${commit}:${file}`], { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return r.status === 0 ? r.stdout : null;
+};
+
+/** The verifier's source: a file in eval/verifiers, or the test file at the verifier's commit. */
+function verifierSource(task) {
+  return task.verifierPath ? fs.readFileSync(path.join(root, task.verifierPath), 'utf8') : show(task.verifierCommit, `tests/${task.verifierFile}`);
+}
+
+/** The file's header (before its first test) and the tests the task runs. */
+function selectedSource(source, testNamePattern) {
+  const pattern = new RegExp(testNamePattern);
+  const [header, ...tests] = source.split(/^(?=test\()/m);
+  const chosen = tests.filter(block => {
+    const m = /^test\(\s*(['"])((?:\\.|(?!\1).)*)\1/.exec(block);
+    return m && pattern.test(m[2].replace(/\\(.)/g, '$1'));
+  });
+  return { header, body: chosen.join('') || source };
+}
+
+/** Names the task's tests import from the project that its base lacks and its prompt does not name. */
+function unguessableNames(task) {
+  const source = verifierSource(task);
+  if (source === null) { return null; }
+  const { header, body } = selectedSource(source, task.testNamePattern);
+  const missing = new Set();
+  const imports = /(?:const|let)\s*\{([^}]*)\}\s*=\s*require\(\s*['"]\.\.\/(out|media)\/([\w./-]+?)(?:\.js)?['"]\s*\)/g;
+  let m;
+  while ((m = imports.exec(header + body)) !== null) {
+    const base = show(task.baseCommit, m[2] === 'out' ? `src/${m[3]}.ts` : `media/${m[3]}.js`);
+    for (const name of m[1].split(',').map(n => n.split(':')[0].trim()).filter(Boolean)) {
+      const used = new RegExp(`\\b${name}\\b`).test(body);
+      const atBase = base !== null && new RegExp(`\\b${name}\\b`).test(base);
+      if (used && !atBase && !task.prompt.includes(name)) { missing.add(`${m[3]}.${name}`); }
+    }
+  }
+  return [...missing];
+}
+
+if (require.main === module) {
+  const suite = JSON.parse(fs.readFileSync(path.resolve(process.argv[2] || path.join(root, 'eval', 'tasks.json')), 'utf8'));
+  let problems = 0;
+  for (const task of suite.tasks) {
+    const names = unguessableNames(task);
+    if (names === null) { console.log(`${task.id}: verifier not found (is the history fetched?)`); problems++; }
+    else if (names.length) { console.log(`${task.id}: the verifier needs ${names.join(', ')}, which the base lacks and the prompt does not name`); problems++; }
+  }
+  console.log(problems ? `${problems} task(s) need attention` : `All ${suite.tasks.length} tasks: every name the verifiers import exists at the base or is named in the prompt.`);
+  process.exitCode = problems ? 1 : 0;
+}
+
+module.exports = { unguessableNames, selectedSource };
