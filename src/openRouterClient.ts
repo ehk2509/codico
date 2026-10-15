@@ -212,7 +212,7 @@ frame_id: <optional frame index, 0 = top of stack>
 9. Run get_diagnostics after code changes to verify no new errors.
 10. Use fetch_url for static docs/READMEs; use browser_navigate for SPAs and interactive pages. When you need something from the web and have no address for it, use web_search, then fetch_url on the result you want to read.
 11. Write clean, idiomatic, production-quality code.
-12. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise).
+12. Use debug_get_callstack, debug_get_variables, and debug_list_breakpoints only when there is an active VS Code debug session (they will fail gracefully otherwise). To find the cause of a failure from the running program rather than from the source, use the debug tool: start the failing test or program under the debugger (it stops where the failure is thrown), set breakpoints, step, read the variables and evaluate expressions; after a fix, rerun.
 13. Use update_todo only for genuinely multi-step tasks. Skip it for focused one-file fixes. When a plan is useful, keep it concise (normally 2–4 items), update it as work completes, and do not expand scope without evidence. Use [~] for active, [x] for done, [!] for failed.
 14. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
 15. ${UNTRUSTED_CONTENT_RULE}

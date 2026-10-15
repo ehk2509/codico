@@ -34,6 +34,8 @@ import { EditProposalManager } from './editProposalManager';
 import { setStreamStallTimeout } from './streamCompletion';
 import { runDelegate, SubagentHost, SUBAGENT_DEFAULT_MAX_STEPS } from './subagent';
 import { TeamService } from './teamService';
+import { DebugController } from './debugController';
+import { debugLabel } from './debugTools';
 import { TeamWorkers } from './teamWorkers';
 import { VerifyRuntime } from './verifyRuntime';
 import { teamLabel, teamPromptSection } from './teamTools';
@@ -131,7 +133,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _planAwaitingAnswer: string | null = null;
     private get _readOnly(): boolean { return this._chatMode || this._planGoal !== null; }
     /** Agent teams, when this window may lead one; the thread started with /team leads it. */
-    public team?: TeamService; public workers?: TeamWorkers;
+    public team?: TeamService; public workers?: TeamWorkers; public debug?: DebugController;
     private _teamThread: string | undefined;
     private get _teamMode(): boolean { return !!this.team && this._teamThread === this._activeThreadId && !this._readOnly; }
     private _mcpReady = false;
@@ -1208,7 +1210,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
         // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
         if (this._readOnly) {
-            const writeTools = new Set(['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call']);
+            const writeTools = new Set(['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call', 'debug']);
             if (writeTools.has(tool.type)) {
                 this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: tool.type, success: false, error: 'Not available in Ask mode' });
                 this._lastInlineResult = `[${tool.type}] Not available in Ask mode — switch to Agent mode to use this tool.`;
@@ -1359,6 +1361,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
                 result = await untilStopped(this._external._handleLspSymbol(tool, msgId), signal, stopped);
                 break;
             }
+            case 'debug':
+                this._post({ type: 'toolStart', id: msgId, tool: 'debug', label: debugLabel(tool) });
+                result = this.debug ? await this.debug.run(tool, { signal, askToRun: what => this._tools.askToRun(what, msgId) }) : '[debug] ERROR: debugging is not available here.';
+                this._post({ type: 'toolResult', id: msgId, tool: 'debug', label: debugLabel(tool), success: !/^\[debug \w+\] ERROR/.test(result), error: /^\[debug \w+\] ERROR: (.{0,120})/.exec(result)?.[1] });
+                break;
             case 'debug_get_variables': {
                 this._post({ type: 'toolStart', id: msgId, tool: 'debug_get_variables', label: `frame ${tool.frameId ?? 0}` });
                 result = await this._external._handleDebugGetVariables(tool, msgId);

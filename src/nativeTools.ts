@@ -3,6 +3,7 @@ import {
     UpdateTodoTool,
 } from './toolParser';
 import { TEAM_ACTIONS, TEAM_TOOL_DESCRIPTION, teamToolFromArgs } from './teamTools';
+import { DEBUG_ACTIONS, DEBUG_DESCRIPTION, debugToolFromArgs } from './debugTools';
 import { ACCEPTANCE_DESCRIPTION, APP_TOOL_DESCRIPTION, BROWSER_EXPECT_DESCRIPTION, verifyToolFromArgs } from './verifyTools';
 
 export type JsonSchema = Record<string, unknown>;
@@ -315,6 +316,31 @@ const ALL_TOOLS: NativeToolDefinition[] = [
             type: 'object',
             properties: { query: { type: 'string' } },
             required: ['query'],
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'debug',
+        description: DEBUG_DESCRIPTION,
+        inputSchema: {
+            type: 'object',
+            properties: {
+                action: { type: 'string', enum: [...DEBUG_ACTIONS] },
+                config: { type: 'string', description: 'start: the name of a launch.json configuration.' },
+                program: { type: 'string', description: 'start: a .js/.ts (Node) or .py (debugpy) file to run under the debugger.' },
+                args: { type: 'array', items: { type: 'string' } },
+                command: { type: 'string', description: 'start: a command (npm test, node --test x.test.js) run in the JavaScript debug terminal; every Node process it starts is debugged.' },
+                exceptions: { type: 'string', enum: ['all', 'uncaught', 'none'], description: 'start: stop where an exception is thrown (all, the default, includes a failing test\'s).' },
+                file: { type: 'string' },
+                line: { type: 'number' },
+                condition: { type: 'string', description: 'breakpoint: stop only when this is true.' },
+                log_message: { type: 'string', description: 'breakpoint: log this ({expressions} in braces) instead of stopping.' },
+                remove: { type: 'boolean' },
+                step: { type: 'string', enum: ['over', 'into', 'out'] },
+                expression: { type: 'string', description: 'evaluate: an expression in the frame where it stopped.' },
+                timeout_seconds: { type: 'number', description: 'How long to wait for the program to stop or end (60 by default).' },
+            },
+            required: ['action'],
             additionalProperties: false,
         },
     },
@@ -636,6 +662,8 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'team':
             return teamToolFromArgs(args);
+        case 'debug':
+            return debugToolFromArgs(args);
         case 'app': case 'browser_expect': case 'acceptance':
             return verifyToolFromArgs(call.name, args);
         case 'fetch_url': {

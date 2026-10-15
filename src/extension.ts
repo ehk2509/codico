@@ -8,6 +8,7 @@ import { BackgroundTaskStore } from './backgroundTaskStore';
 import { BackgroundTaskManager, runInPanel } from './backgroundTaskManager';
 import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
+import { DebugController } from './debugController';
 import { TeamWorkers } from './teamWorkers';
 import { AutomationService } from './automationService';
 import { BackgroundPermissions } from './backgroundTasks';
@@ -170,6 +171,9 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()),
         vscode.commands.registerCommand('codico.addAutomationWorkflow', () => automations.addWorkflow()));
     if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalAutomations', (action: 'configure' | 'tick' | 'get' | 'publish', value?: unknown) => automations.evaluation(action, value))); }
+    // The debugger, driven by the agent (the debug tool)
+    provider.debug = new DebugController();
+    context.subscriptions.push(provider.debug);
     // /background tasks run here too, unless the setting says each gets a window
     backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };
     provider.team = new TeamService({
