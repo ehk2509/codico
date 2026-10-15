@@ -3,9 +3,15 @@ name: Coding Holdout
 on:
   workflow_dispatch:
     inputs:
-      model:
-        description: OpenRouter model ID used by Codico
+      agent:
+        description: Agent to run (claude-code and oracle are references to compare Codico with)
         required: true
+        default: codico
+        type: choice
+        options: [codico, claude-code, oracle]
+      model:
+        description: Model ID (OpenRouter for codico; Claude model or empty for claude-code; ignored for oracle)
+        required: false
         default: deepseek/deepseek-v4-flash
         type: string
       filter:
@@ -42,16 +48,33 @@ jobs:
 
       - run: npm ci
 
+      - name: Install Claude Code
+        if: inputs.agent == 'claude-code'
+        run: npm install -g @anthropic-ai/claude-code
+
       - name: Run frozen historical coding holdout
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AGENT: ${{ inputs.agent }}
+          MODEL: ${{ inputs.model }}
+          FILTER: ${{ inputs.filter }}
+          LIMIT: ${{ inputs.limit }}
+          REPETITIONS: ${{ inputs.repetitions }}
         run: |
-          test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1)
+          if [ "$AGENT" = codico ]; then test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1); fi
+          if [ "$AGENT" = claude-code ]; then test -n "$ANTHROPIC_API_KEY" || (echo "ANTHROPIC_API_KEY secret is required" && exit 1); fi
+          if [ "$AGENT" = oracle ]; then MODEL=; fi
           xvfb-run -a npm run eval:coding -- \
-            --model "${{ inputs.model }}" \
-            --filter "${{ inputs.filter }}" \
-            --limit "${{ inputs.limit }}" \
-            --repetitions "${{ inputs.repetitions }}"
+            --agent "$AGENT" \
+            ${MODEL:+--model "$MODEL"} \
+            --filter "$FILTER" \
+            --limit "$LIMIT" \
+            --repetitions "$REPETITIONS"
+
+      - name: Scorecard
+        if: always()
+        run: for f in eval/results/*/summary.md; do [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"; done; true
 
       - name: Upload holdout evidence
         if: always()

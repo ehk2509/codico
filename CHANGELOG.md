@@ -2,6 +2,11 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Coding-holdout quality scorecard. Besides passing the hidden verifier, each benchmark run is scored on whether it broke none of the project's tests (the suite runs before and after the agent), tested its change after the last edit, recovered from failing checks, changed no source file outside the historical fix, and claimed completion only when it was verified. The scorecard also gives pass@1 against pass@k and the cost per verified success, each with the proposed target. Reference agents run on the same tasks: Claude Code (`--agent claude-code`, scored from its own commands and results) and an oracle that applies the historical fix (`--agent oracle`, which shows broken tasks rather than weak agents). `scripts/eval/compare.js` compares two runs task by task, with a sign test. The manual Coding Holdout workflow can run any of them.
+
 ## 0.6.0 - 2026-10-15
 
 ### Added

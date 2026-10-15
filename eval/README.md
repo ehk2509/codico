@@ -62,6 +62,58 @@ npm run eval:coding -- --limit 4
 Results are written beneath `eval/results/` and are git-ignored.
 
 
+## Quality scorecard
+
+Passing the hidden verifier is necessary, not sufficient. Each run is also scored on what it proves beyond that, from what was observed rather than what the agent says. `summary.md` ends with the scorecard, and each run's record holds the facts behind it (`quality`, `evidence`, `finalReply`).
+
+| Measure | Over | Counts when |
+|---|---|---|
+| Task success rate | tasks | the hidden verifier passed in at least one repetition (pass@k) |
+| First-attempt success | runs | the hidden verifier passed (pass@1); with several repetitions, "solved in every repetition" is also reported |
+| Regression-free rate | verified successes | no test of the project that passed before the agent fails after it. The project's whole suite runs before and after the agent, before the hidden verifier is added. A suite that no longer runs breaks every test. |
+| Test verification | runs that changed files | a test command passed after the last change |
+| Recovery success | runs where a check failed along the way | the hidden verifier passed in the end |
+| Edit precision | verified successes | no source file changed outside those the historical fix changed (tests and docs aside) |
+| False-completion rate | runs whose final reply presents the task as done | the hidden verifier rejected it |
+| Cost per verified success | — | dollars for all valid runs ÷ verified successes |
+
+For Codico, the commands and their results come from its change report (the patch passport). For Claude Code, they come from its own event stream, read with the same recorder. Prices come from OpenRouter's model list, or from `--price-in` / `--price-out` (dollars per million tokens). Claude Code reports its own cost.
+
+The targets (85% task success, 75% first attempt, 95% regression-free, 95% test verification, 85% recovery, 90% edit precision, about 0% false completion) are proposed engineering targets, not industry standards.
+
+Limits:
+
+- **Claims:** whether a reply claims completion is judged from its wording.
+- **Edit precision:** the reference is the diff from the base to the task's `fixCommit`, or to its `verifierCommit` when no `fixCommit` is set. Some of those commits carry other changes of their era, which makes the reference wider than the minimal fix.
+
+Use `--no-regression-check` to skip the two extra test runs.
+
+### Oracle audit of v6 (2026-10-15)
+
+With the historical fix applied by the oracle, only **9 of the 26 tasks can be scored**, and all 9 pass:
+
+- **16 tasks are skipped before any model request.** Each one's verifier imports a module that the historical fix itself created (`streamCompletion`, `nativeTools`, `networkSecurity`, `providerConversation`, `mcpEnvironment`, `terminalProcess`, `urlFetcher`, `browserNetworkPolicy`), so the module does not exist at the task's base. These are: stream-recoverable-classification, stream-finish-normalization, native-fragmented-arguments, native-malformed-arguments, network-block-private, network-dns-private, network-dns-pinning, mcp-environment-secrets, terminal-user-abort, url-html-sanitization, history-openai-tool-linkage, history-anthropic-tool-linkage, history-gemini-tool-linkage, history-compatibility-flattening, browser-private-network-policy and browser-private-network-optin.
+- **`terminal-timeout` cannot load its verifier.** `tests/terminalProcess.test.js` does not exist at its `verifierCommit`.
+
+The scorecard lists the tasks it could not score. A larger, oracle-validated suite would be a new version (v7).
+
+### Reference agents and comparisons
+
+```bash
+# The oracle applies the historical fix itself: every valid task must pass with it, so a failure
+# is a broken task or verifier, not a weak agent. No model, no key.
+npm run eval:coding -- --agent oracle
+
+# Claude Code, headless, on the same tasks (needs the claude CLI and its credentials). It runs
+# with every permission granted (--dangerously-skip-permissions), in a throwaway worktree.
+npm run eval:coding -- --agent claude-code --model claude-sonnet-5-5 --repetitions 3
+
+# Task by task: which side is better on each task, a sign test, and the scorecards side by side
+node scripts/eval/compare.js eval/results/<codico run> eval/results/<claude-code run>
+```
+
+The manual **Coding Holdout** workflow runs any of the three agents (`agent` input) and shows the scorecard on the run's summary page. Claude Code there needs the `ANTHROPIC_API_KEY` secret.
+
 ## ACCO provider-boundary measurements
 
 When Codico runs with the optional ACCO OpenRouter optimizer enabled, the evaluation
