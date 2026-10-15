@@ -10,6 +10,7 @@ import { runTaskOfThisWindow } from './backgroundTaskRunner';
 import { TeamService } from './teamService';
 import { TeamWorkers } from './teamWorkers';
 import { AutomationService } from './automationService';
+import { MarketplaceService } from './marketplaceService';
 import { BackgroundPermissions } from './backgroundTasks';
 import * as vscode from 'vscode';
 import { onboardOnFirstRun, openWalkthrough } from './firstRun';
@@ -170,6 +171,12 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(automations, vscode.commands.registerCommand('codico.automations', () => automations.manage()),
         vscode.commands.registerCommand('codico.addAutomationWorkflow', () => automations.addWorkflow()));
     if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalAutomations', (action: 'configure' | 'tick' | 'get' | 'publish', value?: unknown) => automations.evaluation(action, value))); }
+    // The marketplace: community skills, agents, MCP servers and hooks, installed into this project
+    const marketplace = new MarketplaceService(async mcpChanged => { if (mcpChanged) { await provider.refreshMcp(); } },
+        evaluationMode && process.env.CODICO_TEST_ARCHIVE_URL ? (repo, commit) => `${process.env.CODICO_TEST_ARCHIVE_URL}/${repo}/${commit}.tar.gz` : undefined);
+    context.subscriptions.push(vscode.commands.registerCommand('codico.marketplace', () => marketplace.open()));
+    if (evaluationMode) { context.subscriptions.push(vscode.commands.registerCommand('codico.__evalMarketplace', (action: 'install' | 'uninstall' | 'lock', id?: string) => marketplace.evaluation(action, id))); }
+    if (!evaluationMode && !isHeadless(context)) { setTimeout(() => { void marketplace.checkUpdates(context.workspaceState); }, 15_000); }
     // /background tasks run here too, unless the setting says each gets a window
     backgroundTasks.runHere = { launch: task => teamWorkers.launch(task), has: id => teamWorkers.has(id), show: () => teamWorkers.show() };
     provider.team = new TeamService({

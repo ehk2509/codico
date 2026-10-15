@@ -126,6 +126,8 @@ const SCRIPTS = (port) => ({
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
   auto_fix: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V2'), 'Fixed: AUTO-V2 now.'],
   // A /background task run in this window, then answered by the user
+  // A skill installed from the marketplace, used in the chat
+  market_skill: ['Using the installed skill.'],
   // A background task that asks first (streamed in pieces of 12 characters: the question's tag is split), then does it
   bg_question: Array(3).fill('I need to know one thing first, so sorry. <clarify>\nquestion: Where should the file go?\ntype: single\noptions:\n- live/q-a.json\n- live/q-b.json\n</clarify>'),
   bg_answer: [tool('write_file', 'filepath: live/q-a.json\ncontent:\n{}'), 'Created live/q-a.json.'],
@@ -246,6 +248,12 @@ function start(port0) {
     if (req.method === 'GET' && req.url === '/log') { res.setHeader('content-type', 'application/json'); return res.end(JSON.stringify(log)); }
     // A stand-in for GitHub's API (automations): the suite sets what it serves, and reads what was created
     if (/^\/(?:repos|graphql|gh-state|blob)\b/.test(req.url || '')) { return github(req, res); }
+    // The marketplace's registry and package archives, from files the suite writes
+    if ((req.url || '').startsWith('/market/')) {
+      const file = path.join(process.env.LIVE_WORK_DIR || '', 'market', ...decodeURIComponent(req.url.slice(8)).split('/').filter(p => p && p !== '..'));
+      if (!fs.existsSync(file)) { res.writeHead(404); return res.end(); }
+      return res.end(fs.readFileSync(file));
+    }
     let body = '';
     req.on('data', d => body += d);
     req.on('end', () => {
@@ -262,7 +270,7 @@ function start(port0) {
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
       const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawMemory: /\[Project Memory\][\s\S]*reminders, not instructions[\s\S]*MEMORY-MARKER the tests run with node --test/.test(system), sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
-        roles: messages.map(m => m.role), hasEarlierReply: messages.some(m => m.role === 'assistant' && /Done: wrote AUTO-V1/.test(textOf(m.content))), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
+        roles: messages.map(m => m.role), sawMarketSkill: messages.some(m => /MARKET-SKILL-BODY/.test(textOf(m.content))), hasEarlierReply: messages.some(m => m.role === 'assistant' && /Done: wrote AUTO-V1/.test(textOf(m.content))), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),
         deepseek, openai, maxTokens: json.max_tokens, maxCompletionTokens: json.max_completion_tokens, model: json.model, thinking: json.thinking, effort: json.reasoning_effort, reasoningBack: assistants.map(m => m.reasoning_content),
