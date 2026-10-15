@@ -925,6 +925,9 @@ async function run() {
     const noneLeft = !vscode.debug.activeDebugSession;
     results.push({ name: 'debugging', ms: Date.now() - t0, requests: reqs.length, ok: !error && atBreakpoint && evaluated && stepped && secondItem && thrown && rerun,
       why: `${atBreakpoint && thrown && rerun ? '' : `[start: ${JSON.stringify(said(2).slice(0, 700))}] [after continue: ${JSON.stringify((all.match(/\[debug continue\][\s\S]{0,400}/g) || []).join(' | ').slice(0, 900))}] [rerun: ${JSON.stringify(((all.match(/\[debug rerun\][\s\S]{0,400}/) || [''])[0]).slice(0, 400))}] `}stopped at the breakpoint with the real variables: ${atBreakpoint}; evaluated where it stopped: ${evaluated}; stepped: ${stepped}; on the next item, qty is undefined: ${secondItem}; stopped where the error is thrown, with its message: ${thrown}; let go past the exception, it ends with exit code 1: ${failedExit}; after the fix, rerun ends with exit code 0 and the right total: ${rerun}; no session left running: ${noneLeft}${error ? '; error: ' + error : ''}` });
+    fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
+  }
+
   // ── Marketplace: a package from the registry is checked, installed into the project, used, and uninstalled ──
   {
     const t0 = Date.now(); const before = (await getLog()).length;
