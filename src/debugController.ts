@@ -30,12 +30,25 @@ export class DebugController implements vscode.Disposable {
     private _run: Run | undefined;
     private _stop: Stop | undefined;
     private _output: string[] = [];
+    /** Sessions whose exception settings were sent (once each). */
+    private readonly _exceptionsSet = new Set<string>();
     /** Woken on every stop and end. */
     private _waiters: Array<() => void> = [];
 
     constructor() {
         this._disposables.push(
-            vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: session => ({ onDidSendMessage: message => this._message(session, message) }) }),
+            vscode.debug.registerDebugAdapterTrackerFactory('*', { createDebugAdapterTracker: session => ({
+                onDidSendMessage: message => this._message(session, message),
+                // VS Code sends its own exception settings (by default: none) once the adapter is ready; ours go right after,
+                // before the program is let go (configurationDone), so that they are the ones in force
+                onWillReceiveMessage: (message: { type?: string; command?: string }) => {
+                    const run = this._run;
+                    if (message.type !== 'request' || message.command !== 'setExceptionBreakpoints' || !run || run.exceptions === 'none' || this._exceptionsSet.has(session.id)) { return; }
+                    if (!(this._ours(session) || session.name === run.name)) { return; }
+                    this._exceptionsSet.add(session.id);
+                    void session.customRequest('setExceptionBreakpoints', { filters: run.exceptions === 'all' ? ['all', 'uncaught'] : ['uncaught'] }).then(undefined, () => undefined);
+                },
+            }) }),
             vscode.debug.onDidStartDebugSession(session => {
                 const run = this._run;
                 // The run's first session has its name; the ones it starts (a Node process each) have it as an ancestor
@@ -63,10 +76,6 @@ export class DebugController implements vscode.Disposable {
         const ours = this._ours(session) || session.name === run?.name;
         if (!ours) { return; }
         switch (message.event) {
-            case 'initialized':
-                // Where exceptions stop: sent once the adapter is ready, for each process of the run
-                if (run && run.exceptions !== 'none') { setTimeout(() => { void session.customRequest('setExceptionBreakpoints', { filters: run.exceptions === 'all' ? ['all', 'uncaught'] : ['uncaught'] }).then(undefined, () => undefined); }, 0); }
-                break;
             case 'stopped':
                 this._stop = { session, threadId: Number(message.body?.threadId ?? 1), reason: String(message.body?.reason ?? 'stopped'), description: message.body?.description as string | undefined, text: message.body?.text as string | undefined };
                 this._wake();

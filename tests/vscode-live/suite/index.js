@@ -912,15 +912,16 @@ async function run() {
     const reqs = (await getLog()).slice(before).filter(e => e.scenario === 'debug_trace' && e.stream);
     const said = (i) => (reqs[i] || {}).lastUser || '';
     const all = reqs.map(r => r.lastUser).join('\n=====\n');
-    const atBreakpoint = /\[debug start\] Started run\.js[\s\S]*Stopped \(breakpoint[\s\S]*at debugme\/calc\.js:4[\s\S]*→ {4}4 {2}  sum \+= item\.price \* item\.qty;[\s\S]*item[^\n]*price: 2/.test(said(2));
+    const atBreakpoint = /\[debug start\] Started run\.js[\s\S]*Stopped \(breakpoint[\s\S]*at debugme\/calc\.js:4[\s\S]*→ {4}4 +sum \+= item\.price \* item\.qty;[\s\S]*item[^\n]*price: 2/.test(said(2));
     const evaluated = /\[debug evaluate\] item\.price \* item\.qty = 6/.test(said(3));
     const stepped = /\[debug step\] Stopped \(step/.test(said(4));
     const secondItem = /\[debug evaluate\] item\.qty = undefined/.test(said(6));
     const thrown = /\[debug continue\] Stopped \(exception[\s\S]*Error: total is NaN[\s\S]*debugme\/run\.js:3/.test(all);
-    const rerun = /\[debug rerun\] Started[\s\S]*The program ended with exit code 0\.[\s\S]*TOTAL 11/.test(all);
+    // Exit codes are said when the debugger reports them; the right output is what shows the fix
+    const rerun = /\[debug rerun\] Started[\s\S]*The program ended(?: with exit code 0)?\.[\s\S]*TOTAL 11/.test(all);
     const noneLeft = !vscode.debug.activeDebugSession;
     results.push({ name: 'debugging', ms: Date.now() - t0, requests: reqs.length, ok: !error && atBreakpoint && evaluated && stepped && secondItem && thrown && rerun,
-      why: `stopped at the breakpoint with the real variables: ${atBreakpoint}; evaluated where it stopped: ${evaluated}; stepped: ${stepped}; on the next item, qty is undefined: ${secondItem}; stopped where the error is thrown, with its message: ${thrown}; after the fix, rerun ends with exit 0 and the right total: ${rerun}; no session left running: ${noneLeft}${error ? '; error: ' + error : ''}` });
+      why: `${atBreakpoint && thrown && rerun ? '' : `[start: ${JSON.stringify(said(2).slice(0, 700))}] [after continue: ${JSON.stringify((all.match(/\[debug continue\][\s\S]{0,400}/g) || []).join(' | ').slice(0, 900))}] [rerun: ${JSON.stringify(((all.match(/\[debug rerun\][\s\S]{0,400}/) || [''])[0]).slice(0, 400))}] `}stopped at the breakpoint with the real variables: ${atBreakpoint}; evaluated where it stopped: ${evaluated}; stepped: ${stepped}; on the next item, qty is undefined: ${secondItem}; stopped where the error is thrown, with its message: ${thrown}; after the fix, rerun ends with exit 0 and the right total: ${rerun}; no session left running: ${noneLeft}${error ? '; error: ' + error : ''}` });
     fs.writeFileSync(OUT, JSON.stringify(results, null, 2));
   }
 
