@@ -17,6 +17,8 @@ test('a reply that presents the task as done is a claim; questions and admission
   assert.equal(claimedCompletion("I couldn't reproduce the failure, so nothing was changed."), false);
   assert.equal(claimedCompletion('The parser is updated, but two tests still fail on Windows paths.'), false);
   assert.equal(claimedCompletion(''), false);
+  // Codico's own note that its check did not accept the work: not a claim
+  assert.equal(claimedCompletion('Done: the parser handles fences.\n\n> **Codico\'s check: Not accepted: the reviewer disputes the evidence.** Whatever the reply above says, this is not verified as done.'), false);
   // Cut off at the step limit, on the step it announced: not a claim
   assert.equal(claimedCompletion('All tests pass. Now let me compile and run the focused test:'), false);
   assert.equal(claimedCompletion('Edited the parser. Let me verify the changes compile:'), false);

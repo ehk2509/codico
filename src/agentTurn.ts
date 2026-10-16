@@ -19,6 +19,7 @@ import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { classifyCheck } from './patchPassport';
+import { ProgressTracker, MAX_STEPS_WITHOUT_PROGRESS, StepTool } from './progressTracker';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { TaskUsage } from './taskUsage';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -139,6 +140,8 @@ export class AgentTurn {
 
             // A check run in the last step: its result is read before the budget can end the loop
             let checkResultUnread = false;
+            // A turn that keeps going without changing code or learning anything new from its checks is stopped
+            const progress = new ProgressTracker();
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
@@ -187,6 +190,7 @@ export class AgentTurn {
                 let loopDetected = false;
                 let ranTool = false;
                 let ranCheck = false;
+                const stepTools: StepTool[] = [];
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
@@ -263,6 +267,7 @@ export class AgentTurn {
                     loopGuard.ran(tool);
                     let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
                     this._host.lastInlineResult = undefined;
+                    stepTools.push({ type: tool.type, command: tool.type === 'run_terminal' ? tool.command : undefined, result });
                     const followThrough = exploration.after(tool, result);
                     if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
                     if (followThrough) { result += `\n\n${reminders.say(followThrough)}`; }
@@ -595,6 +600,11 @@ export class AgentTurn {
                 verificationNudges = 0;
                 blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
                 checkResultUnread = ranCheck;
+                progress.step(stepTools);
+                if (progress.stalled()) {
+                    this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⚠️ Stopped: ${MAX_STEPS_WITHOUT_PROGRESS} steps in a row without a code change or a new check result. The work is left as it is; see the change report for what is verified.` });
+                    break;
+                }
                 if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
                     this._host.post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }

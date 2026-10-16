@@ -9,6 +9,9 @@ All notable changes to Codico will be documented in this file.
 - Coding holdout v7: 30 tasks, each proven valid (its hidden test fails with no change and passes with the historical fix; checked with `--agent noop` and `--agent oracle`). An oracle audit showed that v6 could score only 9 of its 26 tasks: 16 verifiers load a module the fix itself created, and one verifier file did not exist at its commit. v7 keeps those 9 and adds 21 tasks mined from fix commits by `scripts/eval/mine.js`. v6 is archived.
 
 ### Changed
+- **Reviewer sees the request:** the independent acceptance reviewer is now given the user's request. It judges whether the criteria and the tests, together, cover the request as asked: every case, argument and value it names, and no different mechanism or narrower case. A "no" disputes the acceptance and goes back to the agent before the reply may end. In the coding holdout, the remaining false completions all passed criteria and tests the agent had written for its own version of the request.
+- **Reply never contradicts the report:** when acceptance criteria were stated and Codico's check does not accept the work, the reply ends with a note giving the verdict and what is not verified, whatever the reply above it claims.
+- **No-progress stop:** after the code has first changed, a turn stops after 20 steps in a row with no code change and no new check result. Re-running checks with the same result, re-reading and re-recording criteria do not count as progress. One holdout run spent 53 steps after its last code change.
 - **Proving the request is met:** before a reply that changed code may end, the agent is asked once to show that the request itself is met. It is asked when it stated no acceptance criteria, or when no check of its own failed before the change and passed after it.
   - Stated criteria must use the request's own words.
   - The test must cover exactly the scenario the user described.

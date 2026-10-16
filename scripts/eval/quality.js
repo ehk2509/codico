@@ -7,7 +7,7 @@
 
 // ── Claims ───────────────────────────────────────────────────────────────────
 
-const ADMITS = /\b(?:could(?:n['’]t| not)|was(?:n['’]t| not) able|were(?:n['’]t| not) able|unable to|cannot (?:fix|complete|resolve|reproduce|finish)|can['’]t (?:fix|complete|resolve|reproduce|finish)|did(?:n['’]t| not) (?:manage|succeed|fix|resolve|finish|complete)|not (?:yet )?(?:fixed|resolved|complete|done|working)|(?:still|remains?) (?:fail|failing|broken|unresolved)|partially (?:fixed|done|implemented)|gave up|ran out of)\b/i;
+const ADMITS = /\b(?:could(?:n['’]t| not)|was(?:n['’]t| not) able|were(?:n['’]t| not) able|unable to|cannot (?:fix|complete|resolve|reproduce|finish)|can['’]t (?:fix|complete|resolve|reproduce|finish)|did(?:n['’]t| not) (?:manage|succeed|fix|resolve|finish|complete)|not (?:yet )?(?:fixed|resolved|complete|done|working)|(?:still|remains?) (?:fail|failing|broken|unresolved)|partially (?:fixed|done|implemented)|gave up|ran out of|not verified as done|not accepted)\b/i;
 
 // Codico's own test for a reply that announces a step without taking it ("Let me run the tests:"),
 // when the extension is compiled; otherwise a simpler test of the reply's last sentence

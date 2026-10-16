@@ -49,6 +49,8 @@ export class VerifyRuntime {
     /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
     private _reviewedState = '';
     private _disputeSent = false;
+    /** The user's request of this turn, for the reviewer. */
+    private _request = '';
 
     constructor(private readonly _host: VerifyHost) {
         _host.external.browser.onError = text => {
@@ -65,7 +67,8 @@ export class VerifyRuntime {
     }
 
     /** A new turn: a new evidence folder (made only if something is saved). */
-    beginTurn(workspaceRoot: string | undefined): void {
+    beginTurn(workspaceRoot: string | undefined, request = ''): void {
+        this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
         this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputeSent = false;
     }
@@ -154,11 +157,12 @@ export class VerifyRuntime {
         if (reminder || !enabled || !reviewer || this._disputeSent) { return reminder; }
         await this._review(reviewer, signal);
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
-        const disputed = report?.criteria.filter(c => c.review?.agrees === false) ?? [];
+        const disputed = (report?.criteria.filter(c => c.review?.agrees === false) ?? []).map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`);
+        if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
         this._disputeSent = true;
-        return `[System Acceptance] An independent reviewer, who saw only the evidence and your tests, does not agree that these are shown on the final code:\n` +
-            disputed.map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`).join('\n') +
+        return `[System Acceptance] An independent reviewer, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n` +
+            disputed.join('\n') +
             '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';
     }
 
@@ -192,7 +196,7 @@ export class VerifyRuntime {
             const built = passport.build();
             const diffStat = (built?.files ?? []).map(file => `${file.path} +${file.added} -${file.removed}`).join('\n');
             let text = '';
-            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
+            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request) }], REVIEW_SYSTEM, [])) {
                 if (signal.aborted) { return; }
                 if (chunk.type === 'content') { text += chunk.text; } else if (chunk.type === 'usage') { reviewer.onUsage?.(chunk); }
             }

@@ -236,3 +236,31 @@ test('a check whose result cannot be told (hidden by a pipe) is no evidence: it 
   p.acceptance.claim('AC2', 'pass', 'compiled', [hidden]);
   assert.deepEqual(p.build().acceptance.criteria.map(c => c.status), ['verified', 'claimed']);
 });
+
+test('the reviewer is given the user\'s request and judges whether the criteria and tests cover it as asked; a "no" disputes the acceptance', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  const p = new PassportRecorder();
+  p.recordChange('src/toolParser.ts', 'a', 'b');
+  p.acceptance.setCriteria(['A 4-backtick write_file keeps inner fences']);
+  const run = p.recordCommand('npm test', 0, '# pass 9\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'tests 8 and 9', [run]);
+  const request = 'Allow write_file content to contain Markdown code fences without truncating or corrupting the outer tool call.';
+  const prompt = reviewPrompt(p.build().acceptance, [], 'src/toolParser.ts +40 -3', [], request);
+  assert.match(prompt, /The user's request, which the change must meet as asked:\nAllow write_file content to contain Markdown code fences/);
+  assert.match(prompt, /REQUEST: yes — <why> \(or no — <what is not covered>\)/);
+  assert.match(prompt, /not a different mechanism \(a new syntax, option or mode\) or a narrower case/);
+  // Without a request the prompt asks nothing about it
+  assert.doesNotMatch(reviewPrompt(p.build().acceptance, [], ''), /REQUEST:/);
+
+  for (const [id, review] of parseReview('AC1: yes — tests 8 and 9 pass\nREQUEST: no — only the four-backtick form is tested; the normal write_file call still truncates')) { p.acceptance.setReview(id, review); }
+  const report = p.build().acceptance;
+  assert.equal(report.verdict, 'disputed', 'every criterion verified, but not the request');
+  assert.match(report.requestReview.reason, /only the four-backtick form/);
+  const note = verdictNote(report);
+  assert.match(note, /^\n\n> \*\*Codico's check: Not accepted: the reviewer disputes the evidence\.\*\* the request as asked, disputed by the reviewer: only the four-backtick form/);
+  assert.match(note, /Whatever the reply above says, this is not verified as done\.$/);
+  assert.match(passportMarkdown(p.build()), /❌ \*\*The request as asked\*\* — reviewer disputes: only the four-backtick form/);
+  // Accepted: no note
+  p.acceptance.setReview('REQUEST', { agrees: true, reason: 'the normal form is tested' });
+  assert.equal(verdictNote(p.build().acceptance), undefined);
+});

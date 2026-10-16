@@ -69,6 +69,8 @@ export interface AcceptanceReport {
     steps: number;
     /** The folder the screenshots and the report were saved in, when any were. */
     evidenceFolder?: string;
+    /** The reviewer's judgement of whether the criteria and the tests cover the user's request as asked. */
+    requestReview?: { agrees: boolean; reason: string };
 }
 
 interface Claim { at: number; result: 'pass' | 'fail'; how: string; evidence: string[] }
@@ -156,10 +158,12 @@ export class AcceptanceRecorder {
         });
         const verified = criteria.filter(c => c.status === 'verified' && c.review?.agrees !== false).length;
         const disputed = criteria.some(c => c.status === 'verified' && c.review?.agrees === false);
+        const requestReview = this._reviews.get('REQUEST');
+        const allVerified: AcceptanceVerdict = requestReview?.agrees === false ? 'disputed' : 'accepted';
         const verdict: AcceptanceVerdict = criteria.some(c => c.status === 'failing') ? 'failing'
-            : verified === criteria.length ? 'accepted' : verified > 0 ? 'partial' : disputed ? 'disputed' : 'unverified';
+            : verified === criteria.length ? allVerified : verified > 0 ? 'partial' : disputed ? 'disputed' : 'unverified';
         const consoleErrors = [...new Set(this._console.filter(entry => entry.at > lastChange).map(entry => entry.text))];
-        return { verdict, criteria, consoleErrors, steps: this._steps.length, evidenceFolder: this.evidenceFolder };
+        return { verdict, criteria, consoleErrors, steps: this._steps.length, evidenceFolder: this.evidenceFolder, ...(requestReview ? { requestReview } : {}) };
     }
 }
 
@@ -183,6 +187,18 @@ export function criterionLine(criterion: CriterionReport): string {
 }
 
 /** The acceptance section of the change report, as Markdown. */
+/**
+ * One line for the end of the reply when the acceptance was not established, so the reply never
+ * presents as done what Codico's own check does not accept. Undefined when it was accepted.
+ */
+export function verdictNote(report: AcceptanceReport | undefined): string | undefined {
+    if (!report || report.verdict === 'accepted') { return undefined; }
+    const open = report.criteria.filter(c => c.status !== 'verified' || c.review?.agrees === false)
+        .map(c => `${c.id} ${c.review?.agrees === false ? 'disputed by the reviewer' : STATUS_TEXT[c.status]}`);
+    if (report.requestReview?.agrees === false) { open.push(`the request as asked, disputed by the reviewer: ${report.requestReview.reason}`); }
+    return `\n\n> **Codico's check: ${ACCEPTANCE_TEXT[report.verdict]}.**${open.length ? ` ${open.join('; ')}.` : ''} Whatever the reply above says, this is not verified as done.`;
+}
+
 export function acceptanceMarkdown(report: AcceptanceReport): string[] {
     const mark: Record<CriterionStatus, string> = { verified: '✅', failing: '❌', stale: '⚠️', claimed: '❔', open: '⬜' };
     const lines = ['', `### Acceptance — ${ACCEPTANCE_TEXT[report.verdict]}`, ...report.criteria.map(c => {
@@ -191,31 +207,34 @@ export function acceptanceMarkdown(report: AcceptanceReport): string[] {
             ...evidence.map(line => `  - ${line}`),
             ...(c.review ? [`  - Reviewer ${c.review.agrees ? 'agrees' : 'disputes'}: ${c.review.reason}`] : [])].join('\n');
     })];
+    if (report.requestReview) { lines.push(`- ${report.requestReview.agrees ? '✅' : '❌'} **The request as asked** — reviewer ${report.requestReview.agrees ? 'agrees' : 'disputes'}: ${report.requestReview.reason}`); }
     if (report.consoleErrors.length) { lines.push('', `Console errors after the last change (${report.consoleErrors.length}):`, ...report.consoleErrors.slice(0, 10).map(text => `- \`${text.replace(/`/g, "'").slice(0, 200)}\``)); }
     if (report.evidenceFolder) { lines.push('', `Evidence (screenshots, replay, report): \`${report.evidenceFolder}\``); }
     return lines;
 }
 
-/** What the reviewer is asked: the criteria, and only what Codico observed. Nothing of the agent's reasoning. */
 /** A test file the agent wrote or changed, as the reviewer reads it. */
 export interface ReviewedTest { path: string; text: string }
 
-export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = []): string {
+/** What the reviewer is asked: the request, the criteria, and only what Codico observed. Nothing of the agent's reasoning. */
+export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = ''): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
     const trail = steps.slice(-25).map(step => `- ${step.action} ${step.target} → ${step.url}${step.text ? `\n  page text: ${step.text.slice(0, 300).replace(/\s+/g, ' ')}` : ''}`).join('\n');
     return `You review the acceptance of a code change, independently of the agent that made it. For each criterion decide whether the evidence below, which the tool observed itself, actually shows that the criterion is met on the final code. A build or a test that does not exercise the criterion does not show it. An assertion that checks something weaker than the criterion does not show it. When the tests are given, read their assertions: one that compares loosely (a substring, a trimmed or partial value) where the criterion needs an exact result, or that tests a different case than the one the criterion names, does not show it.\n\n` +
+        (request.trim() ? `The user's request, which the change must meet as asked:\n${request.trim().slice(0, 4000)}\n\n` : '') +
         `Files changed:\n${diffStat || '(none)'}\n\nCriteria and evidence:\n${evidence}\n\n` +
         (tests.length ? `Tests the agent wrote or changed:\n${tests.map(t => `--- ${t.path}\n${t.text}`).join('\n\n')}\n\n` : '') +
         `Browser steps (most recent last):\n${trail || '(none)'}\n` +
         `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
-        'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>';
+        'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>' +
+        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for, not a different mechanism (a new syntax, option or mode) or a narrower case:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
 }
 
 /** The reviewer's answer, criterion by criterion. */
 export function parseReview(text: string): Map<string, { agrees: boolean; reason: string }> {
     const result = new Map<string, { agrees: boolean; reason: string }>();
-    for (const match of text.matchAll(/^\s*\**\s*(AC\d+)\s*\**\s*[:\-–]\s*(yes|no)\b[\s,.:;—–-]*(.*)$/gim)) {
+    for (const match of text.matchAll(/^\s*\**\s*(AC\d+|REQUEST)\s*\**\s*[:\-–]\s*(yes|no)\b[\s,.:;—–-]*(.*)$/gim)) {
         result.set(match[1].toUpperCase(), { agrees: match[2].toLowerCase() === 'yes', reason: match[3].trim().slice(0, 300) || (match[2].toLowerCase() === 'yes' ? 'the evidence shows it' : 'the evidence does not show it') });
     }
     return result;

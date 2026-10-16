@@ -9,6 +9,7 @@ import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
 import { UserExtensionsLoader } from './userExtensionsLoader';
 import { passportMarkdown, PassportRecorder, PatchPassport } from './patchPassport';
+import { verdictNote } from './acceptance';
 import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
 import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
@@ -954,7 +955,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
-        this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+        this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, rawText);
         const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
@@ -1049,6 +1050,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._verify.endTurn(this._subagentHost, config.get<boolean>('acceptanceReview', true), signal);
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
         if (passport) { const markdown = passportMarkdown(passport); this._post({ type: 'patchPassport', id: msgId, passport, markdown }); this._verify.finish(markdown); }
+        const note = verdictNote(passport?.acceptance); const reply = [...this._history].reverse().find(m => m.role === 'assistant'); if (note) { this._post({ type: 'appendContent', id: msgId, text: note }); if (reply && typeof reply.content === 'string') { reply.content += note; } }
         if (this._teamSteer && this._steer) { this._pendingUserMessages.push({ text: this._steer }); }
         this._steer = ''; this._teamSteer = false;
         this._post({ type: 'endMessage', id: msgId });
