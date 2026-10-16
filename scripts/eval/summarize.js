@@ -7,6 +7,7 @@
  * Folders are searched recursively for run records. A task found more than once counts each
  * run, as repetitions do.
  */
+const cp = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const { summarizeQuality, scorecardMarkdown, claimedCompletion, stoppedMidWork, unrelatedFiles } = require('./quality');
@@ -16,7 +17,11 @@ function rescore(record) {
   if (!record.quality) { return record; }
   const claimed = claimedCompletion(record.finalReply);
   const maxSteps = (record.agent || 'codico') === 'codico' ? record.maxIterations : 0;
-  const unrelated = record.referenceFiles ? unrelatedFiles(record.changedFiles || [], record.referenceFiles) : record.quality.unrelatedFiles;
+  // Older records do not list the files the agent created: a file absent at the base was created
+  const root = path.resolve(__dirname, '../..');
+  const newFiles = record.newFiles || (record.changedFiles || []).filter(file => record.baseCommit &&
+    cp.spawnSync('git', ['cat-file', '-e', `${record.baseCommit}:${file}`], { cwd: root }).status !== 0);
+  const unrelated = record.referenceFiles ? unrelatedFiles(record.changedFiles || [], record.referenceFiles, newFiles) : record.quality.unrelatedFiles;
   return { ...record, quality: { ...record.quality, claimed, falseCompletion: claimed && !record.success, unrelatedFiles: unrelated,
     stoppedAtLimit: stoppedMidWork(record.finalReply) && !!maxSteps && (record.metrics?.steps || 0) >= maxSteps } };
 }

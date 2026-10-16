@@ -289,6 +289,9 @@ async function main() {
         // Capture the agent's edits BEFORE injecting the hidden verifier.
         const status = run('git', ['status', '--porcelain'], { cwd: workspace });
         record.changedFiles = status.stdout.split(/\r?\n/).filter(Boolean).map(line => line.slice(3));
+        // Files that did not exist at the base: created by the agent (listed one by one, not by folder)
+        const untracked = run('git', ['ls-files', '--others', '--exclude-standard'], { cwd: workspace });
+        record.newFiles = untracked.stdout.split(/\r?\n/).filter(Boolean);
         const diffStat = run('git', ['diff', '--stat'], { cwd: workspace });
         record.diffStat = diffStat.stdout.trim();
         // New files too (a test the agent wrote): marked as intended to be added, so the diff shows them
@@ -342,7 +345,7 @@ async function main() {
         record.evidence = passport;
         record.quality = scoreRun({
           success: record.success, finalReply, passport, changedFiles: record.changedFiles,
-          referenceFiles: record.referenceFiles, before: testsBefore, after: testsAfter, expectedChanges: record.expectedTestChanges, costUsd,
+          referenceFiles: record.referenceFiles, newFiles: record.newFiles, before: testsBefore, after: testsAfter, expectedChanges: record.expectedTestChanges, costUsd,
           steps: record.metrics?.steps, maxSteps: agentName === 'codico' ? record.maxIterations : 0,
         });
 

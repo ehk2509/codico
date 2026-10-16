@@ -100,10 +100,15 @@ function rewrittenTests(before, after) {
 /** Tests, documentation, generated files and Codico's own state (.codico/): changing them is not an unrelated change. */
 const ALWAYS_RELATED = /^(?:tests?|__tests__|spec|eval\/results|out|dist|\.codico)\/|(?:\.test|\.spec)\.[cm]?[jt]sx?$|\.md$|^package-lock\.json$/i;
 
-/** The files the agent changed outside those the historical fix changed (tests and docs aside). */
-function unrelatedFiles(changedFiles, referenceFiles) {
+/**
+ * Existing files the agent changed outside those the historical fix changed (tests and docs
+ * aside). A file the agent created is part of its approach (a new module for its fix), not a
+ * change to unrelated code, so it does not count.
+ */
+function unrelatedFiles(changedFiles, referenceFiles, newFiles = []) {
   const reference = new Set(referenceFiles);
-  return changedFiles.filter(file => !reference.has(file) && !ALWAYS_RELATED.test(file));
+  const created = new Set(newFiles);
+  return changedFiles.filter(file => !reference.has(file) && !created.has(file) && !ALWAYS_RELATED.test(file));
 }
 
 // ── Cost ─────────────────────────────────────────────────────────────────────
@@ -140,7 +145,7 @@ function scoreRun(input) {
     evidence: passport ? passport.verdict : changedFiles.length ? 'unverified' : 'none',
     testedAfterLastChange: !!passport && checks.some(check => check.kind === 'test' && check.outcome === 'passed' && !check.stale),
     hadFailure: checks.some(check => check.fixed || check.outcome === 'failed'),
-    unrelatedFiles: referenceFiles ? unrelatedFiles(changedFiles, referenceFiles) : null,
+    unrelatedFiles: referenceFiles ? unrelatedFiles(changedFiles, referenceFiles, input.newFiles || []) : null,
     costUsd: Number.isFinite(costUsd) ? costUsd : null,
   };
 }
@@ -240,7 +245,7 @@ function scorecardMarkdown(summary) {
     '- **Regression-free**: among verified successes, the project\'s own test suite run before and after the agent; a test that passed before and fails after (or a suite that no longer runs) is a regression. Tests the historical fix itself rewrote are expected to change and are not counted.',
     '- **Test verification**: among runs that changed files, a test command passed after the last change (Codico\'s change report; for a reference agent, its commands and their results).',
     '- **Recovery**: among runs where a check failed along the way, those that ended verified by the hidden verifier.',
-    '- **Edit precision**: among verified successes, no source file changed outside those the historical fix changed (tests and docs aside).',
+    '- **Edit precision**: among verified successes, no existing source file changed outside those the historical fix changed (tests, docs and files the agent created aside).',
     '- **False completion**: among runs whose final reply presents the task as done, those the hidden verifier rejects. Reading the reply is a heuristic on wording.',
     '');
   return lines.join('\n');

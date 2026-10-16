@@ -195,7 +195,7 @@ export function verdictNote(report: AcceptanceReport | undefined): string | unde
     if (!report || report.verdict === 'accepted') { return undefined; }
     const open = report.criteria.filter(c => c.status !== 'verified' || c.review?.agrees === false)
         .map(c => `${c.id} ${c.review?.agrees === false ? 'disputed by the reviewer' : STATUS_TEXT[c.status]}`);
-    if (report.requestReview?.agrees === false) { open.push(`the request as asked, disputed by the reviewer: ${report.requestReview.reason}`); }
+    if (report.requestReview?.agrees === false) { open.push(`the request as asked, disputed by the reviewer: ${report.requestReview.reason.replace(/[.\s]+$/, '')}`); }
     return `\n\n> **Codico's check: ${ACCEPTANCE_TEXT[report.verdict]}.**${open.length ? ` ${open.join('; ')}.` : ''} Whatever the reply above says, this is not verified as done.`;
 }
 

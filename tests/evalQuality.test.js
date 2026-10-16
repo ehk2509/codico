@@ -68,6 +68,8 @@ test('edit precision: source files outside the historical fix are unrelated; tes
   assert.deepEqual(unrelatedFiles(['src/stream.ts', 'tests/stream.test.js', 'README.md', 'src/other.ts'], ['src/stream.ts', 'tests/streamCompletion.test.js']), ['src/other.ts']);
   assert.deepEqual(unrelatedFiles(['src/stream.ts'], ['src/stream.ts']), []);
   assert.deepEqual(unrelatedFiles(['src/stream.ts', '.codico/', '.codico/evidence/report.md'], ['src/stream.ts']), [], "Codico's own state is not a change to the project");
+  // A module the agent created for its fix is part of its approach, not a change to unrelated code
+  assert.deepEqual(unrelatedFiles(['src/toolParser.ts', 'src/toolLoopGuard.ts', 'src/other.ts'], ['src/toolParser.ts'], ['src/toolLoopGuard.ts']), ['src/other.ts']);
 });
 
 test('cost from tokens at per-token prices; unknown prices give no cost', () => {
