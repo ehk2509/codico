@@ -166,7 +166,7 @@ export class PassportRecorder {
         this._checks.set(key, record);
         const outcome = this._outcome(command, kind, exitCode, output);
         record.runs.push({ ...outcome, at: ++this._clock });
-        return this.acceptance.addEvidence({ kind: 'check', description: `${kind}: ${key}`, passed: outcome.outcome === 'passed', detail: outcome.detail });
+        return this.acceptance.addEvidence({ kind: 'check', description: `${kind}: ${key}`, passed: outcome.outcome === 'passed', ...(outcome.outcome === 'unknown' ? { unknown: true } : {}), detail: outcome.detail });
     }
 
     private _outcome(command: string, kind: CheckKind, exitCode: number | null, output: string): { outcome: CheckOutcome; detail: string } {

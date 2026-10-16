@@ -17,6 +17,7 @@ All notable changes to Codico will be documented in this file.
   A new system-prompt rule says the same: reproduce first, then fix what was asked. In the coding holdout, most false completions passed checks the agent had written for its own variant of the problem. One example: it added a four-backtick tool form instead of fixing the parser for the normal form.
 
 ### Fixed
+- A check whose result cannot be told, such as an exit code hidden by a pipe with no test summary, was recorded as failed evidence. Criteria citing it were reported as failing even when the tests passed. It now counts as no evidence either way.
 - The independent acceptance reviewer ran only after the agent's final reply, so a criterion it disputed was shown to the user but never reached the agent, which had already presented the work as done. The review now runs before the reply may end. A disputed criterion goes back to the agent once, with the reviewer's reason. At the end of the turn the criteria are reviewed again only if the code or the evidence changed.
 - The reviewer saw only descriptions of the evidence ("7 passed"), not what the tests assert. It now also reads the test files the agent wrote or changed, and is told that a loose assertion (a substring, a trimmed value) or one testing a different case does not show a criterion.
 - Unit tests: a hung test now fails after 2 minutes (`--test-timeout`), naming itself, and every CI job has a time limit. A Windows run had hung in one test for 27 minutes until it was cancelled.

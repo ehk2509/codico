@@ -139,6 +139,26 @@ The run was split into ten workflow runs of 3 tasks each and combined with `node
 
 **22 of the 30 runs were cut off by the 16-step limit.** Each ended on a step it had just announced, most often the compile or test run of its own change, before reading the result. Those runs count as neither claims of completion nor verified work. Of the 8 runs that did present the task as done, 5 were rejected by the hidden verifier.
 
+### After the fixes (2026-10-16): all 30 tasks pass, each on its latest run
+
+This table takes each task's latest run, and the runs come from several rounds. 17 tasks passed in the first run (with the 16-step limit). 13 passed on reruns: some after Codico was fixed, some after a prompt was corrected to state what its verifier checks. It is not one clean run. A fresh run of all 30 under the final suite and the final Codico gives the clean baseline.
+
+| Measure | Result |
+|---|---|
+| Tasks passing | 30/30 |
+| Regression-free | 29/30. The one flagged, a hooks test, passes 3 out of 3 times with Codico's change applied: it is flaky in CI. The harness now confirms a regression with a second run. |
+| Edit precision | 28/30. One run left a stray `tmp/` folder, and one changed two files outside the historical fix. |
+| Test passed after the last change | 21/30 |
+| Recovery after a failing check | 11/11 |
+| Said done when the hidden verifier failed | 0/14 |
+| Cost per verified success | $0.14 (1.5M tokens) |
+
+The changes behind it are in Codico, and none of them is specific to a task:
+- the step limit never ends a turn between running a check and reading its result;
+- before a reply ends, the agent is asked to show the request itself is met: criteria in the request's words, and a failure reproduced on the user's own case;
+- the acceptance review runs before the reply ends and reads the agent's tests;
+- chained, piped and unknown check results are read correctly.
+
 ### Reference agents and comparisons
 
 ```bash

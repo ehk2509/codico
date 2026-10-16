@@ -15,6 +15,8 @@ export interface Evidence {
     /** "text "Saved" visible in .toast", "npm test" */
     description: string;
     passed: boolean;
+    /** Its result cannot be told (an exit code hidden by a pipe, no summary): no evidence either way. */
+    unknown?: boolean;
     /** "12 passed, 0 failed", "found 0 matches", … */
     detail: string;
     /** The page it was checked on (browser assertions). */
@@ -141,13 +143,14 @@ export class AcceptanceRecorder {
             // A failed run that a later run of the same check passed is superseded (as when the old code was
             // restored in the terminal, with git stash, to reproduce the failure).
             const superseded = (e: Evidence) => !e.passed && this._evidence.some(later => later.at > e.at && later.passed && later.kind === e.kind && later.description === e.description);
-            const current = evidence.filter(e => e.at > lastChange && !superseded(e));
+            // A result that cannot be told shows nothing: it neither fails nor verifies a criterion
+            const current = evidence.filter(e => e.at > lastChange && !superseded(e) && !e.unknown);
             let status: CriterionStatus;
             if (!last) { status = 'open'; }
             else if ((last.result === 'fail' && last.at > lastChange) || current.some(e => !e.passed)) { status = 'failing'; }
             else if (last.result === 'fail') { status = 'stale'; }
             else if (evidence.length === 0) { status = 'claimed'; }
-            else if (current.length === 0) { status = 'stale'; }
+            else if (current.length === 0) { status = evidence.some(e => e.at > lastChange && e.unknown) && !evidence.some(e => e.at > lastChange && !e.unknown) ? 'claimed' : 'stale'; }
             else { status = 'verified'; }
             return { id: criterion.id, text: criterion.text, status, reproduced, how: last?.how, evidence, review: this._reviews.get(criterion.id) };
         });

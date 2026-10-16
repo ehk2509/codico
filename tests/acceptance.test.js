@@ -225,3 +225,14 @@ test('the reviewer reads the tests the agent wrote, and is told a loose or diffe
   // Without tests the prompt is as before
   assert.doesNotMatch(reviewPrompt(report, [], ''), /Tests the agent wrote/);
 });
+
+test('a check whose result cannot be told (hidden by a pipe) is no evidence: it neither fails nor verifies a criterion', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/a.ts', 'x', 'y');
+  p.acceptance.setCriteria(['works', 'builds']);
+  const hidden = p.recordCommand('npx tsc -p ./ 2>&1 | head -20', 0, '');
+  const tests = p.recordCommand('npm test', 0, '# pass 8\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'compiled and tested', [hidden, tests]);
+  p.acceptance.claim('AC2', 'pass', 'compiled', [hidden]);
+  assert.deepEqual(p.build().acceptance.criteria.map(c => c.status), ['verified', 'claimed']);
+});

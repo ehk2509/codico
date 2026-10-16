@@ -194,6 +194,7 @@ function summarizeQuality(records) {
     editPrecision: rate(precise.filter(r => r.quality.unrelatedFiles.length === 0).length, precise.length),
     falseCompletion: rate(claimed.filter(r => !r.success).length, claimed.length),
     stoppedAtLimit: rate(valid.filter(r => r.quality.stoppedAtLimit).length, valid.length),
+    flakyTests: [...new Set(valid.flatMap(r => r.flakyTests || []))],
     totalCostUsd: totalCost,
     costPerSuccessUsd: totalCost !== null && passed.length ? totalCost / passed.length : null,
     tokensPerSuccess: passed.length ? valid.reduce((n, r) => n + (r.metrics?.totalTokens || 0), 0) / passed.length : null,
@@ -228,6 +229,9 @@ function scorecardMarkdown(summary) {
   ];
   if (summary.stoppedAtLimit && summary.stoppedAtLimit.numerator) {
     lines.push(`**${summary.stoppedAtLimit.numerator} of ${summary.stoppedAtLimit.denominator} runs were cut off at the step limit**, ending on a step they had announced (often the check of their own change). They do not count as claims of completion.`, '');
+  }
+  if (summary.flakyTests && summary.flakyTests.length) {
+    lines.push(`Flaky (failed once after the agent, passed when run again; not counted as regressions): ${summary.flakyTests.join(', ')}`, '');
   }
   if (summary.repetitions > 1) { lines.push(`Solved in every repetition: **${pct(summary.allRepetitions.value)}** (${summary.allRepetitions.numerator}/${summary.allRepetitions.denominator} tasks)`); }
   lines.push(`Cost per verified success: **${summary.costPerSuccessUsd === null ? 'n/a' : `$${summary.costPerSuccessUsd.toFixed(4)}`}**${summary.totalCostUsd === null ? '' : ` (total $${summary.totalCostUsd.toFixed(4)})`}`);

@@ -303,7 +303,17 @@ async function main() {
         record.patchFile = patchName;
         record.patchTruncated = patch.stdout.length > patchLimit;
         // The project's own tests after the agent, before the hidden verifier joins them
-        const testsAfter = regressionCheck ? projectTests(workspace) : null;
+        let testsAfter = regressionCheck ? projectTests(workspace) : null;
+        // A test that passed before and fails now is run again: only a failure that repeats is a
+        // regression; one that passes the second time is flaky, and recorded as such
+        if (testsAfter && testsBefore) {
+          const suspects = [...testsBefore.entries()].filter(([name, ok]) => ok && testsAfter.get(name) === false).map(([name]) => name);
+          if (suspects.length) {
+            const again = projectTests(workspace);
+            record.flakyTests = suspects.filter(name => again.get(name) === true);
+            testsAfter = new Map([...testsAfter].map(([name, ok]) => [name, ok || again.get(name) === true]));
+          }
+        }
 
         const verifierName = `__codico_eval_${safeName(task.id)}.test.js`;
         const verifierDest = path.join(workspace, 'tests', verifierName);

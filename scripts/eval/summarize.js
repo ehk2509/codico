@@ -9,14 +9,15 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { summarizeQuality, scorecardMarkdown, claimedCompletion, stoppedMidWork } = require('./quality');
+const { summarizeQuality, scorecardMarkdown, claimedCompletion, stoppedMidWork, unrelatedFiles } = require('./quality');
 
-/** The measures read from the reply, again with the current reading (records keep the reply and step count). */
+/** The measures read from the reply and the edit precision, again with the current rules (records keep what they rest on). */
 function rescore(record) {
   if (!record.quality) { return record; }
   const claimed = claimedCompletion(record.finalReply);
   const maxSteps = (record.agent || 'codico') === 'codico' ? record.maxIterations : 0;
-  return { ...record, quality: { ...record.quality, claimed, falseCompletion: claimed && !record.success,
+  const unrelated = record.referenceFiles ? unrelatedFiles(record.changedFiles || [], record.referenceFiles) : record.quality.unrelatedFiles;
+  return { ...record, quality: { ...record.quality, claimed, falseCompletion: claimed && !record.success, unrelatedFiles: unrelated,
     stoppedAtLimit: stoppedMidWork(record.finalReply) && !!maxSteps && (record.metrics?.steps || 0) >= maxSteps } };
 }
 
