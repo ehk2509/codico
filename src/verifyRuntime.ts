@@ -53,6 +53,8 @@ export class VerifyRuntime {
     /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
     private _reviewedState = '';
     private _disputes = 0;
+    /** The code and evidence when the last dispute was given: another is given only after the agent worked on it. */
+    private _disputedState = '';
     /** The user's request of this turn, for the reviewer. */
     private _request = '';
 
@@ -74,7 +76,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0;
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0; this._disputedState = '';
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -159,6 +161,8 @@ export class VerifyRuntime {
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
         const reminder = this.guidance();
         if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        // The agent changed nothing since the last dispute (it answered it, or gave up): no point repeating it
+        if (this._disputes > 0 && this._state() === this._disputedState) { return undefined; }
         // Reviewed again only when the code or the evidence changed since the last review
         if (this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
@@ -166,6 +170,7 @@ export class VerifyRuntime {
         if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
         this._disputes++;
+        this._disputedState = this._state();
         return `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n` +
             disputed.join('\n') +
             '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';

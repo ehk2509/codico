@@ -133,7 +133,8 @@ const SCRIPTS = (port) => ({
     tool('acceptance', 'action: verify\ncriterion: AC1\nresult: fail\nevidence: E1\nhow: clicked Add once before the fix; it showed Count: 01'),
     tool('edit_file', 'filepath: webapp/app.js\nold_str:\nlet count = \'0\';\nnew_str:\nlet count = 0;'),
     tool('browser_navigate', `url: http://127.0.0.1:${process.env.LIVE_APP_PORT}/`) + tool('browser_click', 'selector: #add') + tool('browser_expect', 'selector: #count\ntext: Count: 1'),
-    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: reloaded, clicked Add once; it showed Count: 1'),
+    // The evidence id of the passing assertion, as Codico numbered it (its checks are numbered on the same counter)
+    (messages) => tool('acceptance', `action: verify\ncriterion: AC1\nresult: pass\nevidence: ${lastPassedExpect(messages)}\nhow: reloaded, clicked Add once; it showed Count: 1`),
     'Fixed: the count was a string. AC1 is verified in the browser.'],
   // An automation's job: an issue, then CI feedback on its pull request (the same agent, resumed from its saved conversation)
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
@@ -228,6 +229,8 @@ const SCRIPTS = (port) => ({
   native_unknown: [{ toolCalls: [{ name: 'ask_user', args: { q: 'which?' } }] }, 'Understood.'],
 });
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.text || '').join('') : '';
+/** The evidence id Codico gave the latest passing browser assertion in the conversation. */
+const lastPassedExpect = messages => [...messages.map(m => textOf(m.content)).join('\n').matchAll(/\[browser_expect: [^\]]*\] PASSED[^\n]*Recorded as evidence (E\d+)/g)].map(m => m[1]).pop() || 'E2';
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     // Phase notes quote the task (and so its scenario tag) but are not the request
@@ -336,7 +339,7 @@ function start(port0) {
       }
       let entry;
       // The independent acceptance reviewer: no scenario, its own system prompt
-      if (/independent acceptance reviewer/.test(system)) { entry = /E2 PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
+      if (/independent acceptance reviewer/.test(system)) { entry = /E\d+ PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
       if (entry) { /* the reviewer's answer */ }
       else if (needsVerify && !(scenario || '').startsWith('stuck_')) { entry = VERIFY; }
