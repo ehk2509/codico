@@ -2,6 +2,7 @@ import { criterionLine, parseReview, reviewPrompt } from './acceptance';
 import { AppRunner } from './appRunner';
 import { commandSandbox } from './commandSandboxService';
 import { ExtensionMessage, WebviewMessage } from './chatProtocol';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { EVIDENCE_DIR, EvidenceStore } from './evidenceStore';
@@ -45,6 +46,9 @@ export class VerifyRuntime {
     private _onPage: string[] = [];
     private _reminders = 0;
     private _requestReminded = false;
+    /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
+    private _reviewedState = '';
+    private _disputeSent = false;
 
     constructor(private readonly _host: VerifyHost) {
         _host.external.browser.onError = text => {
@@ -63,7 +67,7 @@ export class VerifyRuntime {
     /** A new turn: a new evidence folder (made only if something is saved). */
     beginTurn(workspaceRoot: string | undefined): void {
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false;
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputeSent = false;
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -141,22 +145,54 @@ export class VerifyRuntime {
     }
 
     /**
-     * The end of the turn: the apps it started are stopped, and an independent reviewer judges
-     * the criteria on the evidence alone (one request without tools, and none of the agent's reasoning).
+     * Before the reply may end: the reminders above, and then the independent review. A criterion
+     * the reviewer does not agree is shown goes back to the agent, once, with the reviewer's reason,
+     * so the reply does not present as done what the review disputes.
+     */
+    async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
+        const reminder = this.guidance();
+        if (reminder || !enabled || !reviewer || this._disputeSent) { return reminder; }
+        await this._review(reviewer, signal);
+        const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
+        const disputed = report?.criteria.filter(c => c.review?.agrees === false) ?? [];
+        if (disputed.length === 0) { return undefined; }
+        this._disputeSent = true;
+        return `[System Acceptance] An independent reviewer, who saw only the evidence and your tests, does not agree that these are shown on the final code:\n` +
+            disputed.map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`).join('\n') +
+            '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';
+    }
+
+    /**
+     * The end of the turn: the apps it started are stopped, and the criteria are reviewed again
+     * when the code or the evidence changed since the last review.
      */
     async endTurn(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<void> {
         this._apps.stop();
         const passport = this._host.passport();
         // The report names where its screenshots are
         passport.acceptance.evidenceFolder = this._store?.folder;
+        if (enabled && reviewer && this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
+    }
+
+    /** The code and the evidence the criteria rest on: a review is current while they have not changed. */
+    private _state(): string {
+        const passport = this._host.passport();
         const report = passport.acceptance.build(passport.lastChange);
-        if (!enabled || !reviewer || signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
+        return `${passport.lastChange}:${passport.acceptance.evidence.length}:${report?.criteria.map(c => `${c.id}=${c.status}`).join(',') ?? ''}`;
+    }
+
+    /** The independent reviewer judges the criteria on the evidence and the agent's tests alone (one request without tools, and none of the agent's reasoning). */
+    private async _review(reviewer: SubagentHost, signal: AbortSignal): Promise<void> {
+        const passport = this._host.passport();
+        const report = passport.acceptance.build(passport.lastChange);
+        if (signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
+        this._reviewedState = this._state();
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
         try {
             const built = passport.build();
             const diffStat = (built?.files ?? []).map(file => `${file.path} +${file.added} -${file.removed}`).join('\n');
             let text = '';
-            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat) }], REVIEW_SYSTEM, [])) {
+            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
                 if (signal.aborted) { return; }
                 if (chunk.type === 'content') { text += chunk.text; } else if (chunk.type === 'usage') { reviewer.onUsage?.(chunk); }
             }
@@ -164,6 +200,18 @@ export class VerifyRuntime {
         } catch { /* the report stands without the review: it says none was given */ } finally {
             this._host.post({ type: 'activity', text: null });
         }
+    }
+
+    /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each cut). */
+    private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
+        const root = toolFolders()?.[0]?.uri.fsPath;
+        if (!root) { return []; }
+        return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
+            try {
+                const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
+                return [{ path: p, text: text.length > 8000 ? `${text.slice(0, 8000)}\n… (cut)` : text }];
+            } catch { return []; }
+        });
     }
 
     /** Saves the report next to the screenshots, with the replay, when the turn saved any. */

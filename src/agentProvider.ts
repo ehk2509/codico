@@ -205,7 +205,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             get evaluationMode() { return provider._evaluationMode; },
             get evaluationTokenBudget() { return provider._evaluationTokenBudget; },
             get readOnly() { return provider._readOnly; },
-            get team() { return provider._teamMode; }, acceptanceGuidance: () => provider._verify.guidance(),
+            get team() { return provider._teamMode; }, acceptanceGuidance: signal => provider._verify.guidanceBeforeEnd(provider._subagentHost, vscode.workspace.getConfiguration('codico').get<boolean>('acceptanceReview', true), signal),
             get thinkingEffort() { return provider._thinkingEffort; },
             post: message => provider._post(message), dispatchTool: (tool, msgId, signal) => provider._dispatchTool(tool, msgId, signal),
         };

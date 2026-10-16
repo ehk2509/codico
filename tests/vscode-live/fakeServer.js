@@ -28,6 +28,10 @@ const SCRIPTS = (port) => ({
   // The step budget is reached by the step that runs the tests: the next step still runs, to read them
   // Code changed and checked, but neither criteria nor a reproduced failure: asked once to show the request is met
   request_check: [tool('write_file', 'filepath: live/req.js\ncontent:\nmodule.exports = 2;'), tool('run_terminal', 'command: node --test live/check-read.test.js'), 'Done.', 'Done.'],
+  // A criterion backed by a test that does not exercise it: the reviewer disputes it before the reply ends, and the agent is told
+  review_dispute: [tool('acceptance', 'action: criteria\ncriteria:\n- live/rv.js exports 2'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('write_file', 'filepath: live/rv.js\ncontent:\nmodule.exports = 2;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown: the test does not load live/rv.js. It is not met yet.'],
   check_read: [tool('run_terminal', 'command: node --test live/check-read.test.js'), 'The tests pass: CHECK-READ-DONE.'],
   timeout: [tool('run_terminal', 'command: sleep 30'), 'It timed out.'],
   bigoutput: [tool('run_terminal', 'command: seq 1 200000'), 'Lots of output.'],

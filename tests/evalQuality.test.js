@@ -65,6 +65,7 @@ test('regressions: tests that passed before and fail after, innermost only; a su
 test('edit precision: source files outside the historical fix are unrelated; tests and docs never are', () => {
   assert.deepEqual(unrelatedFiles(['src/stream.ts', 'tests/stream.test.js', 'README.md', 'src/other.ts'], ['src/stream.ts', 'tests/streamCompletion.test.js']), ['src/other.ts']);
   assert.deepEqual(unrelatedFiles(['src/stream.ts'], ['src/stream.ts']), []);
+  assert.deepEqual(unrelatedFiles(['src/stream.ts', '.codico/', '.codico/evidence/report.md'], ['src/stream.ts']), [], "Codico's own state is not a change to the project");
 });
 
 test('cost from tokens at per-token prices; unknown prices give no cost', () => {

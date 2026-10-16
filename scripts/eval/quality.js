@@ -97,8 +97,8 @@ function rewrittenTests(before, after) {
 
 // ── Edits ────────────────────────────────────────────────────────────────────
 
-/** Tests, documentation and generated files: changing them is not an unrelated change. */
-const ALWAYS_RELATED = /^(?:tests?|__tests__|spec|eval\/results|out|dist)\/|(?:\.test|\.spec)\.[cm]?[jt]sx?$|\.md$|^package-lock\.json$/i;
+/** Tests, documentation, generated files and Codico's own state (.codico/): changing them is not an unrelated change. */
+const ALWAYS_RELATED = /^(?:tests?|__tests__|spec|eval\/results|out|dist|\.codico)\/|(?:\.test|\.spec)\.[cm]?[jt]sx?$|\.md$|^package-lock\.json$/i;
 
 /** The files the agent changed outside those the historical fix changed (tests and docs aside). */
 function unrelatedFiles(changedFiles, referenceFiles) {

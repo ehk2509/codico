@@ -53,6 +53,11 @@ async function run() {
     return { ok: read, why: `${reqs.length} requests (1 = stopped before the result was read); the test result reached the model: ${read}` };
   });
   await set('maxIterations', 12);
+  await scenario('review_dispute', ({ reqs, error }) => {
+    const told = reqs.filter(r => /\[System Acceptance\] An independent reviewer, who saw only the evidence and your tests, does not agree that these are shown/.test(r.lastUser)).length;
+    const reason = reqs.some(r => /AC1 live\/rv\.js exports 2 — /.test(r.lastUser));
+    return { ok: !error && told === 1 && reason, why: `the reviewer's objection reached the agent before the reply ended: ${told} time(s) (once expected), with its reason: ${reason}; ${reqs.length} requests` };
+  });
   await scenario('request_check', ({ reqs, error }) => {
     const asked = reqs.filter(r => /\[System Acceptance\] Before you finish, show that the request itself is met/.test(r.lastUser)).length;
     const ended = !error && reqs.length <= 8;

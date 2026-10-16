@@ -54,7 +54,7 @@ export interface TurnHost {
     /** This turn leads an agent team: the `team` tool is offered. */
     readonly team: boolean;
     /** Before a reply may end: what is left of the acceptance criteria, as a reminder (undefined: nothing). */
-    acceptanceGuidance?(): string | undefined;
+    acceptanceGuidance?(signal: AbortSignal): Promise<string | undefined> | string | undefined;
     /** Only these tools are offered (a team worker's); all of them when absent. */
     readonly allowedTools?: ReadonlySet<string>;
     steer: string;
@@ -569,7 +569,7 @@ export class AgentTurn {
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
-                    const acceptanceGuidance = this._host.acceptanceGuidance?.();
+                    const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
                         this._host.history.push({ role: 'user', content: acceptanceGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;

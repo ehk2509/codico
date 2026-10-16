@@ -291,6 +291,8 @@ async function main() {
         record.changedFiles = status.stdout.split(/\r?\n/).filter(Boolean).map(line => line.slice(3));
         const diffStat = run('git', ['diff', '--stat'], { cwd: workspace });
         record.diffStat = diffStat.stdout.trim();
+        // New files too (a test the agent wrote): marked as intended to be added, so the diff shows them
+        run('git', ['add', '--all', '--intent-to-add'], { cwd: workspace });
         const patch = run('git', ['diff', '--no-ext-diff'], { cwd: workspace });
         const patchLimit = 200_000;
         const patchText = patch.stdout.length > patchLimit

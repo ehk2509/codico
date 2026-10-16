@@ -211,3 +211,17 @@ test('a failed run that a later run of the same check passed does not fail the c
   p2.acceptance.claim('AC1', 'pass', 'ran it', [failed]);
   assert.equal(p2.build().acceptance.criteria[0].status, 'failing');
 });
+
+test('the reviewer reads the tests the agent wrote, and is told a loose or different-case assertion does not show a criterion', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/toolParser.ts', 'a', 'b');
+  p.acceptance.setCriteria(['write_file keeps the exact content, inner code fences included']);
+  const run = p.recordCommand('node --test tests/fences.test.js', 0, '# pass 7\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'test of a README with a bash block', [run]);
+  const report = p.build().acceptance;
+  const prompt = reviewPrompt(report, [], 'src/toolParser.ts +10 -2', [{ path: 'tests/fences.test.js', text: "assert.match(tools[0].content, /cd server/);" }]);
+  assert.match(prompt, /Tests the agent wrote or changed:\n--- tests\/fences\.test\.js\nassert\.match\(tools\[0\]\.content, \/cd server\/\);/);
+  assert.match(prompt, /compares loosely \(a substring, a trimmed or partial value\) where the criterion needs an exact result/);
+  // Without tests the prompt is as before
+  assert.doesNotMatch(reviewPrompt(report, [], ''), /Tests the agent wrote/);
+});

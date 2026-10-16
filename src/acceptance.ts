@@ -194,12 +194,17 @@ export function acceptanceMarkdown(report: AcceptanceReport): string[] {
 }
 
 /** What the reviewer is asked: the criteria, and only what Codico observed. Nothing of the agent's reasoning. */
-export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string): string {
+/** A test file the agent wrote or changed, as the reviewer reads it. */
+export interface ReviewedTest { path: string; text: string }
+
+export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = []): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
     const trail = steps.slice(-25).map(step => `- ${step.action} ${step.target} → ${step.url}${step.text ? `\n  page text: ${step.text.slice(0, 300).replace(/\s+/g, ' ')}` : ''}`).join('\n');
-    return `You review the acceptance of a code change, independently of the agent that made it. For each criterion decide whether the evidence below, which the tool observed itself, actually shows that the criterion is met on the final code. A build or a test that does not exercise the criterion does not show it. An assertion that checks something weaker than the criterion does not show it.\n\n` +
-        `Files changed:\n${diffStat || '(none)'}\n\nCriteria and evidence:\n${evidence}\n\nBrowser steps (most recent last):\n${trail || '(none)'}\n` +
+    return `You review the acceptance of a code change, independently of the agent that made it. For each criterion decide whether the evidence below, which the tool observed itself, actually shows that the criterion is met on the final code. A build or a test that does not exercise the criterion does not show it. An assertion that checks something weaker than the criterion does not show it. When the tests are given, read their assertions: one that compares loosely (a substring, a trimmed or partial value) where the criterion needs an exact result, or that tests a different case than the one the criterion names, does not show it.\n\n` +
+        `Files changed:\n${diffStat || '(none)'}\n\nCriteria and evidence:\n${evidence}\n\n` +
+        (tests.length ? `Tests the agent wrote or changed:\n${tests.map(t => `--- ${t.path}\n${t.text}`).join('\n\n')}\n\n` : '') +
+        `Browser steps (most recent last):\n${trail || '(none)'}\n` +
         `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
         'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>';
 }
