@@ -918,7 +918,7 @@ async function run() {
     const acc = passport.acceptance || { criteria: [] };
     const ac1 = acc.criteria[0] || { evidence: [] };
     const reproduced = /\[browser_expect: #count shows "Count: 1"\] FAILED: the element shows "Count: 01".*Recorded as evidence E1/.test(said) && ac1.reproduced === true;
-    const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].id === 'E2' && ac1.evidence[0].passed === true;
+    const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].kind === 'expect' && ac1.evidence[0].passed === true; // the passing browser assertion, whatever its number
     const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => e.reviewer);
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
