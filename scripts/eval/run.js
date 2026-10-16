@@ -4,6 +4,8 @@ const os = require('node:os');
 const path = require('node:path');
 const { missingVerifierOutModules } = require('./verifierPreflight');
 const { evaluateHoldoutResult } = require('./resultPolicy');
+const { parseTap, scoreRun, summarizeQuality, scorecardMarkdown, tokenCost, rewrittenTests } = require('./quality');
+const { runClaudeCode, referenceFiles, expectedTestChanges, applyOracle } = require('./agents');
 
 const root = path.resolve(__dirname, '../..');
 
@@ -78,13 +80,41 @@ function cleanupEvaluationProcesses(instanceDir) {
   run('pkill', ['-KILL', '-f', instanceDir]);
 }
 
+/** The project's own test suite in the task workspace, as TAP: each test and whether it passed. */
+function projectTests(workspace) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT; // else node --test reports to a parent runner instead of as TAP
+  const tests = run(npmCommand(), ['test', '--', '--test-reporter=tap'], { cwd: workspace, env, timeout: 10 * 60_000 });
+  return parseTap(tests.stdout);
+}
+
+/** The model's price per token on OpenRouter, or the prices given (dollars per million tokens). */
+async function modelPricing(model) {
+  const given = [Number(arg('--price-in')), Number(arg('--price-out'))];
+  if (given.every(Number.isFinite)) { return { prompt: given[0] / 1e6, completion: given[1] / 1e6 }; }
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(15_000) });
+    const entry = ((await response.json()).data || []).find(m => m.id === model);
+    const pricing = entry && entry.pricing;
+    return pricing ? { prompt: Number(pricing.prompt), completion: Number(pricing.completion), cacheRead: Number(pricing.input_cache_read || pricing.prompt) } : null;
+  } catch {
+    return null;
+  }
+}
+
+// oracle and noop check the tasks themselves: every task must pass with the historical fix, and fail without any change
+const AGENTS = ['codico', 'claude-code', 'oracle', 'noop'];
+
 async function main() {
+  const agentName = arg('--agent', 'codico');
+  if (!AGENTS.includes(agentName)) { throw new Error(`--agent must be one of: ${AGENTS.join(', ')}`); }
   const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
+  if (agentName === 'codico' && !apiKey) {
     throw new Error('OPENROUTER_API_KEY is required. The benchmark never writes this key to results.');
   }
 
-  const model = arg('--model', 'deepseek/deepseek-v4-flash');
+  const model = arg('--model', agentName === 'codico' ? 'deepseek/deepseek-v4-flash' : agentName === 'oracle' ? 'reference-fix' : agentName === 'noop' ? 'no-change' : '');
+  const regressionCheck = !has('--no-regression-check');
   const filterRaw = arg('--filter', '.*');
   const repetitions = Math.max(1, Number(arg('--repetitions', '1')));
   const limit = Math.max(0, Number(arg('--limit', '0')));
@@ -107,16 +137,24 @@ async function main() {
   // Build the current Codico extension before VS Code loads it from
   // extensionDevelopmentPath. Historical task worktrees are compiled separately
   // by their verifier via npm test after the agent finishes.
-  const compile = run(npmCommand(), ['run', 'compile'], { inherit: true, timeout: 5 * 60_000 });
-  if (compile.status !== 0) { throw new Error('Failed to compile the Codico evaluation extension.'); }
+  // --skip-compile: already compiled (several runs started in parallel from one checkout)
+  if (!has('--skip-compile')) {
+    const compile = run(npmCommand(), ['run', 'compile'], { inherit: true, timeout: 5 * 60_000 });
+    if (compile.status !== 0) { throw new Error('Failed to compile the Codico evaluation extension.'); }
+  }
 
   // The benchmark driver uses the same VS Code test harness as CI, but it is
   // intentionally not a permanent production dependency.
-  const harness = run(npmCommand(), ['install', '--no-save', '@vscode/test-electron@2.5.2'], { inherit: true });
-  if (harness.status !== 0) { throw new Error('Failed to install @vscode/test-electron benchmark harness.'); }
+  if (agentName === 'codico') {
+    const harness = run(npmCommand(), ['install', '--no-save', '@vscode/test-electron@2.5.2'], { inherit: true });
+    if (harness.status !== 0) { throw new Error('Failed to install @vscode/test-electron benchmark harness.'); }
+  }
+  // Claude Code's evidence is read with the same recorder as Codico's change report
+  const { PassportRecorder } = require(path.join(root, 'out', 'patchPassport.js'));
+  const pricing = agentName === 'codico' ? await modelPricing(model) : null;
 
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const resultDir = path.join(root, 'eval', 'results', `${stamp}-${safeName(model)}`);
+  const resultDir = path.join(root, 'eval', 'results', `${stamp}-${safeName(agentName === 'codico' ? model : `${agentName}-${model || 'default'}`)}`);
   fs.mkdirSync(resultDir, { recursive: true });
 
   const results = [];
@@ -143,7 +181,7 @@ async function main() {
         verifierOk: false,
         metrics: null,
         maxTotalTokens,
-        maxIterations: task.maxIterations || 16,
+        maxIterations: task.maxIterations ?? 16,
         changedFiles: [],
         diffStat: '',
         verifier: {},
@@ -178,6 +216,17 @@ async function main() {
         }
 
         record.setupOk = true;
+        record.agent = agentName;
+        const fixCommit = task.fixCommit || task.verifierCommit;
+        record.referenceFiles = fixCommit ? referenceFiles(root, task.baseCommit, fixCommit) : null;
+        record.expectedTestChanges = fixCommit ? expectedTestChanges(root, task.baseCommit, fixCommit, rewrittenTests) : [];
+        // The project's own tests before the agent: what it must not break
+        const testsBefore = regressionCheck ? projectTests(workspace) : null;
+        let finalReply = '';
+        let passport = null;
+        let costUsd = null;
+
+        if (agentName === 'codico') {
         instanceDir = path.join(worktreeParent, 'vscode-instance');
         fs.mkdirSync(instanceDir, { recursive: true });
 
@@ -187,8 +236,9 @@ async function main() {
           CODICO_EVAL_API_KEY: apiKey,
           CODICO_EVAL_MODEL: model,
           CODICO_EVAL_PROMPT: task.prompt,
-          CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations || 16),
+          CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations ?? 16),
           CODICO_EVAL_MAX_TOTAL_TOKENS: String(maxTotalTokens),
+          CODICO_EVAL_ESCALATION_MODEL: arg('--escalation-model', ''),
           CODICO_EVAL_OUTPUT: rawAgentOutput,
           CODICO_EVAL_INSTANCE_DIR: instanceDir,
         };
@@ -205,6 +255,8 @@ async function main() {
           const agentJson = JSON.parse(fs.readFileSync(rawAgentOutput, 'utf8'));
           record.metrics = agentJson.metrics || null;
           record.agentCheckpointPartial = Boolean(agentJson.partial);
+          finalReply = agentJson.finalReply || '';
+          passport = agentJson.passport || null;
           if (!agentJson.ok && !agentJson.partial) {
             record.agentError = agentJson.error || 'evaluation host reported failure';
           }
@@ -216,12 +268,39 @@ async function main() {
             ? `evaluation host timed out after ${timeoutMinutes} minutes; partial metrics recovered`
             : `evaluation host timed out after ${timeoutMinutes} minutes without a checkpoint`;
         }
+        costUsd = tokenCost(record.metrics, pricing);
+        } else if (agentName === 'claude-code') {
+          // --claude-command: a Claude Code binary not on PATH (the one bundled with the VS Code extension)
+          const result = runClaudeCode(workspace, task.prompt, { model, timeoutMs: timeoutMinutes > 0 ? timeoutMinutes * 60_000 : 0, PassportRecorder, command: arg('--claude-command', 'claude') });
+          record.agentOk = result.ok;
+          record.agentTimedOut = result.timedOut;
+          record.metrics = result.metrics;
+          ({ finalReply, passport, costUsd } = result);
+          if (!result.ok) { record.agentError = tail(result.stderr, 4000) || 'Claude Code reported an error'; }
+        } else if (agentName === 'noop') {
+          record.agentOk = true;
+          record.metrics = { steps: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          finalReply = '';
+          costUsd = 0;
+        } else {
+          const result = applyOracle(root, workspace, task.baseCommit, fixCommit);
+          record.agentOk = result.ok;
+          record.metrics = { steps: 0, toolCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+          finalReply = result.finalReply;
+          costUsd = 0;
+          if (!result.ok) { record.agentError = result.finalReply; }
+        }
 
         // Capture the agent's edits BEFORE injecting the hidden verifier.
         const status = run('git', ['status', '--porcelain'], { cwd: workspace });
         record.changedFiles = status.stdout.split(/\r?\n/).filter(Boolean).map(line => line.slice(3));
+        // Files that did not exist at the base: created by the agent (listed one by one, not by folder)
+        const untracked = run('git', ['ls-files', '--others', '--exclude-standard'], { cwd: workspace });
+        record.newFiles = untracked.stdout.split(/\r?\n/).filter(Boolean);
         const diffStat = run('git', ['diff', '--stat'], { cwd: workspace });
         record.diffStat = diffStat.stdout.trim();
+        // New files too (a test the agent wrote): marked as intended to be added, so the diff shows them
+        run('git', ['add', '--all', '--intent-to-add'], { cwd: workspace });
         const patch = run('git', ['diff', '--no-ext-diff'], { cwd: workspace });
         const patchLimit = 200_000;
         const patchText = patch.stdout.length > patchLimit
@@ -231,6 +310,18 @@ async function main() {
         fs.writeFileSync(path.join(resultDir, patchName), patchText);
         record.patchFile = patchName;
         record.patchTruncated = patch.stdout.length > patchLimit;
+        // The project's own tests after the agent, before the hidden verifier joins them
+        let testsAfter = regressionCheck ? projectTests(workspace) : null;
+        // A test that passed before and fails now is run again: only a failure that repeats is a
+        // regression; one that passes the second time is flaky, and recorded as such
+        if (testsAfter && testsBefore) {
+          const suspects = [...testsBefore.entries()].filter(([name, ok]) => ok && testsAfter.get(name) === false).map(([name]) => name);
+          if (suspects.length) {
+            const again = projectTests(workspace);
+            record.flakyTests = suspects.filter(name => again.get(name) === true);
+            testsAfter = new Map([...testsAfter].map(([name, ok]) => [name, ok || again.get(name) === true]));
+          }
+        }
 
         const verifierName = `__codico_eval_${safeName(task.id)}.test.js`;
         const verifierDest = path.join(workspace, 'tests', verifierName);
@@ -255,6 +346,13 @@ async function main() {
         const resultPolicy = evaluateHoldoutResult(record);
         record.withinTokenBudget = resultPolicy.withinTokenBudget;
         record.success = resultPolicy.success;
+        record.finalReply = tail(finalReply, 4000);
+        record.evidence = passport;
+        record.quality = scoreRun({
+          success: record.success, finalReply, passport, changedFiles: record.changedFiles,
+          referenceFiles: record.referenceFiles, newFiles: record.newFiles, before: testsBefore, after: testsAfter, expectedChanges: record.expectedTestChanges, costUsd,
+          steps: record.metrics?.steps, maxSteps: agentName === 'codico' ? record.maxIterations : 0,
+        });
 
         try { fs.unlinkSync(verifierDest); } catch {}
       } catch (error) {
@@ -281,6 +379,7 @@ async function main() {
   const summary = {
     suiteVersion: suite.suiteVersion,
     frozen: suite.frozen,
+    agent: agentName,
     model,
     taskCount: results.length,
     validTaskCount: valid.length,
@@ -298,6 +397,7 @@ async function main() {
     accoCharsSaved: valid.reduce((n, r) => n + (r.metrics?.acco?.charsSaved || 0), 0),
     maxTotalTokens,
     timeoutMinutes,
+    quality: summarizeQuality(results),
     generatedAt: new Date().toISOString(),
   };
 
@@ -308,7 +408,7 @@ async function main() {
   const markdown = [
     `# Codico coding holdout — ${suite.suiteVersion}`,
     '',
-    `Model: **${model}**`,
+    `Agent: **${agentName}**${model ? ` · model: **${model}**` : ''}`,
     `Success: **${passed.length}/${valid.length} valid tasks (${(summary.successRate * 100).toFixed(1)}%)**`,
     `Invalid verifier tasks skipped before model invocation: **${invalid.length}**`,
     `Token ceiling: **${maxTotalTokens > 0 ? maxTotalTokens.toLocaleString() : 'none'}**`,
@@ -322,6 +422,7 @@ async function main() {
     '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|',
     ...rows,
     '',
+    scorecardMarkdown(summary.quality),
   ].join('\n');
   fs.writeFileSync(path.join(resultDir, 'summary.md'), markdown);
   console.log('\n' + markdown);

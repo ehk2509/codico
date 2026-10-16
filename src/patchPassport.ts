@@ -58,8 +58,10 @@ export function checkKey(command: string): string {
     return command
         .replace(/^\s*(?:cd\s+\S+\s*(?:&&|;)\s*)+/, '')
         .replace(/\s*\d?>&\d|\s*2>\s*\/dev\/null/g, '')
-        .replace(/\s*\|\s*(?:tail|head|grep|cat|tee|less|sed|awk|cut|sort|uniq|wc)\b(?:'[^']*'|"[^"]*"|[^|'"])*/g, '')
+        // An output filter ends where the next command starts (&&, ;): `npm run compile | tail -5 && node --test` is a test run
+        .replace(/\s*\|\s*(?:tail|head|grep|cat|tee|less|sed|awk|cut|sort|uniq|wc)\b(?:'[^']*'|"[^"]*"|(?!&&)[^|'";])*/g, '')
         .replace(/(^|&&\s*|;\s*)(?:env\s+)?(?:[A-Z_][A-Z0-9_]*=\S+\s+)+/g, '$1')
+        .replace(/\s*&&\s*/g, ' && ')
         .replace(/\b(?:timeout|time|nice)\s+(?:-\S+\s+)*\d*[smh]?\s+/g, '')
         .replace(/\s+/g, ' ')
         .trim();
@@ -75,7 +77,7 @@ export function classifyCheck(command: string): CheckKind | null {
 }
 
 /** A pipe hides the exit code of the command before it (unless the shell is told otherwise). */
-function exitCodeHidden(command: string): boolean {
+export function exitCodeHidden(command: string): boolean {
     const unquoted = command.replace(/'[^']*'|"[^"]*"/g, '');
     return /(?<!\|)\|(?!\|)/.test(unquoted) && !/pipefail/.test(command);
 }
@@ -96,6 +98,11 @@ export function testSummary(output: string): { passed: number; failed: number } 
         ?? pair(last(/^\s*(\d+) passing\b/gm), last(/^\s*(\d+) failing\b/gm))                         // mocha
         ?? pair(last(/test result: \w+\. (\d+) passed/g), last(/test result: \w+\. \d+ passed; (\d+) failed/g)) // cargo
         ?? pair(last(/^\s*(\d+) passed\b/gm), last(/^\s*(\d+) failed\b/gm));                          // playwright and others
+}
+
+/** Whether a check's result cannot be told: its exit code is hidden by a pipe and it printed no test summary. */
+export function checkResultHidden(command: string, output: string): boolean {
+    return exitCodeHidden(command) && !(classifyCheck(command) === 'test' && testSummary(output));
 }
 
 // ── Lines changed ────────────────────────────────────────────────────────────
@@ -164,7 +171,7 @@ export class PassportRecorder {
         this._checks.set(key, record);
         const outcome = this._outcome(command, kind, exitCode, output);
         record.runs.push({ ...outcome, at: ++this._clock });
-        return this.acceptance.addEvidence({ kind: 'check', description: `${kind}: ${key}`, passed: outcome.outcome === 'passed', detail: outcome.detail });
+        return this.acceptance.addEvidence({ kind: 'check', description: `${kind}: ${key}`, passed: outcome.outcome === 'passed', ...(outcome.outcome === 'unknown' ? { unknown: true } : {}), detail: outcome.detail });
     }
 
     private _outcome(command: string, kind: CheckKind, exitCode: number | null, output: string): { outcome: CheckOutcome; detail: string } {

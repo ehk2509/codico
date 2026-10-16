@@ -33,3 +33,16 @@ test('legacy grace arguments cannot create a hidden completion ceiling', () => {
   assert.equal(shouldRunAgentIteration(100, 16, true, -5, false, -2, 90), true);
   assert.equal(shouldRunAgentIteration(100, 16, false, -5, true, -2, 0), true);
 });
+
+test('the step after a check always runs, so its result is read: up to five steps past the budget', () => {
+  const { MAX_CHECK_READS_PAST_BUDGET } = require('../out/iterationBudget.js');
+  assert.equal(MAX_CHECK_READS_PAST_BUDGET, 5);
+  // The last step of the budget ran the tests: the next one runs to read them
+  assert.equal(shouldRunAgentIteration(16, 16, false, 4, false, 3, 0, true), true);
+  assert.equal(shouldRunAgentIteration(16, 16, false, 4, false, 3, 0, false), false);
+  // Checks run again and again past the budget: bounded
+  assert.equal(shouldRunAgentIteration(20, 16, false, 4, false, 3, 0, true), true);
+  assert.equal(shouldRunAgentIteration(21, 16, false, 4, false, 3, 0, true), false);
+  // No budget: unchanged
+  assert.equal(shouldRunAgentIteration(500, 0, false, 4, false, 3, 0, false), true);
+});

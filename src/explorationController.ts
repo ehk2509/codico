@@ -1,3 +1,4 @@
+import { checkResultHidden, classifyCheck } from './patchPassport';
 import type { ToolCall } from './toolParser';
 import type { NativeToolDefinition } from './nativeTools';
 import { nativeToolsForAgentPhase } from './nativeTools';
@@ -247,6 +248,13 @@ export class ExplorationController {
             }
             if (!/\bExit:\s*0\b/.test(result)) {
                 return '[System Verification] Verification failed. Use the failure as evidence, revise the implementation, and verify again.';
+            }
+            // Only a check of the project verifies a change, and only when its result can be told
+            if (!classifyCheck(tool.command)) {
+                return '[System Verification] That command ran, but it is not a check of the project (a test, build, type-check or lint command), so it does not verify the change. Run the project\'s tests, or the focused test file that covers the change.';
+            }
+            if (checkResultHidden(tool.command, result)) {
+                return '[System Verification] The check ran, but its result cannot be told: a pipe hides its exit code and it printed no test summary. Run it again without piping its output (or with set -o pipefail).';
             }
 
             if (this._verificationAuditSeen && this._verificationAuditReads === 0) {

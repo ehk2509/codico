@@ -95,3 +95,12 @@ test('think tags split across chunks never leak into the reply', () => {
   assert.deepEqual(run(['a <', ' b']), [{ kind: 'content', text: 'a < b' }]);
   assert.deepEqual(run(['ends with <th']), [{ kind: 'content', text: 'ends with <th' }]);
 });
+
+test('a reply that hands the decision back: an offer to go on, or a question', () => {
+  const { endsWithOfferOrQuestion } = require('../out/streamCompletion.js');
+  assert.equal(endsWithOfferOrQuestion('The helper is written.\n\nIt would touch only the agent loop. Say the word and I\'ll start.'), true);
+  assert.equal(endsWithOfferOrQuestion('Two ways to do it: fix the parser, or keep the four-backtick form.\n\nWhich do you want?'), true);
+  assert.equal(endsWithOfferOrQuestion('Done: the parser keeps inner fences, and the 9 tests pass.'), false);
+  assert.equal(endsWithOfferOrQuestion('<clarify>\nquestion: Which file?\n</clarify>'), false, 'a clarify block is its own way of asking');
+  assert.equal(endsWithOfferOrQuestion(''), false);
+});

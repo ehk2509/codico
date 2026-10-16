@@ -2,6 +2,39 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Coding-holdout quality scorecard. Besides passing the hidden verifier, each benchmark run is scored on whether it broke none of the project's tests (the suite runs before and after the agent), tested its change after the last edit, recovered from failing checks, changed no source file outside the historical fix, and claimed completion only when it was verified. The scorecard also gives pass@1 against pass@k and the cost per verified success, each with the proposed target. Reference agents run on the same tasks: Claude Code (`--agent claude-code`, scored from its own commands and results) and an oracle that applies the historical fix (`--agent oracle`, which shows broken tasks rather than weak agents). `scripts/eval/compare.js` compares two runs task by task, with a sign test. The manual Coding Holdout workflow can run any of them.
+- Coding holdout v7: 30 tasks, each proven valid (its hidden test fails with no change and passes with the historical fix; checked with `--agent noop` and `--agent oracle`). An oracle audit showed that v6 could score only 9 of its 26 tasks: 16 verifiers load a module the fix itself created, and one verifier file did not exist at its commit. v7 keeps those 9 and adds 21 tasks mined from fix commits by `scripts/eval/mine.js`. v6 is archived.
+
+### Changed
+- **Offers don't end unfinished work:** a reply that ends by offering to continue ("Say the word and I'll start") or by asking how to proceed, after the turn changed code that Codico's check does not accept yet, is sent back once to do the remaining work. It may still ask when the request truly leaves the choice open. On Claude Haiku 5.5, two holdout tasks ended this way: one asked which fix to make although the request named it, and one offered to wire in what it had written.
+- **Escalation to a stronger model** (`codico.escalationModel`, an OpenRouter model; off by default). The rest of a task is handed to that model when the independent reviewer disputes that the request is met, or when the task makes no progress for 20 steps. In the coding holdout, Claude Sonnet 5.5 solved all four tasks it was given where DeepSeek V4 Flash had failed, in 8–26 steps rather than 47–145.
+- **Verification needs a check of the project with a known result.** A script of the agent's own, or a check whose exit code a pipe hides and which printed no test summary (`npx tsc … | head`), no longer satisfies Codico's verification of a change.
+- A reviewer's dispute goes back to the agent up to twice, not once. The review is repeated only when the code or evidence changed.
+- A turn that did work but ends without any text is asked once for its final answer: what changed, how it was checked, and what is not done.
+- **Reviewer sees the request:** the independent acceptance reviewer is now given the user's request. It judges whether the criteria and the tests, together, cover the request as asked: every case, argument and value it names, and no different mechanism or narrower case. A "no" disputes the acceptance and goes back to the agent before the reply may end. In the coding holdout, the remaining false completions all passed criteria and tests the agent had written for its own version of the request.
+- **Reply never contradicts the report:** when acceptance criteria were stated and Codico's check does not accept the work, the reply ends with a note giving the verdict and what is not verified, whatever the reply above it claims.
+- **No-progress stop:** after the code has first changed, a turn stops after 20 steps in a row with no code change and no new check result. Re-running checks with the same result, re-reading and re-recording criteria do not count as progress. One holdout run spent 53 steps after its last code change.
+- **Proving the request is met:** before a reply that changed code may end, the agent is asked once to show that the request itself is met. It is asked when it stated no acceptance criteria, or when no check of its own failed before the change and passed after it.
+  - Stated criteria must use the request's own words.
+  - The test must cover exactly the scenario the user described.
+  - Replacing the requested behavior with something else (a new syntax, option or mode callers must switch to) does not count as meeting the request.
+
+  A new system-prompt rule says the same: reproduce first, then fix what was asked. In the coding holdout, most false completions passed checks the agent had written for its own variant of the problem. One example: it added a four-backtick tool form instead of fixing the parser for the normal form.
+
+### Fixed
+- Debugger: a rerun could stay paused at the program's first line until the 60-second wait ran out. A Node program runs in a child debug session, and its first event (the pause on entry, which Codico continues once its exception settings are in force) could arrive before VS Code reported the session started. It was then not recognised as Codico's, so it was never continued. Sessions are now recognised by their parents on their first message.
+- A check whose result cannot be told, such as an exit code hidden by a pipe with no test summary, was recorded as failed evidence. Criteria citing it were reported as failing even when the tests passed. It now counts as no evidence either way.
+- The independent acceptance reviewer ran only after the agent's final reply, so a criterion it disputed was shown to the user but never reached the agent, which had already presented the work as done. The review now runs before the reply may end. A disputed criterion goes back to the agent once, with the reviewer's reason. At the end of the turn the criteria are reviewed again only if the code or the evidence changed.
+- The reviewer saw only descriptions of the evidence ("7 passed"), not what the tests assert. It now also reads the test files the agent wrote or changed, and is told that a loose assertion (a substring, a trimmed value) or one testing a different case does not show a criterion.
+- Unit tests: a hung test now fails after 2 minutes (`--test-timeout`), naming itself, and every CI job has a time limit. A Windows run had hung in one test for 27 minutes until it was cancelled.
+- A check chained after an output filter, such as `npm run compile | tail -5 && node --test …`, was taken for a build whose result was hidden by the pipe. The test run was missed, every such run counted as not passed, and the acceptance criteria that cited them were reported as failing. The filter now ends at the next command, and the test result is read from its summary.
+- A failed run of a check no longer fails a criterion once a later run of the same check has passed. This covers reproducing a bug by restoring the old code in the terminal, for example with `git stash`.
+- Criteria that fail on the final code are now included in the reminder before a reply may end. Before, only unchecked criteria were, so a reply could present the work as complete while its own report said it failed.
+- With a step limit set (`codico.maxIterations`), a task could end right after the agent ran its tests or build, before it read the result. It then never learned whether its change worked, and its last message announced a check it never saw. The step after a check now always runs, up to 5 steps past the limit.
+
 ## 0.6.0 - 2026-10-15
 
 ### Added

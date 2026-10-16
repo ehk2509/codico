@@ -192,3 +192,75 @@ test('an app is started in the background, reached when its address answers, and
   assert.match(silent.text, /nothing answered .* within 1 s; the command was stopped/);
   assert.match((await runner.start({ command: 'x', url: 'https://example.com', cwd: root, timeoutMs: 1000, signal })).text, /not an address on this machine/);
 });
+
+test('a failed run that a later run of the same check passed does not fail the criterion (old code restored with git stash to reproduce)', () => {
+  const p = new PassportRecorder();
+  const a = p.acceptance;
+  p.recordChange('src/toolParser.ts', 'old', 'fixed');
+  a.setCriteria(['A normal write_file call keeps inner code fences']);
+  // The fix stashed in the terminal (Codico sees no file change), the tests run on the old code, then the fix restored
+  const onOldCode = p.recordCommand('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1', 1, '# pass 4\n# fail 3\n');
+  const onFix = p.recordCommand('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1', 0, '# pass 7\n# fail 0\n');
+  a.claim('AC1', 'pass', 'failed on the old code, passes with the fix', [onOldCode, onFix]);
+  assert.equal(p.build().acceptance.criteria[0].status, 'verified');
+  // A failure that nothing later passed still fails it
+  const p2 = new PassportRecorder();
+  p2.recordChange('src/a.ts', 'x', 'y');
+  p2.acceptance.setCriteria(['works']);
+  const failed = p2.recordCommand('node --test tests/a.test.js', 1, '# pass 1\n# fail 1\n');
+  p2.acceptance.claim('AC1', 'pass', 'ran it', [failed]);
+  assert.equal(p2.build().acceptance.criteria[0].status, 'failing');
+});
+
+test('the reviewer reads the tests the agent wrote, and is told a loose or different-case assertion does not show a criterion', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/toolParser.ts', 'a', 'b');
+  p.acceptance.setCriteria(['write_file keeps the exact content, inner code fences included']);
+  const run = p.recordCommand('node --test tests/fences.test.js', 0, '# pass 7\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'test of a README with a bash block', [run]);
+  const report = p.build().acceptance;
+  const prompt = reviewPrompt(report, [], 'src/toolParser.ts +10 -2', [{ path: 'tests/fences.test.js', text: "assert.match(tools[0].content, /cd server/);" }]);
+  assert.match(prompt, /Tests the agent wrote or changed:\n--- tests\/fences\.test\.js\nassert\.match\(tools\[0\]\.content, \/cd server\/\);/);
+  assert.match(prompt, /compares loosely \(a substring, a trimmed or partial value\) where the criterion needs an exact result/);
+  // Without tests the prompt is as before
+  assert.doesNotMatch(reviewPrompt(report, [], ''), /Tests the agent wrote/);
+});
+
+test('a check whose result cannot be told (hidden by a pipe) is no evidence: it neither fails nor verifies a criterion', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/a.ts', 'x', 'y');
+  p.acceptance.setCriteria(['works', 'builds']);
+  const hidden = p.recordCommand('npx tsc -p ./ 2>&1 | head -20', 0, '');
+  const tests = p.recordCommand('npm test', 0, '# pass 8\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'compiled and tested', [hidden, tests]);
+  p.acceptance.claim('AC2', 'pass', 'compiled', [hidden]);
+  assert.deepEqual(p.build().acceptance.criteria.map(c => c.status), ['verified', 'claimed']);
+});
+
+test('the reviewer is given the user\'s request and judges whether the criteria and tests cover it as asked; a "no" disputes the acceptance', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  const p = new PassportRecorder();
+  p.recordChange('src/toolParser.ts', 'a', 'b');
+  p.acceptance.setCriteria(['A 4-backtick write_file keeps inner fences']);
+  const run = p.recordCommand('npm test', 0, '# pass 9\n# fail 0\n');
+  p.acceptance.claim('AC1', 'pass', 'tests 8 and 9', [run]);
+  const request = 'Allow write_file content to contain Markdown code fences without truncating or corrupting the outer tool call.';
+  const prompt = reviewPrompt(p.build().acceptance, [], 'src/toolParser.ts +40 -3', [], request);
+  assert.match(prompt, /The user's request, which the change must meet as asked:\nAllow write_file content to contain Markdown code fences/);
+  assert.match(prompt, /REQUEST: yes — <why> \(or no — <what is not covered>\)/);
+  assert.match(prompt, /not a different mechanism \(a new syntax, option or mode\) or a narrower case/);
+  // Without a request the prompt asks nothing about it
+  assert.doesNotMatch(reviewPrompt(p.build().acceptance, [], ''), /REQUEST:/);
+
+  for (const [id, review] of parseReview('AC1: yes — tests 8 and 9 pass\nREQUEST: no — only the four-backtick form is tested; the normal write_file call still truncates')) { p.acceptance.setReview(id, review); }
+  const report = p.build().acceptance;
+  assert.equal(report.verdict, 'disputed', 'every criterion verified, but not the request');
+  assert.match(report.requestReview.reason, /only the four-backtick form/);
+  const note = verdictNote(report);
+  assert.match(note, /^\n\n> \*\*Codico's check: Not accepted: the reviewer disputes the evidence\.\*\* the request as asked, disputed by the reviewer: only the four-backtick form/);
+  assert.match(note, /Whatever the reply above says, this is not verified as done\.$/);
+  assert.match(passportMarkdown(p.build()), /❌ \*\*The request as asked\*\* — reviewer disputes: only the four-backtick form/);
+  // Accepted: no note
+  p.acceptance.setReview('REQUEST', { agrees: true, reason: 'the normal form is tested' });
+  assert.equal(verdictNote(p.build().acceptance), undefined);
+});

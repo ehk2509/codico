@@ -9,6 +9,7 @@ import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
 import { UserExtensionsLoader } from './userExtensionsLoader';
 import { passportMarkdown, PassportRecorder, PatchPassport } from './patchPassport';
+import { verdictNote } from './acceptance';
 import { McpManager, loadMcpConfigs, approveMcpServers } from './mcpManager';
 import { handleMcpCatalogAction, mcpCatalogMessage } from './mcpCatalogCommands';
 import { WorkspaceIndex } from './workspaceIndex';
@@ -205,7 +206,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             get evaluationMode() { return provider._evaluationMode; },
             get evaluationTokenBudget() { return provider._evaluationTokenBudget; },
             get readOnly() { return provider._readOnly; },
-            get team() { return provider._teamMode; }, acceptanceGuidance: () => provider._verify.guidance(),
+            get team() { return provider._teamMode; }, workUnfinished: () => provider._verify.unfinished(), acceptanceGuidance: signal => provider._verify.guidanceBeforeEnd(provider._subagentHost, vscode.workspace.getConfiguration('codico').get<boolean>('acceptanceReview', true), signal),
             get thinkingEffort() { return provider._thinkingEffort; },
             post: message => provider._post(message), dispatchTool: (tool, msgId, signal) => provider._dispatchTool(tool, msgId, signal),
         };
@@ -256,6 +257,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _evalSteps = 0;
     private _evalToolCalls = 0;
     private _evalPromptTokens = 0;
+    private _evalUsage: TaskUsage | undefined;
     private _evalCompletionTokens = 0;
     private _evaluationTokenBudget = 0;
     private _evalBudgetExceeded = false;
@@ -818,7 +820,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             filesWritten: this._filesWrittenThisTurn, promptTokens: this._evalPromptTokens,
             completionTokens: this._evalCompletionTokens, historyMessages: this._history.length,
             budgetExceeded: this._evalBudgetExceeded, projectedCharsOmitted: this._evalProjectedCharsOmitted,
-            trace: this._evalTrace,
+            trace: this._evalTrace, costUsd: this._evalUsage?.costUsd, cachedTokens: this._evalUsage?.cachedTokens ?? 0,
         });
     }
 
@@ -954,8 +956,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         // 0 (the default) means no iteration limit
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
-        this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
-        const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
+        this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, rawText);
+        const taskUsage = this._evalUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
         const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isCli);
@@ -1049,6 +1051,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._verify.endTurn(this._subagentHost, config.get<boolean>('acceptanceReview', true), signal);
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
         if (passport) { const markdown = passportMarkdown(passport); this._post({ type: 'patchPassport', id: msgId, passport, markdown }); this._verify.finish(markdown); }
+        const note = verdictNote(passport?.acceptance); const reply = [...this._history].reverse().find(m => m.role === 'assistant'); if (note) { this._post({ type: 'appendContent', id: msgId, text: note }); if (reply && typeof reply.content === 'string') { reply.content += note; } }
         if (this._teamSteer && this._steer) { this._pendingUserMessages.push({ text: this._steer }); }
         this._steer = ''; this._teamSteer = false;
         this._post({ type: 'endMessage', id: msgId });

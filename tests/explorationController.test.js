@@ -314,3 +314,25 @@ test('a documentation write keeps verification pending for an earlier code edit'
   );
   assert.equal(controller.verificationPending, true);
 });
+
+test('only a check of the project whose result can be told closes the verification gate: not a script of its own, not a piped check', () => {
+  const controller = new ExplorationController('Fix the fingerprint so it includes the arguments');
+  controller.beginIteration();
+  controller.after({ type: 'edit_file', filepath: 'src/agentProvider.ts', oldStr: 'a', newStr: 'b' }, '[edit_file: src/agentProvider.ts] Edit applied successfully.');
+  assert.equal(controller.verificationPending, true);
+  // Its own script exercises the change, but it is not a check of the project
+  const heredoc = controller.after({ type: 'run_terminal', command: "cat > /tmp/fp.js <<'EOF'\nconsole.log(1)\nEOF\nnode /tmp/fp.js" }, '[run_terminal]\nExit: 0\n1');
+  assert.equal(heredoc, undefined, 'writing a file with cat is not verification');
+  assert.equal(controller.verificationPending, true);
+  const script = controller.after({ type: 'run_terminal', command: 'node /tmp/fp.js' }, '[run_terminal]\nExit: 0\n1');
+  assert.match(script, /not a check of the project/);
+  assert.equal(controller.verificationPending, true);
+  // A type-check piped into head: its exit code is that of head
+  const piped = controller.after({ type: 'run_terminal', command: 'npx tsc --noEmit -p . 2>&1 | head -20' }, '[run_terminal]\nExit: 0\n');
+  assert.match(piped, /result cannot be told: a pipe hides its exit code/);
+  assert.equal(controller.verificationPending, true);
+  // A piped test run that printed its summary can be told
+  const tests = controller.after({ type: 'run_terminal', command: 'npm test 2>&1 | tail -5' }, '[run_terminal]\nExit: 0\n# pass 9\n# fail 0\n');
+  assert.match(tests, /acceptance gate is satisfied/);
+  assert.equal(controller.verificationPending, false);
+});

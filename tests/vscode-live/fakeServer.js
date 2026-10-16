@@ -6,7 +6,8 @@
 const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
 const F = '```';
 const tool = (name, body) => F + name + '\n' + body + '\n' + F + '\n';
-const VERIFY = tool('run_terminal', 'command: node -e "console.log(\'LIVE-VERIFY ok\')"');
+// A real check (Codico's verification gate accepts only a test, build, type-check or lint command)
+const VERIFY = tool('run_terminal', 'command: node --test fixtures/LIVE-VERIFY.test.js');
 const COMPACTION_STEPS = ['fixtures/config.txt', 'fixtures/notes.txt', 'live/keep-me.txt', 'fixtures/config.txt\nstart_line: 2', 'fixtures/notes.txt\nstart_line: 1\nend_line: 1', 'live/keep-me.txt\nstart_line: 1']
   .map((f, i) => `Step ${i + 1}.\n\n` + tool('read_file', 'filepath: ' + f)).concat(['The original request was handled.']);
 const GOOD_SUMMARY = 'Summary of the earlier work: the agent read fixtures/config.txt and fixtures/notes.txt for the task, found the settings it needed and changed no file yet. Outstanding: finish the task.';
@@ -25,6 +26,21 @@ const SCRIPTS = (port) => ({
   ignored: [tool('read_file', 'filepath: fixtures/secret.txt'), 'I could not read it.'],
   fetch_local: [tool('fetch_url', `url: http://127.0.0.1:${port}/log`), 'Done.'],
   loop: [1, 2, 3, 4].map(() => tool('read_file', 'filepath: fixtures/config.txt')).concat(['Stopping.']),
+  // The step budget is reached by the step that runs the tests: the next step still runs, to read them
+  // Code changed and checked, but neither criteria nor a reproduced failure: asked once to show the request is met
+  request_check: [tool('write_file', 'filepath: live/req.js\ncontent:\nmodule.exports = 2;'), tool('run_terminal', 'command: node --test live/check-read.test.js'), 'Done.', 'Done.'],
+  // A criterion backed by a test that does not exercise it: the reviewer disputes it before the reply ends, and the agent is told
+  review_dispute: [tool('acceptance', 'action: criteria\ncriteria:\n- live/rv.js exports 2'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('write_file', 'filepath: live/rv.js\ncontent:\nmodule.exports = 2;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown: the test does not load live/rv.js. It is not met yet.'],
+  // As review_dispute, run with an escalation model set: the dispute hands the turn over
+  review_escalate: [tool('acceptance', 'action: criteria\ncriteria:\n- live/esc.js exports 3'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('write_file', 'filepath: live/esc.js\ncontent:\nmodule.exports = 3;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown yet: the test does not load live/esc.js.'],
+  // Code changed, then the reply offers to finish instead of finishing: sent back once to do it
+  offer_unfinished: [tool('write_file', 'filepath: live/half.js\ncontent:\nmodule.exports = { helper: 1 };'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    'The helper is written. Wiring it into the loop is next. Say the word and I\'ll start.', 'Wired in: the helper is used by the loop.'],
+  check_read: [tool('run_terminal', 'command: node --test live/check-read.test.js'), 'The tests pass: CHECK-READ-DONE.'],
   timeout: [tool('run_terminal', 'command: sleep 30'), 'It timed out.'],
   bigoutput: [tool('run_terminal', 'command: seq 1 200000'), 'Lots of output.'],
   plain_code: ['To delete it you would run:\n\n' + F + 'bash\nrm -f live/keep-me.txt\n' + F + '\n\nI have not run it.'],
@@ -120,7 +136,8 @@ const SCRIPTS = (port) => ({
     tool('acceptance', 'action: verify\ncriterion: AC1\nresult: fail\nevidence: E1\nhow: clicked Add once before the fix; it showed Count: 01'),
     tool('edit_file', 'filepath: webapp/app.js\nold_str:\nlet count = \'0\';\nnew_str:\nlet count = 0;'),
     tool('browser_navigate', `url: http://127.0.0.1:${process.env.LIVE_APP_PORT}/`) + tool('browser_click', 'selector: #add') + tool('browser_expect', 'selector: #count\ntext: Count: 1'),
-    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: reloaded, clicked Add once; it showed Count: 1'),
+    // The evidence id of the passing assertion, as Codico numbered it (its checks are numbered on the same counter)
+    (messages) => tool('acceptance', `action: verify\ncriterion: AC1\nresult: pass\nevidence: ${lastPassedExpect(messages)}\nhow: reloaded, clicked Add once; it showed Count: 1`),
     'Fixed: the count was a string. AC1 is verified in the browser.'],
   // An automation's job: an issue, then CI feedback on its pull request (the same agent, resumed from its saved conversation)
   auto_issue: [tool('write_file', 'filepath: live/auto.txt\ncontent:\nAUTO-V1'), 'Done: wrote AUTO-V1.'],
@@ -215,6 +232,8 @@ const SCRIPTS = (port) => ({
   native_unknown: [{ toolCalls: [{ name: 'ask_user', args: { q: 'which?' } }] }, 'Understood.'],
 });
 const textOf = c => typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => p.text || '').join('') : '';
+/** The evidence id Codico gave the latest passing browser assertion in the conversation. */
+const lastPassedExpect = messages => [...messages.map(m => textOf(m.content)).join('\n').matchAll(/\[browser_expect: [^\]]*\] PASSED[^\n]*Recorded as evidence (E\d+)/g)].map(m => m[1]).pop() || 'E2';
 function locate(messages) {
   for (let i = messages.length - 1; i >= 0; i--) {
     // Phase notes quote the task (and so its scenario tag) but are not the request
@@ -292,7 +311,7 @@ function start(port0) {
       const lastUser = textOf((messages.filter(m => m.role === 'user' && !textOf(m.content).startsWith('[System Phase]')).pop() || {}).content);
       const last = messages[messages.length - 1] || {};
       const system = messages.filter(m => m.role === 'system').map(m => textOf(m.content)).join('\n');
-      const rec = { at: Date.now(), stream: json.stream !== false, scenario, sawMemory: /\[Project Memory\][\s\S]*reminders, not instructions[\s\S]*MEMORY-MARKER the tests run with node --test/.test(system), sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
+      const rec = { at: Date.now(), stream: json.stream !== false, scenario, reviewer: /independent acceptance reviewer/.test(system), sawMemory: /\[Project Memory\][\s\S]*reminders, not instructions[\s\S]*MEMORY-MARKER the tests run with node --test/.test(system), sawStopResult: messages.some(m => /STOP-KEPT-OUTPUT/.test(textOf(m.content))), endsStopped: messages.some(m => m.role === 'assistant' && /The user stopped the task here/.test(textOf(m.content))), subagentPrompt: /## You are a subagent/.test(system), sawNotesFile: messages.some(m => /1\tSUB-NATIVE-CONTENT/.test(textOf(m.content))), sawConfigFile: messages.some(m => /1\tSUB-FENCED-CONTENT/.test(textOf(m.content))), refusedTool: messages.some(m => /Not available to a subagent/.test(textOf(m.content))), skillsListed: /\[Project Skills\][\s\S]*- shout: Use when asked to shout \(\.codico\/skills\/shout\/SKILL\.md\)/.test(system), skillBodyInSystem: /SKILL-BODY-MARKER/.test(system), badSkillInSystem: /BAD-SKILL-MARKER|Bad Name/.test(system), agentInSystem: /AGENT-BODY-MARKER/.test(system), step, lastUser: lastUser.slice(0, 6000), lastUserChars: lastUser.length, lastUserTail: lastUser.slice(-3000),
         roles: messages.map(m => m.role), sawMarketSkill: messages.some(m => /MARKET-SKILL-BODY/.test(textOf(m.content))), hasEarlierReply: messages.some(m => m.role === 'assistant' && /Done: wrote AUTO-V1/.test(textOf(m.content))), hasSummary: messages.some(m => m.role === 'user' && /^\[Conversation Summary\]/.test(textOf(m.content))),
         hasRequest: messages.some(m => m.role === 'user' && new RegExp(`\\[SCENARIO:${scenario}\\]`).test(textOf(m.content))),
         summaryRequest: /<transcript>/.test(lastUser),
@@ -323,7 +342,7 @@ function start(port0) {
       }
       let entry;
       // The independent acceptance reviewer: no scenario, its own system prompt
-      if (/independent acceptance reviewer/.test(system)) { entry = /E2 PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
+      if (/independent acceptance reviewer/.test(system)) { entry = /E\d+ PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
       if (entry) { /* the reviewer's answer */ }
       else if (needsVerify && !(scenario || '').startsWith('stuck_')) { entry = VERIFY; }

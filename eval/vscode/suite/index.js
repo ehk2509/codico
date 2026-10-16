@@ -34,6 +34,7 @@ async function run() {
       model,
       maxIterations,
       maxTotalTokens,
+      escalationModel: process.env.CODICO_EVAL_ESCALATION_MODEL || '',
       accoEnabled,
       accoBaseUrl,
     });
@@ -64,7 +65,11 @@ async function run() {
     const checkpointTimer = setInterval(() => { void writeCheckpoint(); }, 2000);
     try {
       const metrics = await vscode.commands.executeCommand('codico.__evalRunTask', prompt);
-      writeJsonAtomic({ ok: true, partial: false, model, metrics });
+      // What the run is scored on besides the hidden verifier: its change report (files, checks
+      // and their results, as observed) and its final reply (whether it presents the task as done)
+      const passport = await vscode.commands.executeCommand('codico.__evalPassport');
+      const finalReply = await vscode.commands.executeCommand('codico.__evalReplyText');
+      writeJsonAtomic({ ok: true, partial: false, model, metrics, passport: passport || null, finalReply: finalReply || '' });
     } finally {
       clearInterval(checkpointTimer);
     }

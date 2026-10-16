@@ -23,6 +23,10 @@ test('what only changes the output is ignored when comparing commands', () => {
   assert.equal(classifyCheck('cd /repo && timeout 300 npm run compile 2>&1 | tail -n 30'), 'build');
   // Different tests are different checks
   assert.notEqual(checkKey('node --test tests/a.js'), checkKey('node --test tests/b.js'));
+  // An output filter ends at the next command: the test run after it is what the command checks
+  assert.equal(checkKey('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1'), 'npm run compile && node --test tests/toolParser.test.js');
+  assert.equal(classifyCheck('npm run compile 2>&1 | tail -5 && node --test tests/toolParser.test.js 2>&1'), 'test');
+  assert.equal(classifyCheck('npm run compile | tail -3; npm test'), 'test');
 });
 
 test('test summaries of common runners', () => {

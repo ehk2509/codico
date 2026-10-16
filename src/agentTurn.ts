@@ -8,7 +8,7 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 import { Approvals } from './approvals';
 import { Compaction } from './compaction';
 import { STOPPED_NOTE, addSteer, steerNote } from './steering';
-import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
+import { endsWithOfferOrQuestion, isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
 import { SubagentHost } from './subagent';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -18,6 +18,9 @@ import { projectHistoryForModel } from './contextProjection';
 import { evaluationToolTarget } from './evaluationTrace';
 import { ExplorationController } from './explorationController';
 import { shouldRunAgentIteration } from './iterationBudget';
+import { classifyCheck } from './patchPassport';
+import { ProgressTracker, MAX_STEPS_WITHOUT_PROGRESS, StepTool } from './progressTracker';
+import { REVIEW_DISPUTE_PREFIX } from './verifyRuntime';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { TaskUsage } from './taskUsage';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -53,7 +56,9 @@ export interface TurnHost {
     /** This turn leads an agent team: the `team` tool is offered. */
     readonly team: boolean;
     /** Before a reply may end: what is left of the acceptance criteria, as a reminder (undefined: nothing). */
-    acceptanceGuidance?(): string | undefined;
+    acceptanceGuidance?(signal: AbortSignal): Promise<string | undefined> | string | undefined;
+    /** The turn changed code and Codico's check does not accept it yet. */
+    workUnfinished?(): boolean;
     /** Only these tools are offered (a team worker's); all of them when absent. */
     readonly allowedTools?: ReadonlySet<string>;
     steer: string;
@@ -122,7 +127,19 @@ export class AgentTurn {
         const reminders = new ReminderLog();
         try {
             // One request to the selected provider. The main loop and its subagents share it.
-            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => isCli
+            // A stronger model the turn is handed to when the reviewer disputes the request or the turn stops progressing
+            // (codico.escalationModel, an OpenRouter model; off when empty). Once per turn.
+            let escalatedTo: string | undefined;
+            const escalate = (why: string): boolean => {
+                const target = (config.get<string>('escalationModel', '') ?? '').trim();
+                if (escalatedTo || !target || !apiKey || target === model) { return false; }
+                escalatedTo = target;
+                this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⤴️ Handing the rest of this task to ${target}: ${why}\n\n` });
+                return true;
+            };
+            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => escalatedTo
+                ? streamOpenRouter(apiKey, history, escalatedTo, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)
+                : isCli
                 ? streamCliModel(model, history, prefix, signal, this._host.thinkingEffort, override)
                 : isOllama
                 ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override)
@@ -136,7 +153,15 @@ export class AgentTurn {
                 onUsage: usage => { taskUsage.add(usage.totalTokens, usage.costUsd, usage.cachedTokens, usage.promptTokens, usage.completionTokens, 'subagent'); this._host.post({ type: 'tokenUsage', subagent: true, taskRequests: taskUsage.requests, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, taskTokens: taskUsage.tokens, taskCostUsd: taskUsage.costUsd, cachedTokens: usage.cachedTokens, taskCachedTokens: taskUsage.cachedTokens }); },
             };
 
-            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration); i++) {
+            // A check run in the last step: its result is read before the budget can end the loop
+            let checkResultUnread = false;
+            // A turn that keeps going without changing code or learning anything new from its checks is stopped
+            const progress = new ProgressTracker();
+            // Whether a tool ran in this turn, and whether a reply that ended without text was asked for its answer
+            let turnRanTools = false;
+            let askedForAnswer = false;
+            let askedToFinish = false;
+            for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
                     this._host.evalPromptTokens + this._host.evalCompletionTokens >= this._host.evaluationTokenBudget) {
@@ -183,6 +208,8 @@ export class AgentTurn {
                 // Once a loop is detected, the rest of this response is not executed either
                 let loopDetected = false;
                 let ranTool = false;
+                let ranCheck = false;
+                const stepTools: StepTool[] = [];
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
@@ -221,6 +248,7 @@ export class AgentTurn {
                             });
                         }
                         ranTool = true;
+                    if (tool.type === 'get_diagnostics' || (tool.type === 'run_terminal' && classifyCheck(tool.command))) { ranCheck = true; }
                         await this._host.dispatchTool(tool, msgId, signal);
                         loopGuard.ran(tool);
                         let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
@@ -253,10 +281,12 @@ export class AgentTurn {
                         });
                     }
                     ranTool = true;
+                    if (tool.type === 'get_diagnostics' || (tool.type === 'run_terminal' && classifyCheck(tool.command))) { ranCheck = true; }
                     await this._host.dispatchTool(tool, msgId, signal);
                     loopGuard.ran(tool);
                     let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
                     this._host.lastInlineResult = undefined;
+                    stepTools.push({ type: tool.type, command: tool.type === 'run_terminal' ? tool.command : undefined, result });
                     const followThrough = exploration.after(tool, result);
                     if (tool.type === 'write_file' || tool.type === 'edit_file' || !exploration.verificationPending) { verificationNudges = 0; }
                     if (followThrough) { result += `\n\n${reminders.say(followThrough)}`; }
@@ -562,9 +592,17 @@ export class AgentTurn {
                         this._host.history.push({ role: 'user', content: verificationGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
+                    // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
+                    if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
+                        askedToFinish = true;
+                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
-                    const acceptanceGuidance = this._host.acceptanceGuidance?.();
+                    const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
+                        if (acceptanceGuidance.startsWith(REVIEW_DISPUTE_PREFIX)) { escalate('the independent reviewer disputes that the request is met.'); }
                         this._host.history.push({ role: 'user', content: acceptanceGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
@@ -581,6 +619,13 @@ export class AgentTurn {
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
                         continue;
                     }
+                    // Work was done but the reply ends without a word: the user would get no account of it
+                    if (!fullContent.trim() && turnRanTools && !askedForAnswer) {
+                        askedForAnswer = true;
+                        this._host.history.push({ role: 'user', content: '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.' });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
                     break;
                 }
 
@@ -588,6 +633,14 @@ export class AgentTurn {
                 // The model is calling tools again, so reminders are no longer "stalled"
                 verificationNudges = 0;
                 blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
+                checkResultUnread = ranCheck;
+                progress.step(stepTools);
+                if (ranTool) { turnRanTools = true; }
+                if (progress.stalled() && escalate(`${MAX_STEPS_WITHOUT_PROGRESS} steps without a code change or a new check result.`)) { progress.reset(); }
+                else if (progress.stalled()) {
+                    this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⚠️ Stopped: ${MAX_STEPS_WITHOUT_PROGRESS} steps in a row without a code change or a new check result. The work is left as it is; see the change report for what is verified.` });
+                    break;
+                }
                 if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
                     this._host.post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }

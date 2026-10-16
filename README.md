@@ -1113,9 +1113,9 @@ codico/
 
 Every pull request runs the regression suite on **Ubuntu, Windows, and macOS**, activates Codico inside a real VS Code Extension Host, packages a VSIX, and smoke-installs that packaged extension into a clean VS Code profile.
 
-For autonomous coding quality, Codico also ships a frozen **26-task historical coding holdout**. The current agent is run against exact pre-fix Codico commits and the relevant regression test is injected only after the agent finishes, so the verifier is hidden during the task. The holdout records success, duration, agent steps, tool calls, changed files, and provider token usage.
+For autonomous coding quality, Codico also ships a frozen **30-task historical coding holdout**. Every task is proven valid: its hidden test fails without a change and passes with the historical fix. The current agent is run against exact pre-fix Codico commits and the relevant regression test is injected only after the agent finishes, so the verifier is hidden during the task. The holdout records success, duration, agent steps, tool calls, changed files, and provider token usage. A quality scorecard covers regressions in the project's own tests, testing after the last change, recovery, edit precision, false completion, pass@1 against pass@k, and cost per verified success. The same tasks can be run by Claude Code or by an oracle that applies the historical fix, and two runs can be compared task by task.
 
-The coding holdout is intentionally **manual-only** and never consumes model credits on ordinary pushes or pull requests. See [eval/README.md](eval/README.md) for the frozen-v1 methodology and reproduction commands.
+The coding holdout is intentionally **manual-only** and never consumes model credits on ordinary pushes or pull requests. See [eval/README.md](eval/README.md) for the methodology and reproduction commands.
 
 ## Development
 

@@ -45,6 +45,28 @@ async function run() {
   await scenario('ignored', ({ text }) => { const leaked = /SECRET-TOKEN-12345/.test(text); const blocked = /ignor|denied|blocked|not allowed|excluded/i.test(text.split('[read_file')[1] || ''); return { ok: !leaked && blocked, why: `secret leaked to model: ${leaked}; error reported: ${blocked}` }; });
   await scenario('fetch_local', ({ text }) => { const leaked = /"scenario"/.test(text); const blocked = /private|blocked|denied|not allowed|local|refus/i.test(text.split('[fetch_url')[1] || text); return { ok: !leaked && blocked, why: `local response leaked: ${leaked}; blocked message: ${blocked}` }; });
   await scenario('loop', ({ text }) => ({ ok: /You are in a loop/.test(text), why: `loop warning sent: ${/You are in a loop/.test(text)}` }));
+  // A one-step budget, spent on running the tests: the step after it runs anyway, so their result is read
+  fs.writeFileSync(path.join(ws, 'live/check-read.test.js'), "require('node:test')('reads', () => {});\n");
+  await set('maxIterations', 1);
+  await scenario('check_read', ({ reqs }) => {
+    const read = reqs.length === 2 && /# pass 1/.test(reqs[1].lastUser + (reqs[1].toolResults || []).join('\n'));
+    return { ok: read, why: `${reqs.length} requests (1 = stopped before the result was read); the test result reached the model: ${read}` };
+  });
+  await set('maxIterations', 12);
+  await scenario('review_dispute', ({ reqs, error }) => {
+    const told = reqs.filter(r => /\[System Acceptance\] An independent reviewer, who saw only the user's request, the evidence and your tests, does not agree that these are shown/.test(r.lastUser)).length;
+    const reason = reqs.some(r => /AC1 live\/rv\.js exports 2 — /.test(r.lastUser));
+    return { ok: !error && told === 1 && reason, why: `the reviewer's objection reached the agent before the reply ended: ${told} time(s) (once expected: the agent then changed nothing, so it is not repeated), with its reason: ${reason}; ${reqs.length} requests` };
+  });
+  await scenario('offer_unfinished', ({ reqs, error }) => {
+    const sentBack = reqs.filter(r => /\[System\] Your reply ends by offering to continue or asking how to proceed/.test(r.lastUser)).length;
+    return { ok: !error && sentBack === 1, why: `the offer to finish was answered by sending the agent back to do it: ${sentBack} time(s) (once expected); ${reqs.length} requests` };
+  });
+  await scenario('request_check', ({ reqs, error }) => {
+    const asked = reqs.filter(r => /\[System Acceptance\] Before you finish, show that the request itself is met/.test(r.lastUser)).length;
+    const ended = !error && reqs.length <= 8;
+    return { ok: asked === 1 && ended, why: `asked to show the request is met: ${asked} time(s) (once expected); the turn then ended: ${ended} (${reqs.length} requests)` };
+  });
   await scenario('timeout', ({ ms, text }) => ({ ok: ms >= 9000 && ms < 30000 && /timed out/i.test(text), why: `${ms} ms; reported timed out: ${/timed out/i.test(text)}` }), 45000);
   await scenario('bigoutput', ({ ms, reqs }) => {
     // The model gets the start and the end (where failures and summaries are), not 1.2 MB
@@ -414,6 +436,16 @@ async function run() {
     const noSecret = !!second && !/SECRET-TOKEN-12345|OUTSIDE-SECRET|fixtures\/link\b|^\d+\. fixtures\/secret\.txt/m.test(results);
     return { ok: !error && reqs.length === 2 && ranked && noSecret, why: `${reqs.length} requests; the definition ranked first, with its symbol and importer: ${ranked}; neither the ignored secret file nor the file behind a symbolic link out of the workspace is in any result: ${noSecret}` };
   });
+  // The reviewer disputes the request: the rest of the turn goes to the escalation model
+  await set('escalationModel', 'fake/strong-model');
+  await scenario('review_escalate', ({ reqs, error }) => {
+    const models = [...new Set(reqs.map(r => r.model))];
+    const handedOver = reqs.some(r => r.model === 'deepseek/deepseek-v4-flash') && reqs.some(r => r.model === 'fake/strong-model');
+    const firstStrong = reqs.findIndex(r => r.model === 'fake/strong-model');
+    const afterDispute = firstStrong > 0 && reqs.slice(0, firstStrong).some(r => r.reviewer);
+    return { ok: !error && handedOver && afterDispute, why: `models used: ${models.join(', ')}; handed to the escalation model: ${handedOver}, after the reviewer's dispute: ${afterDispute}${error ? '; error: ' + error : ''}` };
+  });
+  await set('escalationModel', '');
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
   await scenario('cs_fresh', ({ reqs, error }) => {
     const text = reqs.map(r => r.lastUser).join('\n');
@@ -890,8 +922,8 @@ async function run() {
     const acc = passport.acceptance || { criteria: [] };
     const ac1 = acc.criteria[0] || { evidence: [] };
     const reproduced = /\[browser_expect: #count shows "Count: 1"\] FAILED: the element shows "Count: 01".*Recorded as evidence E1/.test(said) && ac1.reproduced === true;
-    const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].id === 'E2' && ac1.evidence[0].passed === true;
-    const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => /independent acceptance reviewer/.test(e.lastUser || '') || e.scenario === null);
+    const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].kind === 'expect' && ac1.evidence[0].passed === true; // the passing browser assertion, whatever its number
+    const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => e.reviewer);
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
     const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];

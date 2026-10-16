@@ -23,6 +23,8 @@ async function main() {
   fs.mkdirSync(path.join(ws, 'fixtures'), { recursive: true });
   fs.mkdirSync(path.join(ws, 'live'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'fixtures/config.txt'), 'host=localhost\nport=80\n');
+  // What the stand-in model runs when asked to verify a change
+  fs.writeFileSync(path.join(ws, 'fixtures/LIVE-VERIFY.test.js'), "require('node:test')('LIVE-VERIFY ok', () => {});\n");
   fs.writeFileSync(path.join(ws, 'fixtures/notes.txt'), 'NOTES-MARKER\n');
   fs.writeFileSync(path.join(ws, 'fixtures/secret.txt'), 'SECRET-TOKEN-12345\n');
   fs.writeFileSync(path.join(ws, '.codicoignore'), 'fixtures/secret.txt\n');
