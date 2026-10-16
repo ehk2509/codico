@@ -9,7 +9,7 @@
       "id": "stream-unexpected-eof",
       "category": "streaming",
       "baseCommit": "486bf7638a39c517ed273a4313238b47c2a73d81",
-      "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker emits a stream_error describing the premature interruption instead of being silently accepted as complete. Keep normally completed streams unchanged.",
+      "prompt": "Fix streaming so an HTTP/SSE response that ends before a terminal completion marker emits a stream_error describing the premature interruption instead of being silently accepted as complete. Keep normally completed streams unchanged. A stream counts as complete when it delivers its terminal marker ([DONE]) or a final chunk with a finish_reason; one that ends with neither was interrupted.",
       "verifierFile": "streamCompletion.test.js",
       "testNamePattern": "unexpected provider EOF is reported without flagging normal completion",
       "maxIterations": 0,
