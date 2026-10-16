@@ -159,6 +159,29 @@ The changes behind it are in Codico, and none of them is specific to a task:
 - the acceptance review runs before the reply ends and reads the agent's tests;
 - chained, piped and unknown check results are read correctly.
 
+### Clean run (2026-10-16): 25/30 in one run of the final suite and the final Codico
+
+All 30 tasks ran in parallel, as 15 workflow runs of 2 tasks each, on commit a41ba513, with no step limit and DeepSeek V4 Flash. They were combined with `scripts/eval/summarize.js`.
+
+| Measure | Clean run | First v7 run (16-step limit) |
+|---|---|---|
+| Task success (pass@1) | **25/30 (83.3%)** | 17/30 (56.7%) |
+| Regression-free (verified successes) | 25/25 | 17/17 |
+| Test passed after the last change | 28/30 | 15/30 |
+| Recovery after a failing check | 21/24 | 3/7 |
+| Edit precision (verified successes) | 22/25 | 17/17 |
+| False completion | 5 of 29 claims | 5 of 8 |
+| Cost per verified success | $0.31 (3.3M tokens) | $0.14 (1.5M tokens) |
+
+The five failures:
+- tools-write-nested-fences: the four-backtick workaround again;
+- tools-edit-nested-fences: a code block in `new_str` is still cut off;
+- tools-fingerprint-arguments: `write_file`'s content is left out of its fingerprint;
+- projection-current-reads: `./src/a.ts` and `src/a.ts` are not treated as one file;
+- stream-unexpected-eof: a normal finish reason is reported as an interruption.
+
+In four of them the agent's criteria and tests covered its own version of the request, and the reviewer agreed, because the reviewer is not shown the request. Without a step limit, runs are longer and cost per success doubled.
+
 ### Reference agents and comparisons
 
 ```bash
