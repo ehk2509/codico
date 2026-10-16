@@ -54,7 +54,7 @@ async function run() {
   });
   await set('maxIterations', 12);
   await scenario('review_dispute', ({ reqs, error }) => {
-    const told = reqs.filter(r => /\[System Acceptance\] An independent reviewer, who saw only the evidence and your tests, does not agree that these are shown/.test(r.lastUser)).length;
+    const told = reqs.filter(r => /\[System Acceptance\] An independent reviewer, who saw only the user's request, the evidence and your tests, does not agree that these are shown/.test(r.lastUser)).length;
     const reason = reqs.some(r => /AC1 live\/rv\.js exports 2 — /.test(r.lastUser));
     return { ok: !error && told === 1 && reason, why: `the reviewer's objection reached the agent before the reply ended: ${told} time(s) (once expected), with its reason: ${reason}; ${reqs.length} requests` };
   });
@@ -909,7 +909,7 @@ async function run() {
     const ac1 = acc.criteria[0] || { evidence: [] };
     const reproduced = /\[browser_expect: #count shows "Count: 1"\] FAILED: the element shows "Count: 01".*Recorded as evidence E1/.test(said) && ac1.reproduced === true;
     const verified = acc.verdict === 'accepted' && ac1.status === 'verified' && ac1.evidence.length === 1 && ac1.evidence[0].id === 'E2' && ac1.evidence[0].passed === true;
-    const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => /independent acceptance reviewer/.test(e.lastUser || '') || e.scenario === null);
+    const reviewed = !!ac1.review && ac1.review.agrees === true && reqs.length > 0 && (await getLog()).slice(before).some(e => e.reviewer);
     const consoleSeen = /Errors in the page since the last step[\s\S]*WEBAPP-CONSOLE-ERROR/.test(said) && acc.consoleErrors.some(t => /WEBAPP-CONSOLE-ERROR/.test(t));
     const folder = acc.evidenceFolder ? path.join(ws, acc.evidenceFolder) : '';
     const files = folder && fs.existsSync(folder) ? fs.readdirSync(folder) : [];
