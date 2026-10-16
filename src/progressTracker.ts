@@ -44,4 +44,7 @@ export class ProgressTracker {
     get idleSteps(): number { return this._idle; }
 
     stalled(limit = MAX_STEPS_WITHOUT_PROGRESS): boolean { return this._changed && this._idle >= limit; }
+
+    /** A fresh start (the turn was handed to another model). */
+    reset(): void { this._idle = 0; }
 }

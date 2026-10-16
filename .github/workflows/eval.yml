@@ -14,6 +14,11 @@ on:
         required: false
         default: deepseek/deepseek-v4-flash
         type: string
+      escalation_model:
+        description: Codico only — a stronger OpenRouter model the task is handed to when the reviewer disputes it or it stalls (empty = off)
+        required: false
+        default: ''
+        type: string
       filter:
         description: Regex matched against task id or category
         required: true
@@ -59,6 +64,7 @@ jobs:
           AGENT: ${{ inputs.agent }}
           MODEL: ${{ inputs.model }}
           FILTER: ${{ inputs.filter }}
+          ESCALATION: ${{ inputs.escalation_model }}
           LIMIT: ${{ inputs.limit }}
           REPETITIONS: ${{ inputs.repetitions }}
         run: |
@@ -68,6 +74,7 @@ jobs:
           xvfb-run -a npm run eval:coding -- \
             --agent "$AGENT" \
             ${MODEL:+--model "$MODEL"} \
+            ${ESCALATION:+--escalation-model "$ESCALATION"} \
             --filter "$FILTER" \
             --limit "$LIMIT" \
             --repetitions "$REPETITIONS"

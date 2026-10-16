@@ -20,6 +20,7 @@ import { ExplorationController } from './explorationController';
 import { shouldRunAgentIteration } from './iterationBudget';
 import { classifyCheck } from './patchPassport';
 import { ProgressTracker, MAX_STEPS_WITHOUT_PROGRESS, StepTool } from './progressTracker';
+import { REVIEW_DISPUTE_PREFIX } from './verifyRuntime';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { TaskUsage } from './taskUsage';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -124,7 +125,19 @@ export class AgentTurn {
         const reminders = new ReminderLog();
         try {
             // One request to the selected provider. The main loop and its subagents share it.
-            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => isCli
+            // A stronger model the turn is handed to when the reviewer disputes the request or the turn stops progressing
+            // (codico.escalationModel, an OpenRouter model; off when empty). Once per turn.
+            let escalatedTo: string | undefined;
+            const escalate = (why: string): boolean => {
+                const target = (config.get<string>('escalationModel', '') ?? '').trim();
+                if (escalatedTo || !target || !apiKey || target === model) { return false; }
+                escalatedTo = target;
+                this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⤴️ Handing the rest of this task to ${target}: ${why}\n\n` });
+                return true;
+            };
+            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => escalatedTo
+                ? streamOpenRouter(apiKey, history, escalatedTo, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)
+                : isCli
                 ? streamCliModel(model, history, prefix, signal, this._host.thinkingEffort, override)
                 : isOllama
                 ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override)
@@ -142,6 +155,9 @@ export class AgentTurn {
             let checkResultUnread = false;
             // A turn that keeps going without changing code or learning anything new from its checks is stopped
             const progress = new ProgressTracker();
+            // Whether a tool ran in this turn, and whether a reply that ended without text was asked for its answer
+            let turnRanTools = false;
+            let askedForAnswer = false;
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
@@ -576,6 +592,7 @@ export class AgentTurn {
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
                     const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
+                        if (acceptanceGuidance.startsWith(REVIEW_DISPUTE_PREFIX)) { escalate('the independent reviewer disputes that the request is met.'); }
                         this._host.history.push({ role: 'user', content: acceptanceGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
@@ -592,6 +609,13 @@ export class AgentTurn {
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
                         continue;
                     }
+                    // Work was done but the reply ends without a word: the user would get no account of it
+                    if (!fullContent.trim() && turnRanTools && !askedForAnswer) {
+                        askedForAnswer = true;
+                        this._host.history.push({ role: 'user', content: '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.' });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
                     break;
                 }
 
@@ -601,7 +625,9 @@ export class AgentTurn {
                 blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
                 checkResultUnread = ranCheck;
                 progress.step(stepTools);
-                if (progress.stalled()) {
+                if (ranTool) { turnRanTools = true; }
+                if (progress.stalled() && escalate(`${MAX_STEPS_WITHOUT_PROGRESS} steps without a code change or a new check result.`)) { progress.reset(); }
+                else if (progress.stalled()) {
                     this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⚠️ Stopped: ${MAX_STEPS_WITHOUT_PROGRESS} steps in a row without a code change or a new check result. The work is left as it is; see the change report for what is verified.` });
                     break;
                 }

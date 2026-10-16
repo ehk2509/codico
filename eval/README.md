@@ -182,6 +182,22 @@ The five failures:
 
 In four of them the agent's criteria and tests covered its own version of the request, and the reviewer agreed, because the reviewer is not shown the request. Without a step limit, runs are longer and cost per success doubled.
 
+### The same failures with a stronger model (2026-10-16)
+
+The five clean-run failures were rerun one task per run, with the same Codico and the same tasks. On Claude Sonnet 5.5 (`anthropic/claude-sonnet-5.5`):
+
+| Task | DeepSeek V4 Flash | Claude Sonnet 5.5 |
+|---|---|---|
+| tools-edit-nested-fences | failed (129 steps, 5.0M tokens) | **passed** (20 steps, 0.5M) |
+| tools-write-nested-fences | failed 3 of 5 runs | **passed** (17 steps, 0.46M) |
+| tools-fingerprint-arguments | passed 2 of 4 (47–59 steps) | **passed** (8 steps, 0.11M) |
+| stream-unexpected-eof | passed 2 of 5 (54–145 steps) | **passed** (26 steps, 0.94M) |
+| projection-current-reads | failed | failed: its prompt had not named the budget option `maxCurrentReadChars`, which the verifier passes. The prompt now names it. |
+
+Where DeepSeek failed, the stronger model's judgement made the difference. Codico's harness was the same in both runs. `codico.escalationModel` (and the workflow's `escalation_model` input) hands a task to a stronger model when the reviewer disputes it or it stalls. Costs now use the cost the provider reports when there is one, so cache discounts and the escalated model's requests are included.
+
+`scripts/eval/suiteCheck.js` now also checks the option keys the verifiers pass to the functions they call.
+
 ### Reference agents and comparisons
 
 ```bash

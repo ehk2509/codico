@@ -34,6 +34,7 @@ async function run() {
       model,
       maxIterations,
       maxTotalTokens,
+      escalationModel: process.env.CODICO_EVAL_ESCALATION_MODEL || '',
       accoEnabled,
       accoBaseUrl,
     });

@@ -113,10 +113,17 @@ function unrelatedFiles(changedFiles, referenceFiles, newFiles = []) {
 
 // ── Cost ─────────────────────────────────────────────────────────────────────
 
-/** Dollars for a run's tokens, at prices per token; null when either is unknown. */
+/**
+ * Dollars for a run: the cost the provider reported (cache discounts and every model the run
+ * used included) when there is one, otherwise its tokens at prices per token, cached prompt
+ * tokens at the cache price; null when neither is known.
+ */
 function tokenCost(metrics, pricing) {
+  if (metrics && Number.isFinite(metrics.costUsd) && metrics.costUsd > 0) { return metrics.costUsd; }
   if (!metrics || !pricing || !Number.isFinite(pricing.prompt) || !Number.isFinite(pricing.completion)) { return null; }
-  return (metrics.promptTokens || 0) * pricing.prompt + (metrics.completionTokens || 0) * pricing.completion;
+  const cached = Math.min(metrics.cachedTokens || 0, metrics.promptTokens || 0);
+  const cacheRead = Number.isFinite(pricing.cacheRead) ? pricing.cacheRead : pricing.prompt;
+  return ((metrics.promptTokens || 0) - cached) * pricing.prompt + cached * cacheRead + (metrics.completionTokens || 0) * pricing.completion;
 }
 
 // ── One run ──────────────────────────────────────────────────────────────────

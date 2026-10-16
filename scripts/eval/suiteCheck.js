@@ -46,6 +46,12 @@ function unguessableNames(task) {
       const used = new RegExp(`\\b${name}\\b`).test(body);
       const atBase = base !== null && new RegExp(`\\b${name}\\b`).test(base);
       if (used && !atBase && !task.prompt.includes(name)) { missing.add(`${m[3]}.${name}`); }
+      // Options passed to it as an object ({ maxCurrentReadChars: 60_000 }): a key the base lacks must be named too
+      for (const call of body.matchAll(new RegExp(`\\b${name}\\(([^;()]*)\\)`, 'g'))) {
+        for (const key of [...call[1].matchAll(/[{,]\s*([a-z][A-Za-z0-9]{3,})\s*:/g)].map(k => k[1])) {
+          if (base !== null && !new RegExp(`\\b${key}\\b`).test(base) && !task.prompt.includes(key)) { missing.add(`${m[3]}.${name}({ ${key} })`); }
+        }
+      }
     }
   }
   return [...missing];

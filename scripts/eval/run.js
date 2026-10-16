@@ -96,7 +96,7 @@ async function modelPricing(model) {
     const response = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(15_000) });
     const entry = ((await response.json()).data || []).find(m => m.id === model);
     const pricing = entry && entry.pricing;
-    return pricing ? { prompt: Number(pricing.prompt), completion: Number(pricing.completion) } : null;
+    return pricing ? { prompt: Number(pricing.prompt), completion: Number(pricing.completion), cacheRead: Number(pricing.input_cache_read || pricing.prompt) } : null;
   } catch {
     return null;
   }
@@ -235,6 +235,7 @@ async function main() {
           CODICO_EVAL_PROMPT: task.prompt,
           CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations ?? 16),
           CODICO_EVAL_MAX_TOTAL_TOKENS: String(maxTotalTokens),
+          CODICO_EVAL_ESCALATION_MODEL: arg('--escalation-model', ''),
           CODICO_EVAL_OUTPUT: rawAgentOutput,
           CODICO_EVAL_INSTANCE_DIR: instanceDir,
         };

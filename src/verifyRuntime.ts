@@ -27,6 +27,10 @@ export const DEFAULT_APP_WAIT_SECONDS = 90;
 export const MAX_APP_WAIT_SECONDS = 300;
 /** Reminders to check the criteria before a reply may end, per turn. */
 export const MAX_ACCEPTANCE_REMINDERS = 2;
+/** Times a disputed acceptance goes back to the agent before the reply may end with it. */
+export const MAX_REVIEW_DISPUTES = 2;
+/** How a reviewer's dispute starts: the agent loop may hand the turn to a stronger model on it. */
+export const REVIEW_DISPUTE_PREFIX = '[System Acceptance] An independent reviewer';
 const REVIEW_SYSTEM = 'You are an independent acceptance reviewer. You did not write the change. Judge only from the evidence given. Be strict: a criterion is shown only when the evidence exercises exactly what it says.';
 
 const describe = (tool: BrowserExpectTool) => tool.selector
@@ -48,7 +52,7 @@ export class VerifyRuntime {
     private _requestReminded = false;
     /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
     private _reviewedState = '';
-    private _disputeSent = false;
+    private _disputes = 0;
     /** The user's request of this turn, for the reviewer. */
     private _request = '';
 
@@ -70,7 +74,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputeSent = false;
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0;
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -154,14 +158,15 @@ export class VerifyRuntime {
      */
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
         const reminder = this.guidance();
-        if (reminder || !enabled || !reviewer || this._disputeSent) { return reminder; }
-        await this._review(reviewer, signal);
+        if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        // Reviewed again only when the code or the evidence changed since the last review
+        if (this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
         const disputed = (report?.criteria.filter(c => c.review?.agrees === false) ?? []).map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`);
         if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
-        this._disputeSent = true;
-        return `[System Acceptance] An independent reviewer, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n` +
+        this._disputes++;
+        return `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n` +
             disputed.join('\n') +
             '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';
     }

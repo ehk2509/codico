@@ -432,6 +432,16 @@ async function run() {
     const noSecret = !!second && !/SECRET-TOKEN-12345|OUTSIDE-SECRET|fixtures\/link\b|^\d+\. fixtures\/secret\.txt/m.test(results);
     return { ok: !error && reqs.length === 2 && ranked && noSecret, why: `${reqs.length} requests; the definition ranked first, with its symbol and importer: ${ranked}; neither the ignored secret file nor the file behind a symbolic link out of the workspace is in any result: ${noSecret}` };
   });
+  // The reviewer disputes the request: the rest of the turn goes to the escalation model
+  await set('escalationModel', 'fake/strong-model');
+  await scenario('review_escalate', ({ reqs, error }) => {
+    const models = [...new Set(reqs.map(r => r.model))];
+    const handedOver = reqs.some(r => r.model === 'deepseek/deepseek-v4-flash') && reqs.some(r => r.model === 'fake/strong-model');
+    const firstStrong = reqs.findIndex(r => r.model === 'fake/strong-model');
+    const afterDispute = firstStrong > 0 && reqs.slice(0, firstStrong).some(r => r.reviewer);
+    return { ok: !error && handedOver && afterDispute, why: `models used: ${models.join(', ')}; handed to the escalation model: ${handedOver}, after the reviewer's dispute: ${afterDispute}${error ? '; error: ' + error : ''}` };
+  });
+  await set('escalationModel', '');
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
   await scenario('cs_fresh', ({ reqs, error }) => {
     const text = reqs.map(r => r.lastUser).join('\n');

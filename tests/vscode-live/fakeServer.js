@@ -6,7 +6,8 @@
 const http = require('node:http'), fs = require('node:fs'), path = require('node:path');
 const F = '```';
 const tool = (name, body) => F + name + '\n' + body + '\n' + F + '\n';
-const VERIFY = tool('run_terminal', 'command: node -e "console.log(\'LIVE-VERIFY ok\')"');
+// A real check (Codico's verification gate accepts only a test, build, type-check or lint command)
+const VERIFY = tool('run_terminal', 'command: node --test fixtures/LIVE-VERIFY.test.js');
 const COMPACTION_STEPS = ['fixtures/config.txt', 'fixtures/notes.txt', 'live/keep-me.txt', 'fixtures/config.txt\nstart_line: 2', 'fixtures/notes.txt\nstart_line: 1\nend_line: 1', 'live/keep-me.txt\nstart_line: 1']
   .map((f, i) => `Step ${i + 1}.\n\n` + tool('read_file', 'filepath: ' + f)).concat(['The original request was handled.']);
 const GOOD_SUMMARY = 'Summary of the earlier work: the agent read fixtures/config.txt and fixtures/notes.txt for the task, found the settings it needed and changed no file yet. Outstanding: finish the task.';
@@ -32,6 +33,10 @@ const SCRIPTS = (port) => ({
   review_dispute: [tool('acceptance', 'action: criteria\ncriteria:\n- live/rv.js exports 2'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
     tool('write_file', 'filepath: live/rv.js\ncontent:\nmodule.exports = 2;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
     tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown: the test does not load live/rv.js. It is not met yet.'],
+  // As review_dispute, run with an escalation model set: the dispute hands the turn over
+  review_escalate: [tool('acceptance', 'action: criteria\ncriteria:\n- live/esc.js exports 3'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('write_file', 'filepath: live/esc.js\ncontent:\nmodule.exports = 3;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown yet: the test does not load live/esc.js.'],
   check_read: [tool('run_terminal', 'command: node --test live/check-read.test.js'), 'The tests pass: CHECK-READ-DONE.'],
   timeout: [tool('run_terminal', 'command: sleep 30'), 'It timed out.'],
   bigoutput: [tool('run_terminal', 'command: seq 1 200000'), 'Lots of output.'],

@@ -77,7 +77,7 @@ export function classifyCheck(command: string): CheckKind | null {
 }
 
 /** A pipe hides the exit code of the command before it (unless the shell is told otherwise). */
-function exitCodeHidden(command: string): boolean {
+export function exitCodeHidden(command: string): boolean {
     const unquoted = command.replace(/'[^']*'|"[^"]*"/g, '');
     return /(?<!\|)\|(?!\|)/.test(unquoted) && !/pipefail/.test(command);
 }
@@ -98,6 +98,11 @@ export function testSummary(output: string): { passed: number; failed: number } 
         ?? pair(last(/^\s*(\d+) passing\b/gm), last(/^\s*(\d+) failing\b/gm))                         // mocha
         ?? pair(last(/test result: \w+\. (\d+) passed/g), last(/test result: \w+\. \d+ passed; (\d+) failed/g)) // cargo
         ?? pair(last(/^\s*(\d+) passed\b/gm), last(/^\s*(\d+) failed\b/gm));                          // playwright and others
+}
+
+/** Whether a check's result cannot be told: its exit code is hidden by a pipe and it printed no test summary. */
+export function checkResultHidden(command: string, output: string): boolean {
+    return exitCodeHidden(command) && !(classifyCheck(command) === 'test' && testSummary(output));
 }
 
 // ── Lines changed ────────────────────────────────────────────────────────────

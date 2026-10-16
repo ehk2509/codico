@@ -18,6 +18,10 @@ export interface EvaluationRunMetrics {
     projectedCharsOmitted: number;
     acco: AccoProviderTelemetry;
     trace: EvaluationToolTraceEvent[];
+    /** The cost the provider reported for the task (cache discounts and every model included), when it reports one. */
+    costUsd?: number;
+    /** Prompt tokens served from the provider's cache. */
+    cachedTokens: number;
 }
 
 export interface EvaluationSnapshotInput {
@@ -31,6 +35,8 @@ export interface EvaluationSnapshotInput {
     budgetExceeded: boolean;
     projectedCharsOmitted: number;
     trace: EvaluationToolTraceEvent[];
+    costUsd?: number;
+    cachedTokens?: number;
 }
 
 export function buildEvaluationRunMetrics(
@@ -50,5 +56,7 @@ export function buildEvaluationRunMetrics(
         projectedCharsOmitted: input.projectedCharsOmitted,
         acco: getAccoProviderTelemetry(),
         trace: [...input.trace],
+        ...(input.costUsd !== undefined ? { costUsd: input.costUsd } : {}),
+        cachedTokens: input.cachedTokens ?? 0,
     };
 }

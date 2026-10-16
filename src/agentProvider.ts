@@ -257,6 +257,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _evalSteps = 0;
     private _evalToolCalls = 0;
     private _evalPromptTokens = 0;
+    private _evalUsage: TaskUsage | undefined;
     private _evalCompletionTokens = 0;
     private _evaluationTokenBudget = 0;
     private _evalBudgetExceeded = false;
@@ -819,7 +820,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             filesWritten: this._filesWrittenThisTurn, promptTokens: this._evalPromptTokens,
             completionTokens: this._evalCompletionTokens, historyMessages: this._history.length,
             budgetExceeded: this._evalBudgetExceeded, projectedCharsOmitted: this._evalProjectedCharsOmitted,
-            trace: this._evalTrace,
+            trace: this._evalTrace, costUsd: this._evalUsage?.costUsd, cachedTokens: this._evalUsage?.cachedTokens ?? 0,
         });
     }
 
@@ -956,7 +957,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         const maxIterations = config.get<number>('maxIterations', 0);
         const verificationGraceIterations = config.get<number>('verificationGraceIterations', 4); const mutationGraceIterations = config.get<number>('mutationGraceIterations', 3);
         this._passport = new PassportRecorder(); this._verify.beginTurn(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath, rawText);
-        const taskUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
+        const taskUsage = this._evalUsage = new TaskUsage(config.get<number>('taskTokenBudget', 0));
         const nativeToolCalling = config.get<boolean>('nativeToolCalling', true);
         setStreamStallTimeout(config.get<number>('streamStallTimeoutSeconds', 300));
         const accoOptimizer = accoOptimizerFromConfiguration(config, !isOllama && !isCli);

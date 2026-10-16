@@ -75,6 +75,10 @@ test('edit precision: source files outside the historical fix are unrelated; tes
 test('cost from tokens at per-token prices; unknown prices give no cost', () => {
   assert.equal(tokenCost({ promptTokens: 1_000_000, completionTokens: 100_000 }, { prompt: 0.3e-6, completion: 1.2e-6 }).toFixed(4), '0.4200');
   assert.equal(tokenCost({ promptTokens: 1 }, null), null);
+  // The cost the provider reported wins: it includes cache discounts and every model the run used
+  assert.equal(tokenCost({ promptTokens: 1_000_000, completionTokens: 0, costUsd: 0.31 }, { prompt: 2e-6, completion: 10e-6 }), 0.31);
+  // Without it, cached prompt tokens are priced at the cache price
+  assert.equal(tokenCost({ promptTokens: 1_000_000, cachedTokens: 900_000, completionTokens: 0 }, { prompt: 2e-6, completion: 10e-6, cacheRead: 0.1e-6 }).toFixed(2), '0.29');
 });
 
 test("Claude Code's run read from its event stream: the checks it ran, after its last edit, and its cost", () => {

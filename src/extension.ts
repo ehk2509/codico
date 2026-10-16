@@ -52,6 +52,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 model: string;
                 maxIterations?: number;
                 maxTotalTokens?: number;
+                escalationModel?: string;
                 accoEnabled?: boolean;
                 accoBaseUrl?: string;
                 /** Keys for direct providers, by provider id (e.g. { deepseek: '…' }). */
@@ -67,6 +68,7 @@ export function activate(context: vscode.ExtensionContext): void {
                 const cfg = vscode.workspace.getConfiguration('codico');
                 await cfg.update('model', options.model, vscode.ConfigurationTarget.Global);
                 await cfg.update('maxIterations', options.maxIterations ?? 16, vscode.ConfigurationTarget.Global);
+                await cfg.update('escalationModel', options.escalationModel ?? '', vscode.ConfigurationTarget.Global);
                 await cfg.update('verificationGraceIterations', 4, vscode.ConfigurationTarget.Global);
                 await cfg.update('mutationGraceIterations', 3, vscode.ConfigurationTarget.Global);
                 await cfg.update('accoEnabled', options.accoEnabled === true, vscode.ConfigurationTarget.Global);

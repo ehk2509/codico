@@ -521,6 +521,11 @@
           "default": true,
           "description": "After a reply that verified acceptance criteria, one more model request, without tools and without the agent's reasoning, reviews whether the recorded evidence really shows each criterion. A criterion it disputes is not counted as accepted."
         },
+        "codico.escalationModel": {
+          "type": "string",
+          "default": "",
+          "description": "A stronger OpenRouter model (e.g. anthropic/claude-sonnet-5.5) that takes over the rest of a task when the independent reviewer disputes that the request is met, or when the task makes no progress for 20 steps. Once per task; needs an OpenRouter key. Empty: off."
+        },
         "codico.backgroundTasksRunIn": {
           "type": "string",
           "enum": [
