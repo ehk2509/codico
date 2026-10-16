@@ -198,6 +198,15 @@ Where DeepSeek failed, the stronger model's judgement made the difference. Codic
 
 `scripts/eval/suiteCheck.js` now also checks the option keys the verifiers pass to the functions they call.
 
+### A verifier corrected in v7: stream-resume-overlap
+
+v6's verifier for stream-resume-overlap followed only *exported* functions written `export function name(`. It rejected two valid solutions from Claude Haiku 5.5, which applied the overlap calculation on the resume path through a generator (`export async function* trimResumedContent`) and an internal helper. v7 uses a corrected copy, `eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js`, which follows every function of the module, generators included. The archived v6 suite keeps the original. The corrected copy was checked from every side:
+
+- the historical fix passes;
+- no change fails;
+- both Haiku solutions pass;
+- both Haiku solutions **fail** once their `agentProvider.ts` wiring is removed.
+
 ### Reference agents and comparisons
 
 ```bash

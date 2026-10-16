@@ -65,7 +65,9 @@ test('burned v1-v6 suites remain archived', () => {
 
 test('v7 retains integrated resume-overlap scoring from v5', () => {
   const task = suite.tasks.find(t => t.id === 'stream-resume-overlap');
-  assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.verifier.js');
+  // v7's copy also follows internal helpers and generator functions; v6 keeps the original
+  assert.equal(task.verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js');
+  assert.equal(v6.tasks.find(t => t.id === 'stream-resume-overlap').verifierPath, 'eval/verifiers/streamResumeOverlapIntegrated.verifier.js');
   const source = fs.readFileSync(path.join(root, task.verifierPath), 'utf8');
   assert.match(source, /integratedRecoveryCall/);
   assert.match(source, /used directly or through an exported streamCompletion recovery helper/);
@@ -98,7 +100,7 @@ test('v7 keeps exactly the v6 tasks that could be scored, unchanged but for the 
     const now = suite.tasks.find(t => t.id === id);
     const then = v6.tasks.find(t => t.id === id);
     assert.ok(now.prompt.startsWith(then.prompt), id);
-    assert.deepEqual({ ...now, maxIterations: 16, prompt: then.prompt }, then, id);
+    assert.deepEqual({ ...now, maxIterations: 16, prompt: then.prompt, ...(then.verifierPath ? { verifierPath: then.verifierPath } : {}) }, then, id);
   }
   assert.equal(suite.tasks.filter(t => v6.tasks.some(o => o.id === t.id)).length, carried.length);
 });

@@ -25,7 +25,7 @@
       "testNamePattern": "resume overlap calculation is applied at the recovery seam",
       "maxIterations": 0,
       "verifierCommit": "463c761813544f8f6b6755441430937823070edb",
-      "verifierPath": "eval/verifiers/streamResumeOverlapIntegrated.verifier.js"
+      "verifierPath": "eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js"
     },
     {
       "id": "agent-unfulfilled-action",
