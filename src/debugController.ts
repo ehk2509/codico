@@ -108,12 +108,26 @@ export class DebugController implements vscode.Disposable {
 
     private _wake(): void { const waiters = this._waiters; this._waiters = []; for (const wake of waiters) { wake(); } }
 
-    private _ours(session: vscode.DebugSession): boolean { return !!this._run?.sessions.has(session.id); }
+    /**
+     * Whether a session belongs to the current run: the run's own, or one it started (a Node process),
+     * found through its parents. A child's first messages (its pause on entry) can arrive before VS Code
+     * reports it started, so it is recognised, and registered, here too.
+     */
+    private _belongs(session: vscode.DebugSession): boolean {
+        const run = this._run;
+        if (!run) { return false; }
+        for (let s: vscode.DebugSession | undefined = session; s; s = s.parentSession) {
+            if (run.sessions.has(s.id) || s.name === run.name) {
+                if (!run.sessions.has(session.id)) { run.sessions.set(session.id, session); }
+                return true;
+            }
+        }
+        return false;
+    }
 
     private _message(session: vscode.DebugSession, message: { type?: string; event?: string; body?: Record<string, unknown> }): void {
         const run = this._run;
-        const ours = this._ours(session) || session.name === run?.name;
-        if (!ours || !run) { return; }
+        if (!run || !this._belongs(session)) { return; }
         // VS Code sends its own exception settings (by default: none) when the adapter is ready. Ours are sent once the
         // adapter has answered those, so that they are the ones in force
         if (message.type === 'response' && (message as { command?: string }).command === 'setExceptionBreakpoints' && !this._exceptionsSet.has(session.id)) {

@@ -592,6 +592,13 @@ export class AgentTurn {
                         this._host.history.push({ role: 'user', content: verificationGuidance });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
+                    // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
+                    if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
+                        askedToFinish = true;
+                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
                     const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
@@ -609,13 +616,6 @@ export class AgentTurn {
                             content: '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
                                 'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.',
                         });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
-                        continue;
-                    }
-                    // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
-                    if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
-                        askedToFinish = true;
-                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
                         continue;
                     }
