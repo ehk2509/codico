@@ -11,7 +11,7 @@ import { PassportRecorder } from './patchPassport';
 import { SubagentHost } from './subagent';
 import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
-import { requestCheckGuidance } from './requestCheck';
+import { requestCheckGuidance, triviallyCovered } from './requestCheck';
 import { isDocumentationFile } from './agentEfficiency';
 import { WorkspaceTools } from './workspaceTools';
 
@@ -30,6 +30,8 @@ export const MAX_APP_WAIT_SECONDS = 300;
 export const MAX_ACCEPTANCE_REMINDERS = 2;
 /** Times a disputed acceptance goes back to the agent before the reply may end with it. */
 export const MAX_REVIEW_DISPUTES = 2;
+/** Test files: what the reviewer reads to judge the evidence. */
+const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/;
 /** How a reviewer's dispute starts: the agent loop may hand the turn to a stronger model on it. */
 export const REVIEW_DISPUTE_PREFIX = '[System Acceptance] An independent reviewer';
 const REVIEW_SYSTEM = 'You are an independent acceptance reviewer. You did not write the change. Judge only from the evidence given. Be strict: a criterion is shown only when the evidence exercises exactly what it says.';
@@ -124,9 +126,12 @@ export class VerifyRuntime {
                     post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: ok ? `${acceptance.criteria.length} criteria` : 'criteria', success: ok, error: ok ? undefined : 'No criteria' });
                     return ok ? `[acceptance criteria]\n${listed}\nCheck each on the final code, then record it with action "verify" and the evidence ids that show it.` : `[acceptance] ${listed}`;
                 }
-                const claimed = acceptance.claim(tool.criterion ?? '', tool.result ?? 'pass', tool.how ?? '', tool.evidence ?? []);
-                post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: `${tool.criterion} ${tool.result}`, success: claimed.ok, error: claimed.ok ? undefined : 'Not recorded' });
-                return `[acceptance verify] ${claimed.text}`;
+                // Several criteria the same evidence shows are recorded in one call (criterion: "AC1, AC2")
+                const ids = (tool.criterion ?? '').split(/[\s,;]+/).filter(Boolean);
+                const claims = (ids.length ? ids : ['']).map(id => acceptance.claim(id, tool.result ?? 'pass', tool.how ?? '', tool.evidence ?? []));
+                const ok = claims.every(c => c.ok);
+                post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: `${tool.criterion} ${tool.result}`, success: ok, error: ok ? undefined : 'Not recorded' });
+                return `[acceptance verify] ${claims.map(c => c.text).join(' ')}`;
             }
         }
     }
@@ -149,16 +154,18 @@ export class VerifyRuntime {
     /** Before the reply may end: the criteria not verified on the final code, as a reminder; undefined when there is nothing to say. */
     guidance(): string | undefined {
         if (this._reminders >= MAX_ACCEPTANCE_REMINDERS) { return undefined; }
+        // Everything there is to say before the reply may end goes in one message: each one costs a step
         const request = this._requestGuidance();
-        if (request) { return request; }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
         // Failing criteria too: a reply must not present the work as complete while one fails
         const pending = report?.criteria.filter(c => c.status !== 'verified') ?? [];
-        if (pending.length === 0) { return undefined; }
-        this._reminders++;
-        return `[System Acceptance] Not verified on the final code yet:\n${pending.map(criterionLine).join('\n')}\n` +
-            'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record it with acceptance verify. ' +
-            'If one cannot be checked or is not met, record it as failing or say so plainly in your answer; do not present the work as complete.';
+        if (pending.length) { this._reminders++; }
+        const criteria = pending.length
+            ? `[System Acceptance] Not verified on the final code yet:\n${pending.map(criterionLine).join('\n')}\n` +
+                'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record them with acceptance verify (several at once when the same evidence shows them). ' +
+                'If one cannot be checked or is not met, record it as failing or say so plainly in your answer; do not present the work as complete.'
+            : undefined;
+        return [request, criteria].filter(Boolean).join('\n\n') || undefined;
     }
 
     /**
@@ -209,6 +216,8 @@ export class VerifyRuntime {
         const report = passport.acceptance.build(passport.lastChange);
         if (signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
         this._reviewedState = this._state();
+        // A small change whose every criterion rests on a failure reproduced and then fixed: no review request
+        if (triviallyCovered(passport.build())) { return; }
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
         try {
             const built = passport.build();
@@ -228,7 +237,7 @@ export class VerifyRuntime {
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
+        return paths.filter(p => TEST_PATH.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
                 return [{ path: p, text: text.length > 8000 ? `${text.slice(0, 8000)}\n… (cut)` : text }];

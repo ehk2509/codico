@@ -8,7 +8,7 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 import { Approvals } from './approvals';
 import { Compaction } from './compaction';
 import { STOPPED_NOTE, addSteer, steerNote } from './steering';
-import { endsWithOfferOrQuestion, isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
+import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
 import { SubagentHost } from './subagent';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -21,6 +21,7 @@ import { shouldRunAgentIteration } from './iterationBudget';
 import { classifyCheck } from './patchPassport';
 import { ProgressTracker, MAX_STEPS_WITHOUT_PROGRESS, StepTool } from './progressTracker';
 import { REVIEW_DISPUTE_PREFIX } from './verifyRuntime';
+import { Escalation, TurnNudges } from './turnNudges';
 import { accoOptimizerFromConfiguration } from './accoProviderOptimizer';
 import { TaskUsage } from './taskUsage';
 import { appendPhaseNote, splitPhasePrompt } from './agentPhasePrompt';
@@ -129,16 +130,10 @@ export class AgentTurn {
             // One request to the selected provider. The main loop and its subagents share it.
             // A stronger model the turn is handed to when the reviewer disputes the request or the turn stops progressing
             // (codico.escalationModel, an OpenRouter model; off when empty). Once per turn.
-            let escalatedTo: string | undefined;
-            const escalate = (why: string): boolean => {
-                const target = (config.get<string>('escalationModel', '') ?? '').trim();
-                if (escalatedTo || !target || !apiKey || target === model) { return false; }
-                escalatedTo = target;
-                this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⤴️ Handing the rest of this task to ${target}: ${why}\n\n` });
-                return true;
-            };
-            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => escalatedTo
-                ? streamOpenRouter(apiKey, history, escalatedTo, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)
+            const escalation = new Escalation(config.get<string>('escalationModel', '') ?? '', model, !!apiKey, text => this._host.post({ type: 'appendContent', id: msgId, text }));
+            const escalate = (why: string): boolean => escalation.escalate(why);
+            const requestModel = (history: ChatMessage[], prefix: string | undefined, override: string | undefined, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> => escalation.model
+                ? streamOpenRouter(apiKey, history, escalation.model, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)
                 : isCli
                 ? streamCliModel(model, history, prefix, signal, this._host.thinkingEffort, override)
                 : isOllama
@@ -157,10 +152,9 @@ export class AgentTurn {
             let checkResultUnread = false;
             // A turn that keeps going without changing code or learning anything new from its checks is stopped
             const progress = new ProgressTracker();
-            // Whether a tool ran in this turn, and whether a reply that ended without text was asked for its answer
+            // Whether a tool ran in this turn; the nudges that keep it going, efficient and honest (once each)
             let turnRanTools = false;
-            let askedForAnswer = false;
-            let askedToFinish = false;
+            const nudges = new TurnNudges();
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
@@ -210,6 +204,7 @@ export class AgentTurn {
                 let ranTool = false;
                 let ranCheck = false;
                 const stepTools: StepTool[] = [];
+                let stepReads = 0;
                 const dispatchToolCall = async (tool: ToolCall): Promise<{ keepGoing: boolean; result: string }> => {
                     if (loopDetected) {
                         const skipped = `[System] Not executed: \`${tool.type}\` came after a repeated tool call in the same response. Change your approach first.`;
@@ -254,6 +249,7 @@ export class AgentTurn {
                         let result = this._host.lastInlineResult ?? `[${tool.type}] completed`;
                         this._host.lastInlineResult = undefined;
                         if (explorationCheck.guidance) { result += `\n\n${reminders.say(explorationCheck.guidance)}`; }
+                        result += nudges.batchHint(++stepReads);
                         inlineToolResults.push(result);
                         return { keepGoing: true, result };
                     }
@@ -593,12 +589,8 @@ export class AgentTurn {
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
                     }
                     // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
-                    if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
-                        askedToFinish = true;
-                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
-                        continue;
-                    }
+                    const finish = nudges.askToFinish(fullContent, turnRanTools, () => !!this._host.workUnfinished?.());
+                    if (finish) { this._host.history.push({ role: 'user', content: finish }); this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue; }
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
                     const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
@@ -620,12 +612,8 @@ export class AgentTurn {
                         continue;
                     }
                     // Work was done but the reply ends without a word: the user would get no account of it
-                    if (!fullContent.trim() && turnRanTools && !askedForAnswer) {
-                        askedForAnswer = true;
-                        this._host.history.push({ role: 'user', content: '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.' });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
-                        continue;
-                    }
+                    const answer = nudges.askForAnswer(fullContent, turnRanTools);
+                    if (answer) { this._host.history.push({ role: 'user', content: answer }); this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue; }
                     break;
                 }
 
@@ -635,6 +623,7 @@ export class AgentTurn {
                 blockedOnlyIterations = ranTool ? 0 : blockedOnlyIterations + 1;
                 checkResultUnread = ranCheck;
                 progress.step(stepTools);
+                nudges.stepDone(stepReads, stepTools.length);
                 if (ranTool) { turnRanTools = true; }
                 if (progress.stalled() && escalate(`${MAX_STEPS_WITHOUT_PROGRESS} steps without a code change or a new check result.`)) { progress.reset(); }
                 else if (progress.stalled()) {

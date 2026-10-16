@@ -19,3 +19,21 @@ export function requestCheckGuidance(passport: PatchPassport | undefined): strin
         (reproduced ? '' : '- Show it on the user\'s own case: a test of exactly the scenario they described, which fails without your change and passes with it. If no check of yours failed before your change, you have not shown the problem was reproduced.\n') +
         '- If you replaced the requested behavior with something else (a new syntax, option or mode that callers must switch to), the request is not met: fix it as asked, or say plainly what you did instead.';
 }
+
+/** The largest source change (lines added and removed) whose review may be skipped. */
+export const TRIVIAL_CHANGE_LINES = 20;
+const TEST_FILE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/;
+
+/**
+ * A change the independent review would add little to: small (at most TRIVIAL_CHANGE_LINES source
+ * lines, tests and docs aside), every criterion verified, each on a check that failed before the
+ * change and passes after it (the failure reproduced, then fixed).
+ */
+export function triviallyCovered(passport: PatchPassport | undefined): boolean {
+    const acceptance = passport?.acceptance;
+    if (!passport || !acceptance || acceptance.criteria.length === 0 || acceptance.criteria.some(c => c.status !== 'verified')) { return false; }
+    const source = passport.files.filter(f => !isDocumentationFile(f.path) && !TEST_FILE.test(f.path.replace(/\\/g, '/')));
+    const lines = source.reduce((n, f) => n + f.added + f.removed, 0);
+    const fixed = new Set(passport.checks.filter(c => c.fixed && !c.stale).map(c => `${c.kind}: ${c.command}`));
+    return lines <= TRIVIAL_CHANGE_LINES && acceptance.criteria.every(c => c.evidence.some(e => e.kind === 'check' && fixed.has(e.description)));
+}

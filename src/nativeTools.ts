@@ -287,7 +287,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
             properties: {
                 action: { type: 'string', enum: ['criteria', 'verify'] },
                 criteria: { type: 'array', items: { type: 'string' } },
-                criterion: { type: 'string', description: 'AC1, AC2…' },
+                criterion: { type: 'string', description: 'AC1, or several shown by the same evidence: "AC1, AC2"' },
                 result: { type: 'string', enum: ['pass', 'fail'] },
                 evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids: E1, E2…' },
                 how: { type: 'string' },

@@ -102,6 +102,13 @@ export class WorkspaceTools {
             ? tool.command.slice(0, 80) + '\u2026'
             : tool.command;
 
+        // The same check, passed after the last change with nothing run since: its result stands
+        const already = this._host.passport().passedSinceChange(tool.command);
+        if (already) {
+            this._host.post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: `${shortCmd} (already passed)`, success: true });
+            return `[run_terminal: ${tool.command}] Not run again: it already passed after your last change (${already}), and nothing has changed or run since. Its result stands.`;
+        }
+
         // Confined by the operating system when the user asked for it; where that is required and not possible, not run at all
         const sandbox = await commandSandbox();
         if (sandbox.refusal) { this._host.post({ type: 'toolResult', id: msgId, tool: 'run_terminal', label: shortCmd, success: false, error: 'No sandbox' }); return `[run_terminal: ${tool.command}] ${sandbox.refusal}`; }

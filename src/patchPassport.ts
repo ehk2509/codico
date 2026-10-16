@@ -148,6 +148,8 @@ export class PassportRecorder {
     private _clock = 0;
     private readonly _files = new Map<string, FileRecord>();
     private readonly _checks = new Map<string, CheckRecord>();
+    /** When a command that is not a check last ran: it may have changed files Codico does not see (git stash, sed -i). */
+    private _lastOther = 0;
     /** The criteria of the request and the evidence for them, on the same clock as the changes and checks. */
     readonly acceptance = new AcceptanceRecorder(() => ++this._clock);
 
@@ -165,7 +167,7 @@ export class PassportRecorder {
     /** A command finished. Commands that are not checks are ignored; a check is also evidence, and its id is returned. */
     recordCommand(command: string, exitCode: number | null, output = ''): string | undefined {
         const kind = classifyCheck(command);
-        if (!kind) { return undefined; }
+        if (!kind) { this._lastOther = ++this._clock; return undefined; }
         const key = checkKey(command);
         const record = this._checks.get(key) ?? { command: key, kind, runs: [] };
         this._checks.set(key, record);
@@ -184,6 +186,17 @@ export class PassportRecorder {
         if (exitCode !== 0) { return { outcome: 'failed', detail: `exit ${exitCode}` }; }
         if (exitCodeHidden(command)) { return { outcome: 'unknown', detail: 'result hidden by a pipe' }; }
         return { outcome: 'passed', detail: 'exit 0' };
+    }
+
+    /**
+     * The result of this check when its last run passed after the last change, with no other command
+     * since (one may have changed files): running it again would show the same. Undefined otherwise.
+     */
+    passedSinceChange(command: string): string | undefined {
+        if (!classifyCheck(command)) { return undefined; }
+        const runs = this._checks.get(checkKey(command))?.runs ?? [];
+        const latest = runs[runs.length - 1];
+        return latest && latest.outcome === 'passed' && latest.at > this.lastChange && latest.at > this._lastOther ? latest.detail : undefined;
     }
 
     /** When the code last changed in this turn (0: it did not). */

@@ -137,8 +137,11 @@ async function main() {
   // Build the current Codico extension before VS Code loads it from
   // extensionDevelopmentPath. Historical task worktrees are compiled separately
   // by their verifier via npm test after the agent finishes.
-  const compile = run(npmCommand(), ['run', 'compile'], { inherit: true, timeout: 5 * 60_000 });
-  if (compile.status !== 0) { throw new Error('Failed to compile the Codico evaluation extension.'); }
+  // --skip-compile: already compiled (several runs started in parallel from one checkout)
+  if (!has('--skip-compile')) {
+    const compile = run(npmCommand(), ['run', 'compile'], { inherit: true, timeout: 5 * 60_000 });
+    if (compile.status !== 0) { throw new Error('Failed to compile the Codico evaluation extension.'); }
+  }
 
   // The benchmark driver uses the same VS Code test harness as CI, but it is
   // intentionally not a permanent production dependency.
@@ -267,7 +270,8 @@ async function main() {
         }
         costUsd = tokenCost(record.metrics, pricing);
         } else if (agentName === 'claude-code') {
-          const result = runClaudeCode(workspace, task.prompt, { model, timeoutMs: timeoutMinutes > 0 ? timeoutMinutes * 60_000 : 0, PassportRecorder });
+          // --claude-command: a Claude Code binary not on PATH (the one bundled with the VS Code extension)
+          const result = runClaudeCode(workspace, task.prompt, { model, timeoutMs: timeoutMinutes > 0 ? timeoutMinutes * 60_000 : 0, PassportRecorder, command: arg('--claude-command', 'claude') });
           record.agentOk = result.ok;
           record.agentTimedOut = result.timedOut;
           record.metrics = result.metrics;
