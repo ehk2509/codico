@@ -198,6 +198,19 @@ Where DeepSeek failed, the stronger model's judgement made the difference. Codic
 
 `scripts/eval/suiteCheck.js` now also checks the option keys the verifiers pass to the functions they call.
 
+### Claude Haiku 5.5 (2026-10-16): 29 of 30 at about $0.04 per solved task
+
+All 30 tasks ran on `anthropic/claude-haiku-5.5` as 15 runs of 2 tasks. Costs are the ones OpenRouter reported, prompt caching included.
+
+- **First pass: 26/30**, $1.07 in total, $0.04 per verified success, about 25 steps per task. Regression-free 26/26, edit precision 25/26, 2 false completions out of 14 claims.
+- **The four failures, each rerun on its own:**
+  - tools-fingerprint-arguments: passed once its prompt named `toolFingerprint` in `src/toolParser.ts`, which its verifier loads.
+  - tools-write-nested-fences: passed once Codico stopped letting an offer or a question end unfinished work. Haiku had asked which fix to make although the request named it.
+  - stream-resume-overlap: passed under the corrected v7 verifier (below). Both of Haiku's solutions had been correct.
+  - projection-current-reads: still fails. Haiku does not handle the existing "lines … are left out because they are already in this conversation" note. Sonnet 5.5 passed it; DeepSeek V4 Flash passed it in 1 of 3 attempts, in 115 steps and at $0.32.
+
+On these tasks Haiku is about as capable as DeepSeek V4 Flash and several times cheaper per solved task. It uses far fewer steps, and it reports unfinished work more honestly. A cheap default with escalation to Claude Sonnet 5.5 (`codico.escalationModel`) covers the tasks it misses.
+
 ### A verifier corrected in v7: stream-resume-overlap
 
 v6's verifier for stream-resume-overlap followed only *exported* functions written `export function name(`. It rejected two valid solutions from Claude Haiku 5.5, which applied the overlap calculation on the resume path through a generator (`export async function* trimResumedContent`) and an internal helper. v7 uses a corrected copy, `eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js`, which follows every function of the module, generators included. The archived v6 suite keeps the original. The corrected copy was checked from every side:
