@@ -55,6 +55,17 @@ export function normalizeFinishReason(reason: string): string {
  */
 const OFFER_OR_DONE_RE = /\b(?:if (?:you|that|this|needed|necessary|wanted|preferred)|let me know|just (?:say|tell|ask)|feel free|should you|happy to|would you like|want me to)\b|\b(?:task|work|change|fix) (?:is|was) (?:complete|completed|done|finished)\b|^\s*(?:final answer|done)\b/i;
 
+/**
+ * True when a reply ends by offering to go on or asking how to proceed ("Say the word and I'll
+ * start", "Which do you want?"): the agent stopped and handed the decision back.
+ */
+export function endsWithOfferOrQuestion(content: string): boolean {
+    const text = content.trim();
+    if (!text || text.includes('<clarify>')) { return false; }
+    const lastParagraph = text.split(/\n\s*\n/).pop() ?? '';
+    return /\?\s*$/.test(lastParagraph) || /\b(?:say the word|let me know|want me to|would you like|shall I|should I|if you(?:'d| would) like|I can (?:also )?(?:do|start|continue|finish|wire|add|implement))\b/i.test(lastParagraph);
+}
+
 const ACTION_ANNOUNCEMENT_RE = /\b(?:I['’]ll|I will|I['’]m going to|I am going to|let me|I['’]m (?:now )?(?:searching|locating|looking|checking|reading|opening|running|writing|creating|updating|fixing|inspecting))\b/i;
 
 /**

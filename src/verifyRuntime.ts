@@ -12,6 +12,7 @@ import { SubagentHost } from './subagent';
 import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
 import { requestCheckGuidance } from './requestCheck';
+import { isDocumentationFile } from './agentEfficiency';
 import { WorkspaceTools } from './workspaceTools';
 
 /** What verification needs from the conversation. */
@@ -128,6 +129,13 @@ export class VerifyRuntime {
                 return `[acceptance verify] ${claimed.text}`;
             }
         }
+    }
+
+    /** The turn changed code (not only documentation) and the acceptance is not established. */
+    unfinished(): boolean {
+        const passport = this._host.passport().build();
+        const code = passport?.files.filter(file => !isDocumentationFile(file.path)) ?? [];
+        return code.length > 0 && passport?.acceptance?.verdict !== 'accepted';
     }
 
     /** Once per turn, before a reply that changed code may end: that the request itself is met (requestCheck.ts). */

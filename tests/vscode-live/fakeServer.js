@@ -37,6 +37,9 @@ const SCRIPTS = (port) => ({
   review_escalate: [tool('acceptance', 'action: criteria\ncriteria:\n- live/esc.js exports 3'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
     tool('write_file', 'filepath: live/esc.js\ncontent:\nmodule.exports = 3;'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
     tool('acceptance', 'action: verify\ncriterion: AC1\nresult: pass\nevidence: E2\nhow: ran the tests'), 'Done.', 'Done.', 'AC1 is not shown yet: the test does not load live/esc.js.'],
+  // Code changed, then the reply offers to finish instead of finishing: sent back once to do it
+  offer_unfinished: [tool('write_file', 'filepath: live/half.js\ncontent:\nmodule.exports = { helper: 1 };'), tool('run_terminal', 'command: node --test live/check-read.test.js'),
+    'The helper is written. Wiring it into the loop is next. Say the word and I\'ll start.', 'Wired in: the helper is used by the loop.'],
   check_read: [tool('run_terminal', 'command: node --test live/check-read.test.js'), 'The tests pass: CHECK-READ-DONE.'],
   timeout: [tool('run_terminal', 'command: sleep 30'), 'It timed out.'],
   bigoutput: [tool('run_terminal', 'command: seq 1 200000'), 'Lots of output.'],

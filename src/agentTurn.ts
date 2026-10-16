@@ -8,7 +8,7 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 import { Approvals } from './approvals';
 import { Compaction } from './compaction';
 import { STOPPED_NOTE, addSteer, steerNote } from './steering';
-import { isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
+import { endsWithOfferOrQuestion, isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
 import { SubagentHost } from './subagent';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -57,6 +57,8 @@ export interface TurnHost {
     readonly team: boolean;
     /** Before a reply may end: what is left of the acceptance criteria, as a reminder (undefined: nothing). */
     acceptanceGuidance?(signal: AbortSignal): Promise<string | undefined> | string | undefined;
+    /** The turn changed code and Codico's check does not accept it yet. */
+    workUnfinished?(): boolean;
     /** Only these tools are offered (a team worker's); all of them when absent. */
     readonly allowedTools?: ReadonlySet<string>;
     steer: string;
@@ -158,6 +160,7 @@ export class AgentTurn {
             // Whether a tool ran in this turn, and whether a reply that ended without text was asked for its answer
             let turnRanTools = false;
             let askedForAnswer = false;
+            let askedToFinish = false;
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
@@ -606,6 +609,13 @@ export class AgentTurn {
                             content: '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
                                 'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.',
                         });
+                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        continue;
+                    }
+                    // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
+                    if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
+                        askedToFinish = true;
+                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
                         this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
                         continue;
                     }

@@ -58,6 +58,10 @@ async function run() {
     const reason = reqs.some(r => /AC1 live\/rv\.js exports 2 — /.test(r.lastUser));
     return { ok: !error && told === 1 && reason, why: `the reviewer's objection reached the agent before the reply ended: ${told} time(s) (once expected: the agent then changed nothing, so it is not repeated), with its reason: ${reason}; ${reqs.length} requests` };
   });
+  await scenario('offer_unfinished', ({ reqs, error }) => {
+    const sentBack = reqs.filter(r => /\[System\] Your reply ends by offering to continue or asking how to proceed/.test(r.lastUser)).length;
+    return { ok: !error && sentBack === 1, why: `the offer to finish was answered by sending the agent back to do it: ${sentBack} time(s) (once expected); ${reqs.length} requests` };
+  });
   await scenario('request_check', ({ reqs, error }) => {
     const asked = reqs.filter(r => /\[System Acceptance\] Before you finish, show that the request itself is met/.test(r.lastUser)).length;
     const ended = !error && reqs.length <= 8;

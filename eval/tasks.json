@@ -51,7 +51,7 @@
       "id": "tools-fingerprint-arguments",
       "category": "agent-loop",
       "baseCommit": "7c92309217435dda59f049faa0035eb9d376af4e",
-      "prompt": "Improve repeated-tool loop detection so fingerprints include the tool arguments. Calls to the same tool with different paths, commands, or values must not be mistaken for identical repetitions.",
+      "prompt": "Improve repeated-tool loop detection so fingerprints include the tool arguments. Calls to the same tool with different paths, commands, or values must not be mistaken for identical repetitions. Export the fingerprint function as `toolFingerprint(tool)` from src/toolParser.ts.",
       "verifierFile": "toolParser.test.js",
       "testNamePattern": "tool fingerprints distinguish calls by their arguments",
       "maxIterations": 0,

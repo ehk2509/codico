@@ -38,12 +38,16 @@ function unguessableNames(task) {
   if (source === null) { return null; }
   const { header, body } = selectedSource(source, task.testNamePattern);
   const missing = new Set();
-  const imports = /(?:const|let)\s*\{([^}]*)\}\s*=\s*require\(\s*['"]\.\.\/(out|media)\/([\w./-]+?)(?:\.js)?['"]\s*\)/g;
+  const imports = /(?:\/\* )?(?:const|let)\s*\{([^}]*)\}\s*=\s*require\(\s*['"]\.\.\/(out|media)\/([\w./-]+?)(?:\.js)?['"]\s*\)/g;
+  // A function reached as a property of the required module (require('../out/x.js').name), as destructuring would
+  const text = (header + body).replace(/require\(\s*(['"])\.\.\/(out|media)\/([\w./-]+?)(?:\.js)?\1\s*\)\.(\w+)/g, (all, q, dir, mod, name) => `${all}\n/* const { ${name} } = require('../${dir}/${mod}.js') */`);
+  // (the marker comment makes the import pattern below match from '/*')
   let m;
-  while ((m = imports.exec(header + body)) !== null) {
+  while ((m = imports.exec(text)) !== null) {
     const base = show(task.baseCommit, m[2] === 'out' ? `src/${m[3]}.ts` : `media/${m[3]}.js`);
     for (const name of m[1].split(',').map(n => n.split(':')[0].trim()).filter(Boolean)) {
-      const used = new RegExp(`\\b${name}\\b`).test(body);
+      // Loaded by name from the module (require(...).name) counts as used, even inside a helper the tests call
+      const used = m[0].startsWith('/*') || new RegExp(`\\b${name}\\b`).test(body);
       const atBase = base !== null && new RegExp(`\\b${name}\\b`).test(base);
       if (used && !atBase && !task.prompt.includes(name)) { missing.add(`${m[3]}.${name}`); }
       // Options passed to it as an object ({ maxCurrentReadChars: 60_000 }): a key the base lacks must be named too
