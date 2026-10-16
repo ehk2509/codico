@@ -31,26 +31,3 @@ test('no code changed (nothing, or only documentation): nothing is asked', () =>
   assert.equal(requestCheckGuidance(changed('README.md').build()), undefined);
   assert.equal(requestCheckGuidance(changed('docs/notes.txt').build()), undefined);
 });
-
-test('a small change whose criteria all rest on a reproduced-then-fixed check needs no review; anything else does', () => {
-  const { triviallyCovered } = require('../out/requestCheck.js');
-  const make = (lines) => {
-    const r = new PassportRecorder();
-    r.acceptance.setCriteria(['A normal write_file call keeps inner code fences']);
-    r.recordChange('src/toolParser.ts', 'a\n', Array.from({ length: lines }, (_, i) => `line ${i}`).join('\n') + '\n');
-    r.recordCommand('node --test tests/toolParser.test.js', 1, '# pass 6\n# fail 1\n');
-    const pass = r.recordCommand('node --test tests/toolParser.test.js', 0, '# pass 7\n# fail 0\n');
-    r.acceptance.claim('AC1', 'pass', 'the test of the user case', [pass]);
-    return r;
-  };
-  assert.equal(triviallyCovered(make(5).build()), true);
-  assert.equal(triviallyCovered(make(40).build()), false, 'a larger change is reviewed');
-  // Verified, but on a check that never failed: no reproduction, so it is reviewed
-  const r = new PassportRecorder();
-  r.acceptance.setCriteria(['works']);
-  r.recordChange('src/a.ts', 'x\n', 'y\n');
-  const once = r.recordCommand('npm test', 0, '# pass 3\n# fail 0\n');
-  r.acceptance.claim('AC1', 'pass', 'ran it', [once]);
-  assert.equal(triviallyCovered(r.build()), false);
-  assert.equal(triviallyCovered(undefined), false);
-});

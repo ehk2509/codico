@@ -188,21 +188,3 @@ test('the report is saved with the reply, so a reopened thread shows it again', 
   assert.ok(REPLAY_TYPES.has('patchPassport'));
 });
 
-
-test('a check that passed after the last change, with nothing run since, is not run again', () => {
-  const p = new PassportRecorder();
-  p.recordChange('src/a.ts', 'x', 'y');
-  p.recordCommand('npm test 2>&1 | tail -5', 0, '# pass 9\n# fail 0\n');
-  assert.equal(p.passedSinceChange('npm test'), '9 passed, 0 failed', 'the same check, however its output is filtered');
-  assert.equal(p.passedSinceChange('ls -la'), undefined, 'not a check');
-  // Another command may have changed files Codico cannot see (git stash): the check runs again
-  p.recordCommand('git stash', 0, '');
-  assert.equal(p.passedSinceChange('npm test'), undefined);
-  p.recordCommand('npm test', 0, '# pass 9\n# fail 0\n');
-  assert.equal(p.passedSinceChange('npm test'), '9 passed, 0 failed');
-  // A change, or a failing last run: it runs again
-  p.recordChange('src/a.ts', 'y', 'z');
-  assert.equal(p.passedSinceChange('npm test'), undefined);
-  p.recordCommand('npm test', 1, '# pass 8\n# fail 1\n');
-  assert.equal(p.passedSinceChange('npm test'), undefined);
-});

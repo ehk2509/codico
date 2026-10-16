@@ -211,6 +211,26 @@ All 30 tasks ran on `anthropic/claude-haiku-5.5` as 15 runs of 2 tasks. Costs ar
 
 On these tasks Haiku is about as capable as DeepSeek V4 Flash and several times cheaper per solved task. It uses far fewer steps, and it reports unfinished work more honestly. A cheap default with escalation to Claude Sonnet 5.5 (`codico.escalationModel`) covers the tasks it misses.
 
+### Fewer steps, tried and reverted (2026-10-16)
+
+On five hard tasks with Claude Haiku 5.5, Codico took 169 steps where Claude Code took 92. A set of changes aimed at the extra steps was tried:
+- the end-of-turn reminders in one message;
+- several criteria verified per call;
+- a check not re-run when it had already passed with nothing changed since;
+- a hint to batch reads;
+- no independent review for small changes whose failure was reproduced and then fixed.
+
+Measured as an A/B comparison, 5 tasks × 3 repetitions on each build, the changed build was **worse**:
+
+| | Before | After |
+|---|---|---|
+| Passed | 13/15 | 11/15 |
+| Median steps per run | 22 | 30 |
+| Median tokens per run | 0.72M | 1.26M |
+| Cost per solved task | $0.055 | $0.079 |
+
+Median steps were higher on all five tasks. The changes were reverted. A single run per task had not been able to show this: one task's step count varies by 4× between runs.
+
 ### A verifier corrected in v7: stream-resume-overlap
 
 v6's verifier for stream-resume-overlap followed only *exported* functions written `export function name(`. It rejected two valid solutions from Claude Haiku 5.5, which applied the overlap calculation on the resume path through a generator (`export async function* trimResumedContent`) and an internal helper. v7 uses a corrected copy, `eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js`, which follows every function of the module, generators included. The archived v6 suite keeps the original. The corrected copy was checked from every side:
