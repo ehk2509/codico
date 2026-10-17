@@ -11,6 +11,7 @@ import {
     isDocumentationFile,
     isExplorationTool,
     isExploratoryTerminalCommand,
+    isTestFile,
 } from './agentEfficiency';
 
 export interface ExplorationCheck { isExploration: boolean; guidance?: string; block?: string; }
@@ -209,10 +210,14 @@ export class ExplorationController {
                 this._unwiredImports.delete(tool.filepath);
             }
             const previousVerificationFile = this._verificationFile;
+            // A change and its test are one piece of work, and so are the edits of one reply: checked together
+            const testEdit = isTestFile(tool.filepath);
+            const sameReply = this._lastMutationIteration === this._iteration;
             const broadenedWhilePending =
                 this._verificationPending &&
                 previousVerificationFile &&
-                tool.filepath !== previousVerificationFile;
+                tool.filepath !== previousVerificationFile &&
+                !testEdit && !isTestFile(previousVerificationFile) && !sameReply;
 
             this.streak = 0;
             this._locked = false;
@@ -237,7 +242,7 @@ export class ExplorationController {
                 (this._verificationAuditSeen
                     ? 'This is a lifecycle/state edit: check the changed lines shown in the edit result against the Local invariant audit (read further lines of the file only for a path the result does not show), then run a behavior-level test. '
                     : 'Start with the edited component, then follow dependencies only if correctness requires it. ') +
-                'Do not broaden mutations until this edit is locally verified.';
+                'Change only what this fix needs; when its edits (the code and its tests) are done, verify them together with the narrowest relevant test.';
         }
 
         if (!this._verificationPending) { return undefined; }

@@ -352,3 +352,18 @@ test('an edit to a test is not a lifecycle edit to re-read: a passing run of it 
   assert.match(ran, /acceptance gate is satisfied/);
   assert.equal(controller.completionGuidance(), undefined);
 });
+
+test('a change and its test, or the edits of one reply, are one piece of work: no warning about a second file', () => {
+  const edit = (c, file) => c.after({ type: 'edit_file', filepath: file, oldStr: 'a', newStr: 'b' }, `[edit_file: ${file}] Edit applied successfully.`);
+  const c = new ExplorationController('Fix the parser');
+  c.beginIteration();
+  assert.match(edit(c, 'src/parser.ts'), /verify them together with the narrowest relevant test/);
+  assert.doesNotMatch(edit(c, 'src/lexer.ts'), /changed a second file/, 'same reply');
+  c.beginIteration();
+  assert.doesNotMatch(edit(c, 'tests/parser.test.js'), /changed a second file/, 'its test');
+  c.beginIteration();
+  assert.doesNotMatch(edit(c, 'src/parser.ts'), /changed a second file/, 'back from the test');
+  // Another source file in a later reply, while the first is unverified: still warned
+  c.beginIteration();
+  assert.match(edit(c, 'src/printer.ts'), /changed a second file before the previous edit was behaviorally verified/);
+});
