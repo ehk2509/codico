@@ -125,6 +125,18 @@ export class AcceptanceRecorder {
         return { ok: true, text: `${criterion.id} recorded as ${result === 'pass' ? 'met' : 'not met'}${evidence.length ? ` on ${evidence.map(e => e.toUpperCase()).join(', ')}` : ', with no evidence Codico observed: it will count as claimed, not verified'}.` };
     }
 
+    /**
+     * The criteria a check named (run_terminal verifies), recorded as met or not on its result, so the
+     * agent need not record them in a step of its own. A result that cannot be told records nothing.
+     */
+    claimByCheck(ids: readonly string[], evidenceId: string, command: string): string {
+        const result = this._evidence.find(e => e.id === evidenceId);
+        if (!result || ids.length === 0) { return ''; }
+        if (result.unknown) { return `${ids.join(', ')} not recorded: the result of this command cannot be told.`; }
+        const how = `\`${command.trim().slice(0, 200)}\` ${result.passed ? 'passed' : 'failed'}`;
+        return ids.map(id => this.claim(id, result.passed ? 'pass' : 'fail', how, [evidenceId]).text).join('\n');
+    }
+
     setReview(id: string, review: { agrees: boolean; reason: string }): void { this._reviews.set(id, review); }
 
     /**

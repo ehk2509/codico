@@ -1,4 +1,5 @@
 import {
+    criterionIds,
     ToolCall,
     UpdateTodoTool,
 } from './toolParser';
@@ -85,7 +86,10 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         description: 'Run a shell command in the workspace.',
         inputSchema: {
             type: 'object',
-            properties: { command: { type: 'string' } },
+            properties: {
+                command: { type: 'string' },
+                verifies: { type: 'array', items: { type: 'string' }, description: 'For a test run: the acceptance criteria it shows (AC1, AC2…). If it passes, Codico records them as met on its result; no separate acceptance verify is needed.' },
+            },
             required: ['command'],
             additionalProperties: false,
         },
@@ -636,7 +640,8 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'run_terminal': {
             const command = stringArg(args, 'command');
-            return command ? { type: 'run_terminal', command } : null;
+            const verifies = criterionIds(Array.isArray(args.verifies) ? args.verifies.filter(item => typeof item === 'string').join(' ') : typeof args.verifies === 'string' ? args.verifies : '');
+            return command ? { type: 'run_terminal', command, ...(verifies.length ? { verifies } : {}) } : null;
         }
         case 'search_files': {
             const pattern = stringArg(args, 'pattern');

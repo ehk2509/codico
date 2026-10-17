@@ -125,7 +125,7 @@ export class VerifyRuntime {
                     const listed = acceptance.setCriteria(tool.criteria ?? []);
                     const ok = !listed.startsWith('ERROR');
                     post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: ok ? `${acceptance.criteria.length} criteria` : 'criteria', success: ok, error: ok ? undefined : 'No criteria' });
-                    return ok ? `[acceptance criteria]\n${listed}\nCheck each on the final code, then record it with action "verify" and the evidence ids that show it.` : `[acceptance] ${listed}`;
+                    return ok ? `[acceptance criteria]\n${listed}\nCheck each on the final code. Name the criteria a test shows in its command (run_terminal verifies: AC1 AC2) and a passing run records them; record any other with action "verify" and the evidence ids that show it.` : `[acceptance] ${listed}`;
                 }
                 const claimed = acceptance.claim(tool.criterion ?? '', tool.result ?? 'pass', tool.how ?? '', tool.evidence ?? []);
                 post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: `${tool.criterion} ${tool.result}`, success: claimed.ok, error: claimed.ok ? undefined : 'Not recorded' });
@@ -160,7 +160,7 @@ export class VerifyRuntime {
         if (pending.length === 0) { return undefined; }
         this._reminders++;
         return `[System Acceptance] Not verified on the final code yet:\n${pending.map(criterionLine).join('\n')}\n` +
-            'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record it with acceptance verify. ' +
+            'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record it: run the test with verifies naming the criteria, or use acceptance verify. ' +
             'If one cannot be checked or is not met, record it as failing or say so plainly in your answer; do not present the work as complete.';
     }
 

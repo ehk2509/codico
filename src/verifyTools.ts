@@ -97,7 +97,8 @@ export const BROWSER_EXPECT_DESCRIPTION = 'Check the current browser page; Codic
     'With selector and text: the element shows the text. With text alone: the page shows it. With selector and state: visible, hidden, exists or absent. It waits up to timeout_ms (5000) for the page to update. Console errors seen on the page are reported.';
 export const ACCEPTANCE_DESCRIPTION = 'Acceptance criteria of the request. action "criteria": state them (criteria: list), at the start of a feature or a fix: concrete, observable outcomes, not "the code compiles". ' +
     'action "verify": say whether one is met (criterion: AC1, result: pass or fail, evidence: ids of browser_expect results and test commands that show it, how: what you did). ' +
-    'A criterion counts as verified only on evidence Codico observed after the last code change.';
+    'A criterion counts as verified only on evidence Codico observed after the last code change. ' +
+    'A test command can name the criteria it shows instead (run_terminal verifies: AC1 AC2): Codico records them on its result.';
 
 /** What the agent is told about verifying its work end to end. */
 export const VERIFY_PROMPT_SECTION = `[Acceptance]
@@ -105,7 +106,7 @@ A passing build or test run shows that the code works, not that the request is m
 1. State the acceptance criteria first (acceptance, action "criteria"): what the user will be able to see or do.
 2. For a bug, reproduce it before changing the code, and record the failure (acceptance verify, result fail, with the evidence).
 3. After the change, check each criterion on the final code. For a web app: start it (app, action "start"), drive it with the browser tools, and assert what the user should see with browser_expect. Otherwise run a test that exercises the criterion.
-4. Record each criterion with acceptance verify, naming the evidence ids (E1, E2…) of the browser_expect results and test commands that show it. Look at console errors the browser reports.
+4. Record each criterion with acceptance verify, naming the evidence ids (E1, E2…) of the browser_expect results and test commands that show it. For a test, name the criteria in the command itself (run_terminal verifies: AC1 AC2): when it passes Codico records them as met on its result, so no separate acceptance verify is needed. Look at console errors the browser reports.
 5. Report plainly which criteria are verified and which are not. Never call a feature done because it builds.
 Fenced forms:
 \`\`\`app
@@ -122,6 +123,10 @@ action: criteria
 criteria:
 - Changing the quantity updates the cart total
 - An empty cart shows "Your cart is empty"
+\`\`\`
+\`\`\`run_terminal
+command: npm test
+verifies: AC1 AC2
 \`\`\`
 \`\`\`acceptance
 action: verify
