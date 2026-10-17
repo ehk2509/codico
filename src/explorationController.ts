@@ -242,7 +242,7 @@ export class ExplorationController {
                 (this._verificationAuditSeen
                     ? 'This is a lifecycle/state edit: check the changed lines shown in the edit result against the Local invariant audit (read further lines of the file only for a path the result does not show), then run a behavior-level test. '
                     : 'Start with the edited component, then follow dependencies only if correctness requires it. ') +
-                'Change only what this fix needs; when its edits (the code and its tests) are done, verify them together with the narrowest relevant test.';
+                'Change only what this fix needs; when its edits (the code and its tests) are done, verify them together with the narrowest relevant test, and before you finish run the project\'s whole test suite once: it catches what the change broke elsewhere.';
         }
 
         if (!this._verificationPending) { return undefined; }

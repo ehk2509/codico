@@ -357,7 +357,7 @@ test('a change and its test, or the edits of one reply, are one piece of work: n
   const edit = (c, file) => c.after({ type: 'edit_file', filepath: file, oldStr: 'a', newStr: 'b' }, `[edit_file: ${file}] Edit applied successfully.`);
   const c = new ExplorationController('Fix the parser');
   c.beginIteration();
-  assert.match(edit(c, 'src/parser.ts'), /verify them together with the narrowest relevant test/);
+  assert.match(edit(c, 'src/parser.ts'), /verify them together with the narrowest relevant test, and before you finish run the project's whole test suite once/);
   assert.doesNotMatch(edit(c, 'src/lexer.ts'), /changed a second file/, 'same reply');
   c.beginIteration();
   assert.doesNotMatch(edit(c, 'tests/parser.test.js'), /changed a second file/, 'its test');
