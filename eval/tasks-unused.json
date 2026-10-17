@@ -1,0 +1,119 @@
+{
+  "suiteVersion": "codico-coding-holdout-unused-10",
+  "frozen": true,
+  "description": "The 10 valid candidates mined for v7 (scripts/eval/mine.js) and not used in it. They were left out because their tests check exact wording, so each prompt states the exact behaviour asked for. Same rules as v7: no step limit, no evaluator wall-clock or token ceiling.",
+  "maxTotalTokens": 0,
+  "maxTaskMinutes": 0,
+  "tasks": [
+    {
+      "id": "web-search-results",
+      "category": "tools",
+      "baseCommit": "f1b7133cdd60e4bc312ae9f3486603d63c2189d3",
+      "fixCommit": "0a4710afc7bd611cbd685e92274ee60d304bb91b",
+      "prompt": "Add web search for the agent: a new module src/webSearch.ts that builds the request and reads the answer (it sends nothing itself), and a `web_search` tool with one argument, `query`.\n\nsrc/webSearch.ts exports:\n- `MAX_RESULTS` = 8.\n- `searchRequest(engine, query, key?)` returns `{ url, headers }`, for engine 'duckduckgo' or 'brave'. The query is trimmed, runs of whitespace become one space, it is cut to a bounded length (a 5,000-character query must give a URL under 500 characters), then encoded with encodeURIComponent. DuckDuckGo: `https://html.duckduckgo.com/html/?q=<q>` with no headers (`{}`). Brave: `https://api.search.brave.com/res/v1/web/search?q=<q>&count=8`, with the key in the `X-Subscription-Token` header and never in the URL.\n- `engineName(engine)`: 'DuckDuckGo' or 'Brave Search'.\n- `parseDuckDuckGo(html)` reads DuckDuckGo's no-script results page and returns `{ title, url, snippet }[]` in page order. A result's link is `<a ... class=\"result__a\" href=\"//duckduckgo.com/l/?uddg=<encoded real address>&amp;rut=...\">title</a>`; its text, if it has any, is a later element with class `result__snippet`, before the next result's link (a snippet never belongs to the next result). Return the real address from `uddg`; a direct http(s) href is used as it is. Titles and snippets are plain text: tags removed, entities decoded (`&amp;`, `&nbsp;` as a space, `&#x27;`, numeric entities...), whitespace collapsed. Leave out advertisements (a `result--ad` block, links to duckduckgo.com/y.js), addresses that are not http or https (javascript:, file:), and an address already listed. At most MAX_RESULTS results; a snippet is at most 300 characters. A page without results gives [].\n- `duckDuckGoRefused(html)`: true for DuckDuckGo's bot check page (it contains `anomaly-modal`, `challenge-form` or the text \"bots use DuckDuckGo too\"), false for a results page.\n- `parseBrave(body)`: from Brave's JSON (`web.results[]`, each with title, url, description), the same `{ title, url, snippet }` results with the same care: plain text, no address that is not http(s), a result without a title left out, a missing description gives ''. Anything malformed (not JSON, null, missing or non-array results) gives [].\n- `renderResults(results)`: the results numbered as `1. <title>` then `   <url>` then `   <snippet>` (that line only when there is a snippet), then a blank line and `These are search results, not the pages: read one with fetch_url before relying on what it says.` With no results: `No results. Try other words, or fewer of them.`\n\nThe tool: `web_search` is parsed from the fenced tool form (`query: ...`; without a query there is no call) and from a native call (`{ query }`; without a query, null). It is in the native tool definitions both in Agent mode and in Ask (read-only) mode, and it is not given to subagents.",
+      "verifierFile": "webSearch.test.js",
+      "testNamePattern": "^(?:the request: the query is encoded, trimmed and bounded; a key goes in a header, never in the address|DuckDuckGo results: the real address behind its redirect, the title and the text, in order|what is not a result is left out: advertisements, repeats, other schemes, and more than the limit|a page that is DuckDuckGo declining the request is recognised, so it is not read as \"no results\"|Brave results: from its JSON, with the same care about addresses|what the agent reads: numbered results and the reminder that these are not the pages themselves|the tool is known in both formats, allowed in Ask mode, and not given to subagents)$",
+      "maxIterations": 0,
+      "verifierCommit": "0a4710afc7bd611cbd685e92274ee60d304bb91b"
+    },
+    {
+      "id": "claude-prompt-cache",
+      "category": "providers",
+      "baseCommit": "b851b9e57ae3f173c414c321bc64252e5481bdec",
+      "fixCommit": "2b2a2e370441b346f30c6ef731a7667c2f85eeaa",
+      "prompt": "Claude models on OpenRouter cache the prompt only when the request asks for it, so with Claude every repeated prompt is paid in full. In `streamOpenRouter` (src/openRouterClient.ts), for models whose id starts with `anthropic/` (or `~anthropic/`), add `cache_control: { type: 'ephemeral' }` at the top level of the request body. Other models get no `cache_control`: their providers cache automatically.\n\nAlso report what the cache served: when the final usage has `prompt_tokens_details.cached_tokens`, the `usage` chunk carries it as `cachedTokens`.",
+      "verifierFile": "openRouterTransport.test.js",
+      "testNamePattern": "^(?:Claude models are asked to cache the prompt; cached tokens are reported)$",
+      "maxIterations": 0,
+      "verifierCommit": "2b2a2e370441b346f30c6ef731a7667c2f85eeaa"
+    },
+    {
+      "id": "debug-node-exit-code",
+      "category": "debugging",
+      "baseCommit": "3b2bebcdff845998b852106294e1ad69ef0d4bb0",
+      "fixCommit": "36f5859b43bae78fafd112e4399943b5ea9cbc2b",
+      "prompt": "When the agent debugs a Node program, the run's exit code is never reported: VS Code's JavaScript debugger does not give it. Have each Node process of a debugged run write its own exit code, and take the run's code from those files. In src/debugController.ts, export:\n- `EXIT_HOOK`: the source of a small script, preloaded into every Node process of the run with `--require`, which writes the process's exit code (as text), when it exits, to a file `<pid>.code` in the folder named by the environment variable `CODICO_DEBUG_EXIT_DIR`. It writes synchronously as the process ends, and a failure to write never throws.\n- `withExitHook(nodeOptions, hookPath)`: NODE_OPTIONS with the hook added after what was there, the path JSON-quoted: `withExitHook('--max-old-space-size=512', hook)` is `--max-old-space-size=512 --require \"<hook>\"`; with no previous options, just `--require \"<hook>\"`.\n- `exitCodeOf(dir)`: the run's exit code from the `.code` files in `dir`. The file written last wins: the outermost process (npm, for `npm test`) exits last, and its code is the run's. undefined when there is no such file, or no dir.\n\nUse them for Node debug configurations (types node, pwa-node and node-terminal): a new temporary folder per run with the hook written in it, NODE_OPTIONS and CODICO_DEBUG_EXIT_DIR set in the configuration's env, and the run's code reported when it ends if the debugger gave none.",
+      "verifierFile": "debugTools.test.js",
+      "testNamePattern": "^(?:exit codes: each Node process of a debugged run writes its own; the one that exits last \\(the outermost\\) is the run's)$",
+      "maxIterations": 0,
+      "verifierCommit": "36f5859b43bae78fafd112e4399943b5ea9cbc2b"
+    },
+    {
+      "id": "team-worker-names",
+      "category": "agents",
+      "baseCommit": "3ea8f25b43769f6047b287f3e8a500d8905dd68a",
+      "fixCommit": "379169f00ad26328d3ec7f8c1efeec3268182c09",
+      "prompt": "The orchestrator of an agent team knows its workers only by an 8-character id, and models mix them up. Let it name them after their part (src/teamTools.ts, src/teamService.ts, src/backgroundTasks.ts):\n- The team tool's `start` action takes an optional `name` (\"Backend API\"), in both the fenced form (a `name:` line) and native calls. It is cleaned to lowercase letters, digits and dashes: other characters become a dash, runs of dashes are one, none at either end, at most 24 characters. \"Front End!\" becomes `front-end`.\n- A name already used by a worker of the same team gets a number: `backend-api`, then `backend-api-2`, and so on. The name is passed to the host's `createTask` (a new `name` option) and kept on the task (`BackgroundTask.name`).\n- Wherever the orchestrator reads about a worker, it is shown as `<name> (<id>)`, or just the id when it has no name: `Started worker backend-api (1a2b3c4d) (developer) on branch ...`, the wait summary's heading `### Worker backend-api (1a2b3c4d), developer: finished`, `Worker backend-api (1a2b3c4d) has not changed any file.`, and the other messages.\n- A worker can be referred to by its name, in any case and either alone or as shown (`Backend-API-2`, `backend-api-2 (1a2b3c4d)`), as well as by its id or the start of it. If several workers have the name, the newest.\n- The host's `openWindow(task)` becomes `launch(task)`: workers will be able to run in this window as well as in their own. The host may also say where they run with an optional `where()`, added to the start message.",
+      "verifierFile": "teamService.test.js",
+      "testNamePattern": "^(?:workers are named after their part, refer to by name, and a name used twice gets a number)$",
+      "maxIterations": 0,
+      "verifierCommit": "379169f00ad26328d3ec7f8c1efeec3268182c09"
+    },
+    {
+      "id": "exploration-advisory",
+      "category": "agent-loop",
+      "baseCommit": "0d05b059341de77d929b0d3318802d59858a8b7b",
+      "fixCommit": "559ac2bd7e29389ddda0fda127f03de1bf8f732a",
+      "prompt": "Codico's exploration limits push the agent into blind edits: after 12 reads or searches without a code change, discovery is locked; a target read 3 times is blocked; and reading source through run_terminal is blocked. A safe fix often needs a few more reads than that. Make the exploration pressure advisory (src/agentEfficiency.ts and the code that uses it):\n- `explorationDecision(streak, targetVisits)` never returns `block` or `lock` any more.\n- A target inspected 3 or more times gets guidance instead of a block, saying that the agent has inspected this target repeatedly, and to act, inspect a different dependency that closes a concrete gap, or verify.\n- Periodic guidance comes after 6, 10 and 14 read-only exploration calls without a code change (not at 7, 9, 11...). It says how many read-only exploration calls were made, to prefer a small evidence-backed edit when ready, and to keep exploring if a specific unresolved dependency, caller, invariant or test still blocks a safe fix. `explorationGuidance(streak)` returns that text, or null.\n- `isExploratoryTerminalCommand` still recognises shell source inspection (grep, git grep, cat...), but nothing is blocked because of it.",
+      "verifierFile": "agentEfficiency.test.js",
+      "testNamePattern": "^(?:focused exploration policy distinguishes reads from mutations|exploration guidance is advisory, bounded, and periodic|repeated targets produce guidance without withdrawing capabilities|terminal source inspection remains identifiable without being a hard lock)$",
+      "maxIterations": 0,
+      "verifierCommit": "559ac2bd7e29389ddda0fda127f03de1bf8f732a"
+    },
+    {
+      "id": "pull-request-text",
+      "category": "git",
+      "baseCommit": "185891d60575b01ab04470364a06634ae39f5fa8",
+      "fixCommit": "6e815dfb44d821e0621faa065b035a8ad8905f0c",
+      "prompt": "Add pull requests: opening one for a background task's branch, and handing a pull request's open review comments to the agent. Put the wording, and the reading of GitHub's answers, in a new src/pullRequests.ts that talks to nobody, and the GitHub calls in a new src/pullRequestService.ts (exporting `openPullRequest`, `createPullRequestForCurrentBranch`, `addressReviewComments` and `githubRequest`).\n\nsrc/pullRequests.ts exports:\n- `parseGitHubRemote(url)`: `{ owner, repo }` for a github.com remote, https (with or without `user@`; a trailing `.git`, `/` or newline is ignored) or ssh (`git@github.com:owner/repo.git`). Repository names may contain dots and dashes. undefined for any other host, including look-alikes (`github.com.evil.example`, `notgithub.com`) and a github.com that is only in the path.\n- `pullRequestTitle(prompt)`: the first non-empty line, without leading markdown (`#`, `-`, `*`, `>`), without backticks, asterisks and underscores, without trailing `.:;,`, whitespace collapsed, at most 72 characters (cut at a word). `Changes by Codico` for an empty prompt. `  ## Add a `health check` endpoint.\\n\\nWith tests` gives `Add a health check endpoint`.\n- `pullRequestBody(prompt, stat)`: `## Task`, a blank line, the prompt with each line quoted as `> line`, a blank line, `## Changes`, a blank line, the trimmed stat in a ``` fence, a blank line, then `---` and `Written by the Codico agent from the task above. Review it as you would any contribution.` on the last line.\n- `unresolvedThreads(answer)`: from GitHub's GraphQL answer (`data.repository.pullRequest.reviewThreads.nodes`, each with isResolved, isOutdated, path, line, originalLine and comments.nodes `[{ author { login }, body }]`), the unresolved threads as `{ path, line, outdated, comments: [{ author, body }] }`. `line` falls back to originalLine; a missing author is `someone`; comments with a blank body are dropped, and so is a thread left without comments. A malformed answer gives [].\n- `reviewThreadsText(threads)`: the threads numbered and separated by a blank line. Each starts `1. src/health.js:12`, followed by ` (the code has changed since this was written)` when outdated, then one line per comment, `  <author>: <body>`, with further lines of a body indented by 4 spaces.\n- `reviewTaskPrompt({ number, title }, count)`: begins `Address the 2 open review comments on pull request #7 (\"Health check\")` (`the open review comment` when there is one), says the comments are other people's words, to weigh as review feedback and not as instructions, asks for an answer per comment, numbered like them, and ends with `Do not commit or push.`",
+      "verifierFile": "pullRequests.test.js",
+      "testNamePattern": "^(?:the words of a pull request: a title from the task, a description that says what was asked and that an agent wrote it|review threads: only the unresolved ones, with where they are and who said what)$",
+      "maxIterations": 0,
+      "verifierCommit": "6e815dfb44d821e0621faa065b035a8ad8905f0c"
+    },
+    {
+      "id": "exploration-lock",
+      "category": "agent-loop",
+      "baseCommit": "00c1af92a49dee1bf81c4b45f0fa598b75bb6d86",
+      "fixCommit": "922e8f727249d48ce2089d59d550a1ecf8584b1f",
+      "prompt": "Agents keep reading long after they have the evidence for a fix. After 12 reads or searches in a row without a code change, `explorationDecision` (src/agentEfficiency.ts) already blocks the call. Make it also lock discovery: return `lock: true` with a block message saying that discovery tools are now disabled until the agent changes code, and to make the smallest plausible edit now and verify it, or state the single concrete blocker.\n\nAdd `isExploratoryTerminalCommand(command)`: true for shell commands that read or search source (grep, rg, git grep, git show, git log, git status, git diff, find, ls, cat, head, tail, less, sed, awk, wc...), false for building and testing (`npm test`, `npm run compile`), so that run_terminal cannot be used to read code while discovery is locked.\n\nWhile locked, native-tool models are offered only the action tools (edit_file, write_file, run_terminal for verification, get_diagnostics, update_todo): add `restrictNativeToolsForAction(tools)` in src/nativeTools.ts. A successful edit lifts the lock.",
+      "verifierFile": "agentEfficiency.test.js",
+      "testNamePattern": "^(?:global exploration exhaustion locks discovery and blocks terminal read backdoors)$",
+      "maxIterations": 0,
+      "verifierCommit": "922e8f727249d48ce2089d59d550a1ecf8584b1f"
+    },
+    {
+      "id": "background-trust-wait",
+      "category": "background",
+      "baseCommit": "d1a26db6d2d1f9584d9d0ddc9b4f25719797070b",
+      "fixCommit": "a41b4bc23cb954b6833f0f700837e78e218f65a9",
+      "prompt": "A background task whose window opened but never took the task up, almost always because that window is asking whether to trust the folder, shows as \"starting\" for ever. In src/backgroundTasks.ts:\n- Export `TRUST_WAIT_MS` = 20,000 and `waitingForItsWindow(task, now)`: true when the task is still `starting` more than TRUST_WAIT_MS after it was created (`createdAt`); false otherwise (a task created recently, or one that is running).\n- `statusLabel` of such a task is `waiting for you: trust its folder in its window`, and its `statusIcon` is `$(bell-dot)`.\n- `activeSummary` counts it as needing the user: such a task and a running one give `1 running, 1 needs you`.",
+      "verifierFile": "backgroundTasks.test.js",
+      "testNamePattern": "^(?:a task whose window has not taken it up says what it is waiting for)$",
+      "maxIterations": 0,
+      "verifierCommit": "a41b4bc23cb954b6833f0f700837e78e218f65a9"
+    },
+    {
+      "id": "code-search-ranking",
+      "category": "search",
+      "baseCommit": "4353f8091abf095586860291ebe6da4d1d2bf19e",
+      "fixCommit": "e0525386509882535da4c7b79880bca901b292db",
+      "prompt": "Three limits of the code search index (`CodeIndex` in src/codeSearch.ts):\n\n1. A question about code is answered by documentation and tests first, because they repeat its words in prose. Rank source above them: documentation (.md, .mdx, .rst, .txt... or files under docs/) and tests (under tests/, __tests__/, spec/..., or named *.test.*, *.spec.*, *_test.*) count less than source, unless the question asks for them: a query with \"readme\", \"docs\", \"documentation\"... ranks documentation first again, and one with \"test\", \"spec\"... ranks tests first. For example, with README.md, docs/retry.md, tests/retry.test.ts and src/retry.ts all about the retry backoff delay, `retry backoff delay` must give src/retry.ts first, `readme retry backoff delay` a .md file, and `test for the retry backoff delay` the test.\n\n2. Evidence from outside the index: `search(query, limit = 8, pathPrefix = '', boosts = [])`, where each boost is `{ file, line, toLine?, weight, symbol? }`, from a language server or an embeddings search. It lifts the chunks of that file that contain the line (or the range) by `weight` times the best lexical score, and can bring in a chunk that no word of the query matched; its `symbol`, if given, is added to that hit's `symbols`. Boosts for files that are not indexed are ignored, and the folder filter still applies. Without any matching word and without boosts, the result is still [].\n\n3. `importersOf(file)` follows more kinds of import: TypeScript/JavaScript path aliases (`@/lib/money`, `~/lib/money`) and root-relative imports (`src/lib/money`), from the root or from src/; Python absolute imports (`from app.billing.invoice import total`, `import app.billing.invoice`); Java and Kotlin imports of a class by its package, under any source root (`com.acme.orders.Order` is .../com/acme/orders/Order.java); Rust `use crate::store::pool::Pool` (the last segments may be items in the module: try the longest module path first) and `mod store;` declarations (a child module, `store.rs` or `store/mod.rs`); and Go imports, which name a package folder (`\"example.com/app/internal/store\"` is the files of internal/store/; a file of the same package does not import it). Libraries (`react`, `node:fs`) are not files of the project. The list is sorted.",
+      "verifierFile": "codeSearch.test.js",
+      "testNamePattern": "^(?:a question about code is answered by code: documentation and tests rank below it unless asked for|outside evidence lifts the place it points at: a language server's symbol, an embeddings match|imports are followed in more languages: aliases, Python packages, Java classes, Rust modules, Go packages)$",
+      "maxIterations": 0,
+      "verifierCommit": "e0525386509882535da4c7b79880bca901b292db"
+    },
+    {
+      "id": "subagent-nudge",
+      "category": "agents",
+      "baseCommit": "bfb1e94c234159b2580de39576a42859268d6f9c",
+      "fixCommit": "fabb45b9a00a37b69d8906b31cb357f9e2e7a249",
+      "prompt": "Subagents read far more than their question needs. In src/subagent.ts:\n- Export `SUBAGENT_NUDGE_AFTER_CALLS` = 12, and lower `SUBAGENT_DEFAULT_MAX_STEPS` to 10.\n- Once a subagent has made 12 tool calls, remind it, once, before its next request: `[System] You have made 12 tool calls. If you can answer the task now, write your report in this response instead of looking further; keep going only for something the task asked for that you still do not know.` With native tools the reminder is a new user message after the tool results. In the fenced text format it is appended to the `[Tool Results]` user message, after a blank line, so that roles keep alternating. It is never repeated.\n- The subagent's system prompt adds `Stop as soon as you can answer.`, and not to confirm again what a search has shown, or go on to topics the task did not ask about.\n- The `delegate` tool's `task` description adds `Ask for exactly what you need and no more`: every extra question makes the subagent read more. Rule 8 of the main system prompt tells the agent to give delegate a task that `asks for exactly what you need, no wider than the question you are answering`.",
+      "verifierFile": "subagent.test.js",
+      "testNamePattern": "^(?:after twelve tool calls a subagent is reminded once that it may already have the answer)$",
+      "maxIterations": 0,
+      "verifierCommit": "fabb45b9a00a37b69d8906b31cb357f9e2e7a249"
+    }
+  ]
+}
