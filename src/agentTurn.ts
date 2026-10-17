@@ -164,7 +164,7 @@ export class AgentTurn {
             // A reminder that sends the reply back for another step (recorded in the benchmark trace by its kind)
             const sendBack = (kind: string, content: string): void => {
                 this._host.history.push({ role: 'user', content });
-                if (this._host.evaluationMode) { this._host.evalTrace.push({ step: this._host.evalSteps, tool: 'nudge', target: kind }); }
+                if (this._host.evaluationMode) { this._host.evalTrace.push({ step: this._host.evalSteps, tool: 'nudge', target: `${kind}: ${content.slice(0, 120)}` }); }
                 this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
             };
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
