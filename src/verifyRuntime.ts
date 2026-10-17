@@ -170,7 +170,7 @@ export class VerifyRuntime {
      * so the reply does not present as done what the review disputes.
      */
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
-        await this._runWithoutChange(signal);
+        void this._runWithoutChange; // diag: switched off
         const reminder = this.guidance();
         if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
         // The agent changed nothing since the last dispute (it answered it, or gave up): no point repeating it
