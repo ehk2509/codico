@@ -8,13 +8,13 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { isTestFile } from './agentEfficiency';
 import { exitCodeHidden, testSummary } from './patchPassport';
 
-const TEST_FILE_RE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/;
 /** Dependencies installed in the workspace, shared with the scratch worktree rather than copied. */
 const SHARED = ['node_modules', '.venv', 'venv'];
 
-export const isTestFile = (filepath: string): boolean => TEST_FILE_RE.test(filepath.replace(/\\/g, '/'));
+export { isTestFile };
 
 export interface TurnChange { path: string; before: string | null; after: string }
 
