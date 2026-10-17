@@ -152,7 +152,9 @@ export class WorkspaceTools {
         const changedNote = this._recordCommandChanges(treeBefore);
         const evidence = this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
         // Once there are acceptance criteria, a check's result can be named as evidence for them
-        const evidenceNote = evidence && this._host.passport().acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})` : '';
+        const acceptance = this._host.passport().acceptance;
+        const named = evidence && tool.verifies?.length ? acceptance.claimByCheck(tool.verifies, evidence, tool.command) : '';
+        const evidenceNote = evidence && acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})${named ? `\n${named}` : ''}` : '';
         this._host.post({
             type: 'toolResult',
             id: msgId,

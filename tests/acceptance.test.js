@@ -405,3 +405,27 @@ test('local acceptance preflight rejects missing proof without invoking a review
   assert.equal(reviewSnippetBudget(3, 36000, 20000), 12000);
   assert.equal(reviewSnippetBudget(1, 36000, 20000), 20000);
 });
+
+test('a test command names the criteria it shows: its result records them, with no step of the agent\'s own', () => {
+  const { PassportRecorder } = require('../out/patchPassport.js');
+  const { parseToolBody } = require('../out/toolParser.js');
+  const { nativeToolCallToToolCall, getNativeToolDefinitions } = require('../out/nativeTools.js');
+  // Both tool forms take the criteria, as ids only
+  assert.deepEqual(parseToolBody('run_terminal', 'command: npm test\nverifies: AC1, ac2 AC2 everything'), [{ type: 'run_terminal', command: 'npm test', verifies: ['AC1', 'AC2'] }]);
+  assert.deepEqual(parseToolBody('run_terminal', 'command: npm test'), [{ type: 'run_terminal', command: 'npm test' }]);
+  assert.deepEqual(nativeToolCallToToolCall({ id: 'c', name: 'run_terminal', arguments: { command: 'npm test', verifies: ['AC3'] } }), { type: 'run_terminal', command: 'npm test', verifies: ['AC3'] });
+  assert.ok(getNativeToolDefinitions(false).find(t => t.name === 'run_terminal').inputSchema.properties.verifies);
+
+  const r = new PassportRecorder();
+  r.acceptance.setCriteria(['Parses nested fences', 'Keeps plain fences']);
+  r.recordChange('src/parser.ts', 'a', 'b');
+  const passed = r.recordCommand('node --test tests/parser.test.js', 0, '# pass 4\n# fail 0\n');
+  assert.equal(r.acceptance.claimByCheck(['AC1', 'AC2'], passed, 'node --test tests/parser.test.js'), `AC1 recorded as met on ${passed}.\nAC2 recorded as met on ${passed}.`);
+  assert.deepEqual(r.acceptance.build(r.lastChange).criteria.map(c => c.status), ['verified', 'verified']);
+  // A failing run records them as not met; an unknown one records nothing; a wrong id is said
+  const failed = r.recordCommand('node --test tests/parser.test.js', 1, '# pass 3\n# fail 1\n');
+  assert.match(r.acceptance.claimByCheck(['AC1'], failed, 'node --test tests/parser.test.js'), /AC1 recorded as not met/);
+  const hidden = r.recordCommand('npm test | tail -3', 0, 'done');
+  assert.match(r.acceptance.claimByCheck(['AC2'], hidden, 'npm test | tail -3'), /not recorded: the result of this command cannot be told/);
+  assert.match(r.acceptance.claimByCheck(['AC9'], passed, 'x'), /no criterion "AC9"/);
+});
