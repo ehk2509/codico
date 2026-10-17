@@ -160,6 +160,20 @@ export class WorkspaceTools {
         return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}`;
     }
 
+    /**
+     * Runs, in `cwd`, a command Codico runs on its own (a check of the agent's work), only if the
+     * user's approvals let `asked` run without a question; undefined otherwise, or if it did not finish.
+     */
+    async runUnasked(asked: string, command: string, cwd: string, signal: AbortSignal): Promise<{ exitCode: number | null; output: string } | undefined> {
+        const untrusted = this._host.untrustedContentSeen();
+        const allowed = (this._host.approvals.allowAllCommands && (this._host.evaluationMode() || !untrusted)) || (!untrusted && !!this._host.approvedCommands().allows(asked));
+        const sandbox = allowed ? await commandSandbox() : undefined;
+        if (!sandbox || sandbox.refusal) { return undefined; }
+        const timeoutSec = Math.max(10, vscode.workspace.getConfiguration('codico').get<number>('terminalTimeoutSeconds', 300));
+        const result = await runTerminalProcess({ command, cwd, timeoutMs: timeoutSec * 1000, signal, sandbox: sandbox.wrap });
+        return result.stopped || result.error ? undefined : { exitCode: result.timedOut ? null : result.exitCode, output: result.output };
+    }
+
     /** Whether a command may run: asked on a card, unless allowed for the task or remembered. */
     async askToRun(command: string, msgId: string): Promise<boolean> {
         // After the agent has read external content this turn, Allow All no longer covers

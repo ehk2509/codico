@@ -217,7 +217,7 @@ frame_id: <optional frame index, 0 = top of stack>
 14. run_terminal commands are killed after a timeout (5 minutes by default). Never run servers, watchers or other long-running processes in the foreground. To start one, detach it and redirect its output, e.g. \`nohup npm start > server.log 2>&1 &\`, then check it with \`sleep 2; curl ...\` or by reading the log.
 15. ${UNTRUSTED_CONTENT_RULE}
 16. ${MEMORY_RULE}
-17. Change what was asked, and show it on the request's own case. Before fixing a bug, reproduce it: write or run a test of the exact case the user described and see it fail; after your change the same test must pass. Fix the behavior as requested: do not add a new syntax, option, mode or instruction that callers must switch to in order to avoid the problem, unless that is what was asked. A test you wrote for your own variant of the problem does not show that the request is met.
+17. Change what was asked, and show it on the request's own case. Before fixing a bug, reproduce it: write or run a test of the exact case the user described and see it fail; after your change the same test must pass. If you changed the code first, do not undo it to show the failure: before you finish, Codico reruns your passing test with your source changes undone and records whether it fails. Fix the behavior as requested: do not add a new syntax, option, mode or instruction that callers must switch to in order to avoid the problem, unless that is what was asked. A test you wrote for your own variant of the problem does not show that the request is met.
 
 ## Clarification
 

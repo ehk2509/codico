@@ -13,6 +13,7 @@ import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
 import { requestCheckGuidance } from './requestCheck';
 import { isDocumentationFile } from './agentEfficiency';
+import { commandIn, isTestFile, outcomeWithoutChange, withoutChange } from './reproduction';
 import { WorkspaceTools } from './workspaceTools';
 
 /** What verification needs from the conversation. */
@@ -58,6 +59,8 @@ export class VerifyRuntime {
     private _disputedState = '';
     /** The user's request of this turn, for the reviewer. */
     private _request = '';
+    /** The checks already run without the change, at the code they were run for. */
+    private _withoutChangeTried = new Set<string>();
 
     constructor(private readonly _host: VerifyHost) {
         _host.external.browser.onError = text => {
@@ -77,7 +80,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0; this._disputedState = '';
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0; this._disputedState = ''; this._withoutChangeTried.clear();
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -167,6 +170,7 @@ export class VerifyRuntime {
      * so the reply does not present as done what the review disputes.
      */
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
+        await this._runWithoutChange(signal);
         const reminder = this.guidance();
         if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
         // The agent changed nothing since the last dispute (it answered it, or gave up): no point repeating it
@@ -194,6 +198,33 @@ export class VerifyRuntime {
         // The report names where its screenshots are
         passport.acceptance.evidenceFolder = this._store?.folder;
         if (enabled && reviewer && this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
+    }
+
+    /**
+     * When no check has shown the problem the change fixes, Codico shows it itself, if it can: it
+     * runs the newest passing test with the turn's changes undone except to tests (reproduction.ts).
+     * The agent then need not undo its own work to show the test failing first.
+     */
+    private async _runWithoutChange(signal: AbortSignal): Promise<void> {
+        const passport = this._host.passport();
+        const built = passport.build();
+        const root = toolFolders()?.[0]?.uri.fsPath;
+        if (!root || !built || built.checks.some(check => check.fixed) || !built.files.some(file => !isDocumentationFile(file.path) && !isTestFile(file.path))) { return; }
+        const candidate = passport.reproductionCandidate();
+        const at = candidate && `${candidate.key}@${passport.lastChange}`;
+        if (!candidate || !at || this._withoutChangeTried.has(at)) { return; }
+        this._withoutChangeTried.add(at);
+        const scratch = withoutChange(root, passport.changes());
+        if (!scratch) { return; }
+        this._host.post({ type: 'activity', text: 'Checking that the tests fail without the change…' });
+        try {
+            const run = await this._host.tools.runUnasked(candidate.command, commandIn(candidate.command, root, scratch.root), scratch.root, signal);
+            const outcome = run ? outcomeWithoutChange(candidate.command, run.exitCode, run.output) : 'unknown';
+            if (outcome !== 'unknown') { passport.recordWithoutChange(candidate.key, outcome); }
+        } finally {
+            scratch.remove();
+            this._host.post({ type: 'activity', text: null });
+        }
     }
 
     /** The code and the evidence the criteria rest on: a review is current while they have not changed. */
@@ -228,7 +259,7 @@ export class VerifyRuntime {
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
+        return paths.filter(isTestFile).slice(0, 3).flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
                 return [{ path: p, text: text.length > 8000 ? `${text.slice(0, 8000)}\n… (cut)` : text }];

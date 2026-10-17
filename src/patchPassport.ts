@@ -29,8 +29,10 @@ export interface PassportCheck {
     detail: string;
     /** Its last run was before the last file change: it does not cover the final code. */
     stale: boolean;
-    /** It failed earlier in the turn and passes now. */
+    /** It failed earlier in the turn and passes now, or Codico saw it fail without the change. */
     fixed: boolean;
+    /** How Codico's run of it without the turn's change (tests kept) ended, when it made one. */
+    withoutChange?: 'failed' | 'passed';
     runs: number;
 }
 
@@ -141,7 +143,7 @@ export function countChangedLines(before: string, after: string): { added: numbe
 
 interface FileRecord { before: string | null; after: string; edits: number; lastChange: number }
 interface CheckRun { outcome: CheckOutcome; detail: string; at: number }
-interface CheckRecord { command: string; kind: CheckKind; runs: CheckRun[] }
+interface CheckRecord { command: string; kind: CheckKind; runs: CheckRun[]; raw: string; withoutChange?: 'failed' | 'passed' }
 
 /** Collects what one turn changed and checked, in the order it happened. */
 export class PassportRecorder {
@@ -167,7 +169,8 @@ export class PassportRecorder {
         const kind = classifyCheck(command);
         if (!kind) { return undefined; }
         const key = checkKey(command);
-        const record = this._checks.get(key) ?? { command: key, kind, runs: [] };
+        const record = this._checks.get(key) ?? { command: key, kind, runs: [], raw: command };
+        record.raw = command;
         this._checks.set(key, record);
         const outcome = this._outcome(command, kind, exitCode, output);
         record.runs.push({ ...outcome, at: ++this._clock });
@@ -184,6 +187,30 @@ export class PassportRecorder {
         if (exitCode !== 0) { return { outcome: 'failed', detail: `exit ${exitCode}` }; }
         if (exitCodeHidden(command)) { return { outcome: 'unknown', detail: 'result hidden by a pipe' }; }
         return { outcome: 'passed', detail: 'exit 0' };
+    }
+
+    /** The test passing on the final code that has not been shown to fail without the change: what Codico can run without it. */
+    reproductionCandidate(): { key: string; command: string } | undefined {
+        const last = this.lastChange;
+        const candidates = [...this._checks.values()].filter(record => {
+            const latest = record.runs[record.runs.length - 1];
+            return record.kind === 'test' && record.withoutChange === undefined && latest.outcome === 'passed' && latest.at > last &&
+                !record.runs.some(run => run.outcome === 'failed');
+        });
+        const newest = candidates.sort((a, b) => b.runs[b.runs.length - 1].at - a.runs[a.runs.length - 1].at)[0];
+        return newest ? { key: newest.command, command: newest.raw } : undefined;
+    }
+
+    /** How the check ended when Codico ran it without the turn's change. */
+    recordWithoutChange(key: string, outcome: 'failed' | 'passed'): void {
+        const record = this._checks.get(key);
+        if (record) { record.withoutChange = outcome; }
+    }
+
+    /** The files the turn changed, with their text before and now. */
+    changes(): Array<{ path: string; before: string | null; after: string }> {
+        return [...this._files.entries()].filter(([, file]) => (file.before ?? '') !== file.after || file.before === null)
+            .map(([path, file]) => ({ path, before: file.before, after: file.after }));
     }
 
     /** When the code last changed in this turn (0: it did not). */
@@ -203,7 +230,8 @@ export class PassportRecorder {
             return {
                 command: record.command, kind: record.kind, outcome: latest.outcome, detail: latest.detail,
                 stale: latest.at < lastChange,
-                fixed: latest.outcome === 'passed' && record.runs.slice(0, -1).some(run => run.outcome === 'failed'),
+                fixed: latest.outcome === 'passed' && (record.runs.slice(0, -1).some(run => run.outcome === 'failed') || record.withoutChange === 'failed'),
+                ...(record.withoutChange ? { withoutChange: record.withoutChange } : {}),
                 runs: record.runs.length,
             };
         });
@@ -264,7 +292,8 @@ export function passportMarkdown(passport: PatchPassport): string {
     if (passport.checks.length > 0) {
         lines.push('', '### Checks', ...passport.checks.map(check => {
             const mark = check.outcome === 'passed' ? '✅' : check.outcome === 'failed' ? '❌' : '❔';
-            const extras = [check.detail, check.fixed ? 'was failing earlier in this change' : '', check.stale ? 'ran before the last change' : ''].filter(Boolean).join('; ');
+            const before = check.withoutChange === 'failed' ? 'fails without the change (Codico ran it)' : check.withoutChange === 'passed' ? 'passes without the change too' : check.fixed ? 'was failing earlier in this change' : '';
+            const extras = [check.detail, before, check.stale ? 'ran before the last change' : ''].filter(Boolean).join('; ');
             return `- ${mark} \`${check.command}\` (${check.kind}) — ${extras}`;
         }));
     }
