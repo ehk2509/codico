@@ -47,3 +47,9 @@ test('commands point into the scratch worktree, and only a test failure counts a
   assert.equal(outcomeWithoutChange('npm test | tail -3', 0, 'done'), 'unknown');
   assert.deepEqual(['tests/a.test.js', 'src/a.spec.ts', 'pkg/db_test.go', 'test_x.py', 'src/a.ts', 'src/testing.ts'].map(isTestFile), [true, true, true, true, false, false]);
 });
+
+test('without the change, a pass is believed only from the tests\' summary', () => {
+  assert.equal(outcomeWithoutChange('npm test > full.log; echo "exit $?"', 0, 'exit 1\n'), 'unknown');
+  assert.equal(outcomeWithoutChange('npm test', 0, 'all good'), 'unknown');
+  assert.equal(outcomeWithoutChange('npm test; echo done', 0, '# pass 5\n# fail 0\ndone'), 'passed');
+});

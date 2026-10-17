@@ -259,7 +259,7 @@ export class ExplorationController {
                 return '[System Verification] That command ran, but it is not a check of the project (a test, build, type-check or lint command), so it does not verify the change. Run the project\'s tests, or the focused test file that covers the change.';
             }
             if (checkResultHidden(tool.command, result)) {
-                return '[System Verification] The check ran, but its result cannot be told: a pipe hides its exit code and it printed no test summary. Run it again without piping its output (or with set -o pipefail).';
+                return '[System Verification] The check ran, but its result cannot be told: a pipe or a command after it hides its exit code, and it printed no test summary. Run it again on its own, with its output shown (or with set -o pipefail).';
             }
 
             if (this._verificationAuditSeen && this._verificationAuditReads === 0) {

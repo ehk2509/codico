@@ -79,7 +79,8 @@ const safeRealpath = (p: string): string => { try { return fs.realpathSync.nativ
 export function outcomeWithoutChange(command: string, exitCode: number | null, output: string): 'failed' | 'passed' | 'unknown' {
     // The scratch worktree has no build output (it is ignored by git): a test that loads it fails for that alone
     if (/Cannot find module|MODULE_NOT_FOUND|No module named|ModuleNotFoundError/.test(output)) { return 'unknown'; }
+    // A pass is believed only from the tests' own summary: an exit code of 0 can be another command's
     const summary = testSummary(output);
-    if (summary) { return summary.failed > 0 ? 'failed' : exitCode === 0 ? 'passed' : 'unknown'; }
-    return exitCode === 0 && !exitCodeHidden(command) ? 'passed' : 'unknown';
+    if (summary) { return summary.failed > 0 ? 'failed' : exitCode === 0 || exitCodeHidden(command) ? 'passed' : 'unknown'; }
+    return 'unknown';
 }

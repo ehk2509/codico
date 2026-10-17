@@ -128,7 +128,7 @@ test('a pipe hides the exit code: success is only believed with a test summary',
   hidden.recordCommand('npm run compile 2>&1 | tail -5', 0, 'error TS2304: Cannot find name');
   const p = hidden.build();
   assert.equal(p.verdict, 'unverified');
-  assert.deepEqual([p.checks[0].outcome, p.checks[0].detail], ['unknown', 'result hidden by a pipe']);
+  assert.deepEqual([p.checks[0].outcome, p.checks[0].detail], ['unknown', 'result hidden by a pipe or a later command']);
   assert.match(p.notes.join('\n'), /`npm run compile` ran, but its result cannot be told/);
   // The failed tests are seen through the pipe
   const seen = new PassportRecorder();
@@ -188,3 +188,22 @@ test('the report is saved with the reply, so a reopened thread shows it again', 
   assert.ok(REPLAY_TYPES.has('patchPassport'));
 });
 
+
+test('a command after the check hides its exit code too: the line exits with the last command\'s code', () => {
+  const { exitCodeHidden } = require('../out/patchPassport.js');
+  // Seen in the holdout: the output in a file, then an echo of the code; the line always exits 0
+  for (const command of ['npm test > full.log; echo "exit $?"; grep -n "^not ok" full.log', 'npm test; ls /tmp || true', 'npm run compile > build.log; echo done']) {
+    assert.equal(exitCodeHidden(command), true, command);
+  }
+  // The check last, or chained with &&: its own code
+  for (const command of ['cd /ws; npm test', 'npm run compile; node --test tests/a.test.js', 'npm run compile && npm test', 'set -o pipefail; npm test | tail -5']) {
+    assert.equal(exitCodeHidden(command), false, command);
+  }
+  const r = new PassportRecorder();
+  r.recordChange('src/a.ts', 'a', 'b');
+  r.recordCommand('npm test > full.log; echo "exit $?"', 0, 'exit 1\n');
+  assert.deepEqual([r.build().checks[0].outcome, r.build().verdict], ['unknown', 'unverified']);
+  // With the summary printed, the tests' own result is read
+  r.recordCommand('npm test; echo done', 0, '# pass 4\n# fail 1\ndone\n');
+  assert.equal(r.build().checks[1].outcome, 'failed');
+});
