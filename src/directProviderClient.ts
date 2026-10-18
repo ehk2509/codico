@@ -244,7 +244,7 @@ function _streamOpenAICompat(
                     if (replayField && reasoningText && !reasoningSent) { reasoningSent = true; push({ type: 'reasoning', text: reasoningText }); }
                 };
                 const emitNativeCalls = (final = false): void => {
-                    for (const call of nativeCalls.flushReady()) { push({ type: 'native_tool', call }); }
+                    for (const call of nativeCalls.flushReady(final)) { push({ type: 'native_tool', call }); }
                     if (final && nativeCalls.hasPending) {
                         push({
                             type: 'stream_error',

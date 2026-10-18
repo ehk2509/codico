@@ -453,7 +453,7 @@ export function streamOpenRouter(
                     const nativeCalls = new OpenAIToolCallAccumulator();
 
                     function emitReadyNativeTools(final = false): void {
-                        for (const call of nativeCalls.flushReady()) {
+                        for (const call of nativeCalls.flushReady(final)) {
                             push({ type: 'native_tool', call });
                         }
                         if (final && nativeCalls.hasPending) {

@@ -747,6 +747,17 @@ interface OpenAIDeltaToolCall {
     function?: { name?: string; arguments?: string };
 }
 
+/**
+ * A tool call's JSON arguments. Once the call is complete, small slips models make are repaired
+ * (a doubled or stray comma, one before a closing brace); anything else still fails.
+ */
+export function parseArguments(text: string, complete = true): unknown {
+    try { return JSON.parse(text); } catch (error) {
+        if (!complete) { throw error; }
+        return JSON.parse(text.replace(/,(\s*,)+/g, ',').replace(/,\s*([}\]])/g, '$1').replace(/([{\[])\s*,/g, '$1'));
+    }
+}
+
 export class OpenAIToolCallAccumulator {
     private readonly _calls = new Map<number, { id?: string; name: string; args: string; emitted: boolean }>();
 
@@ -774,12 +785,12 @@ export class OpenAIToolCallAccumulator {
         return text.length <= 240 ? text : `${text.slice(0, 160)} … ${text.slice(-80)}`;
     }
 
-    flushReady(): NativeToolCall[] {
+    flushReady(final = false): NativeToolCall[] {
         const ready: NativeToolCall[] = [];
         for (const [, call] of [...this._calls.entries()].sort((a, b) => a[0] - b[0])) {
             if (call.emitted || !call.name) { continue; }
             try {
-                const parsed = call.args.trim() ? JSON.parse(call.args) : {};
+                const parsed = call.args.trim() ? parseArguments(call.args, final) : {};
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { continue; }
                 call.emitted = true;
                 ready.push({ id: call.id, name: call.name, arguments: parsed as Record<string, unknown> });

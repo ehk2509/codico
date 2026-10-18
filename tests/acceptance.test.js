@@ -315,3 +315,16 @@ test('evidence ids are given as text too: lists of strings are where models wrot
   assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: 'E1 E3' } }).evidence, ['E1', 'E3']);
   assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: ['E2'] } }).evidence, ['E2']);
 });
+
+test('small JSON slips in a complete tool call are repaired; a partial call is left to finish', () => {
+  const { parseArguments, OpenAIToolCallAccumulator } = require('../out/nativeTools.js');
+  // Seen from Claude Sonnet: a stray comma on its own line
+  assert.deepEqual(parseArguments('{"filepath": "tests/a.test.js", "start_line": 121, \n, "end_line": 130}'), { filepath: 'tests/a.test.js', start_line: 121, end_line: 130 });
+  assert.deepEqual(parseArguments('{"a": [1, 2,], }'), { a: [1, 2] });
+  assert.throws(() => parseArguments('{"criteria": unquoted text}'));
+  assert.throws(() => parseArguments('{"a": 1,', false), 'still streaming: not repaired');
+  const acc = new OpenAIToolCallAccumulator();
+  acc.add({ index: 0, id: 'c1', function: { name: 'read_file', arguments: '{"filepath": "a.ts", , "start_line": 3}' } });
+  assert.deepEqual(acc.flushReady(), [], 'not repaired before the stream ends');
+  assert.deepEqual(acc.flushReady(true), [{ id: 'c1', name: 'read_file', arguments: { filepath: 'a.ts', start_line: 3 } }]);
+});
