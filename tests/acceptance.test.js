@@ -295,3 +295,14 @@ test('the reviewer is shown the part of a test file the turn changed, not its st
   assert.equal(changedPart('a\n', added), added);
   assert.match(changedPart(undefined, 'x'.repeat(9000)), /… \(cut\)$/);
 });
+
+test('the reviewer asks for the request\'s own example, given to the code the user calls', () => {
+  const { reviewPrompt, AcceptanceRecorder } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  r.setCriteria(['A worker named "Backend API" shows as backend-api']);
+  const prompt = reviewPrompt(r.build(0), [], 'src/teamTools.ts +5', [], 'The start action takes a name ("Backend API"): `Started worker backend-api (1a2b3c4d)`.');
+  assert.match(prompt, /Where the request gives an example \(an input and what it must produce\), a test must give that very input to the code the user calls \(the tool, command or public function, not a helper behind it\)/);
+  assert.match(prompt, /a test of the helper alone, or with an input already in its final form, does not cover it/);
+  // Without a request there is no request line at all
+  assert.doesNotMatch(reviewPrompt(r.build(0), [], '', [], ''), /Where the request gives an example/);
+});

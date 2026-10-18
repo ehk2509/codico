@@ -13,6 +13,7 @@ test('a code change with no stated criteria and no reproduced failure: asked for
   assert.match(text, /State its acceptance criteria in the request's own words/);
   assert.match(text, /a test of exactly the scenario they described, which fails without your change and passes with it/);
   assert.match(text, /a new syntax, option or mode that callers must switch to/);
+  assert.match(text, /Where the request gives an example \(an input and what it must produce\), test that very input through the code the user calls/);
 });
 
 test('a test that failed and then passed is the reproduction; with criteria too, nothing is asked', () => {

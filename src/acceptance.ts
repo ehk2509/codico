@@ -246,7 +246,7 @@ export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserSt
         `Browser steps (most recent last):\n${trail || '(none)'}\n` +
         `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
         'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>' +
-        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for, not a different mechanism (a new syntax, option or mode) or a narrower case:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
+        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for, not a different mechanism (a new syntax, option or mode) or a narrower case. Where the request gives an example (an input and what it must produce), a test must give that very input to the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output; a test of the helper alone, or with an input already in its final form, does not cover it:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
 }
 
 /** The reviewer's answer, criterion by criterion. */
