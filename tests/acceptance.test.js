@@ -278,12 +278,12 @@ test('criteria are given as text, one per line: a list of free-text items is whe
 test('the reviewer is shown the part of a test file the turn changed, not its start', () => {
   const { changedPart } = require('../out/acceptance.js');
   // Seen in the holdout: new tests appended to a long test file were cut off, and the reviewer could not see them
-  const old = Array.from({ length: 400 }, (_, i) => `test('existing ${i}', () => { assert.ok(true); });`).join('\n') + '\n';
+  const old = Array.from({ length: 800 }, (_, i) => `test('existing ${i}', () => { assert.ok(true); });`).join('\n') + '\n';
   const added = "test('names: fenced and native forms', () => {\n  assert.equal(parseTeamFence('action: start\\nname: Front End!').name, 'front-end');\n});\n";
   const part = changedPart(old, old + added);
-  assert.match(part, /^\(lines 3\d\d–40\d of 40\d: the part this turn changed; the rest of the file is unchanged\)/);
+  assert.match(part, /^\(lines 7\d\d–80\d of 80\d: the part this turn changed; the rest of the file is unchanged\)/);
   assert.match(part, /names: fenced and native forms/);
-  assert.match(part, /\n40\d\tassert|\n40\d\t  assert/);
+  assert.match(part, /\n80\d\t  assert/);
   assert.doesNotMatch(part, /existing 0'/);
   // A change in the middle: that region, with its context
   const lines = old.split('\n'); lines[200] = "test('existing 200', () => { assert.equal(f(), 2); });";
@@ -293,7 +293,8 @@ test('the reviewer is shown the part of a test file the turn changed, not its st
   // A new file, or a short one: whole
   assert.equal(changedPart(null, added), added);
   assert.equal(changedPart('a\n', added), added);
-  assert.match(changedPart(undefined, 'x'.repeat(9000)), /… \(cut\)$/);
+  assert.match(changedPart(undefined, 'x'.repeat(21000)), /… \(cut\)$/);
+  assert.equal(changedPart(undefined, 'x'.repeat(9000)), 'x'.repeat(9000), 'up to 20,000 characters are shown');
 });
 
 test('the reviewer asks for the request\'s own example, given to the code the user calls', () => {
@@ -303,6 +304,7 @@ test('the reviewer asks for the request\'s own example, given to the code the us
   const prompt = reviewPrompt(r.build(0), [], 'src/teamTools.ts +5', [], 'The start action takes a name ("Backend API"): `Started worker backend-api (1a2b3c4d)`.');
   assert.match(prompt, /Where the request gives an example \(an input and what it must produce\), a test must give that very input to the code the user calls \(the tool, command or public function, not a helper behind it\)/);
   assert.match(prompt, /a test of the helper alone, or with an input already in its final form, does not cover it/);
+  assert.match(prompt, /a test that expects the unconverted value on that path contradicts the request/);
   // Without a request there is no request line at all
   assert.doesNotMatch(reviewPrompt(r.build(0), [], '', [], ''), /Where the request gives an example/);
 });
