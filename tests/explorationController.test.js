@@ -336,3 +336,19 @@ test('only a check of the project whose result can be told closes the verificati
   assert.match(tests, /acceptance gate is satisfied/);
   assert.equal(controller.verificationPending, false);
 });
+
+test('an edit to a test is not a lifecycle edit to re-read: a passing run of it verifies the change', () => {
+  const { buildLocalInvariantAudit } = require('../out/localInvariantAudit.js');
+  const testEdit = "test('a finished stream ends', () => { let done = false; stream.on('end', () => { done = true; }); assert.equal(done, true); });";
+  assert.equal(buildLocalInvariantAudit(testEdit, testEdit, 'tests/stream.test.js'), '');
+  assert.match(buildLocalInvariantAudit(testEdit, testEdit, 'src/stream.ts'), /\[Local invariant audit\]/);
+
+  // Seen in the holdout: the source edit, then its test; the agent read the source again, never the test
+  const controller = new ExplorationController('Fix the stream so it reports an early end');
+  controller.beginIteration();
+  controller.after({ type: 'edit_file', filepath: 'src/stream.ts', oldStr: 'a', newStr: 'b' }, '[edit_file: src/stream.ts] Edit applied successfully.' + buildLocalInvariantAudit(testEdit, testEdit, 'src/stream.ts'));
+  controller.after({ type: 'edit_file', filepath: 'tests/stream.test.js', oldStr: 'a', newStr: 'b' }, '[edit_file: tests/stream.test.js] Edit applied successfully.' + buildLocalInvariantAudit(testEdit, testEdit, 'tests/stream.test.js'));
+  const ran = controller.after({ type: 'run_terminal', command: 'node --test tests/stream.test.js' }, '[run_terminal: node --test tests/stream.test.js]\nExit: 0\n# pass 3\n# fail 0');
+  assert.match(ran, /acceptance gate is satisfied/);
+  assert.equal(controller.completionGuidance(), undefined);
+});
