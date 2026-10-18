@@ -83,7 +83,13 @@ export function activate(context: vscode.ExtensionContext): void {
             }),
             vscode.commands.registerCommand('codico.__evalRunTask', async (prompt: string) => {
                 if (!prompt?.trim()) { throw new Error('Evaluation prompt is required.'); }
-                return provider.runEvaluationTask(prompt);
+                // A failed model request (no credits, rate limit, provider down) goes into the record, so a run cut short says why
+                const errors: string[] = [];
+                provider.backgroundListener = message => { if (message.type === 'streamError' || message.type === 'error') { errors.push(message.message.replace(/\s+/g, ' ').slice(0, 300)); } };
+                try {
+                    const metrics = await provider.runEvaluationTask(prompt);
+                    return { ...metrics, trace: [...metrics.trace, ...errors.map(target => ({ step: metrics.steps, tool: 'error', target }))] };
+                } finally { provider.backgroundListener = undefined; }
             }),
             vscode.commands.registerCommand('codico.__evalRunPlan', async (goal: string) => {
                 if (!goal?.trim()) { throw new Error('Evaluation plan goal is required.'); }

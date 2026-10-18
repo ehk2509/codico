@@ -97,6 +97,11 @@ export function isDocumentationFile(filepath: string): boolean {
     return DOCUMENTATION_EXTENSIONS.has(base.slice(dot));
 }
 
+const TEST_FILE_RE = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/;
+
+/** A test file, by where it is or how it is named. */
+export const isTestFile = (filepath: string): boolean => TEST_FILE_RE.test(filepath.replace(/\\/g, '/'));
+
 /**
  * True when a search pattern sent without regex mode is clearly meant as one
  * (alternation, escapes, wildcards, anchors, quantified classes) and compiles.

@@ -41,6 +41,11 @@ function tail(text, max = 12000) {
   const s = String(text || '');
   return s.length <= max ? s : s.slice(-max);
 }
+/** The model request failures Codico reported during a run (out of credits, rate limited, provider down). */
+function providerErrors(record) {
+  return (record.metrics?.trace || []).filter(event => event.tool === 'error').map(event => event.target);
+}
+
 function median(values) {
   if (!values.length) { return 0; }
   const xs = [...values].sort((a,b) => a-b);
@@ -367,8 +372,10 @@ async function main() {
         fs.rmSync(worktreeParent, { recursive: true, force: true });
       }
 
+      const errors = providerErrors(record);
       console.log(record.success ? 'PASS' : 'FAIL',
-        record.metrics ? `steps=${record.metrics.steps} tools=${record.metrics.toolCalls} tokens=${record.metrics.totalTokens}` : '');
+        record.metrics ? `steps=${record.metrics.steps} tools=${record.metrics.toolCalls} tokens=${record.metrics.totalTokens}` : '',
+        errors.length ? `| model request failed: ${errors[0]}` : '');
     }
   }
 
@@ -411,6 +418,7 @@ async function main() {
     `Agent: **${agentName}**${model ? ` · model: **${model}**` : ''}`,
     `Success: **${passed.length}/${valid.length} valid tasks (${(summary.successRate * 100).toFixed(1)}%)**`,
     `Invalid verifier tasks skipped before model invocation: **${invalid.length}**`,
+    ...(() => { const failed = valid.filter(r => providerErrors(r).length); return failed.length ? [`Runs with a failed model request: **${failed.length}** (first: ${providerErrors(failed[0])[0]})`] : []; })(),
     `Token ceiling: **${maxTotalTokens > 0 ? maxTotalTokens.toLocaleString() : 'none'}**`,
     `Over-budget valid tasks: **${overBudget.length}**`,
     `Median successful tokens: **${summary.medianTokensSuccessful || 'n/a'}**`,

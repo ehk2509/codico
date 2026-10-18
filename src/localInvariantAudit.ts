@@ -1,4 +1,5 @@
 import { buildImportUsageAudit } from './importUsageAudit';
+import { isTestFile } from './agentEfficiency';
 const LIFECYCLE_RE = /\b(?:done|finish(?:ed|reason)?|complete(?:d|ion)?|terminal|end(?:ed)?|error|abort(?:ed)?|close(?:d)?|success|resolve|reject|stop)\b/i;
 const STATE_RE = /\b(?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?:true|false|null|undefined)\b|(?:===|!==)\s*(?:true|false|null|undefined)/i;
 const SEMANTIC_TERMINAL_RE = /(?:\[DONE\]|\b(?:done|finish(?:ed|reason)?|complete(?:d|ion)?|terminal|success|resolve|stop)\b|finish_reason)/i;
@@ -28,7 +29,8 @@ const NOT_CODE_RE = /\.(?:md|mdx|markdown|txt|rst|adoc|json|jsonc|ya?ml|toml|ini
 
 /** @param before the file as it was: an import that was already unused then is not this edit's doing */
 export function buildLocalInvariantAudit(source: string, changedText: string, filepath = '', before = ''): string {
-    if (NOT_CODE_RE.test(filepath)) { return ''; }
+    // A test is checked by running it: its "done" and "error" are assertions, not lifecycle logic to re-read
+    if (NOT_CODE_RE.test(filepath) || isTestFile(filepath)) { return ''; }
     const importAudit = buildImportUsageAudit(source, before);
     const callableReminder = CALLABLE_DECL_RE.test(changedText)
         ? '\n\n[Post-edit behavior integration reminder]\n' +

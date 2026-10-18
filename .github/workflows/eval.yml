@@ -8,7 +8,7 @@ on:
         required: true
         default: codico
         type: choice
-        options: [codico, claude-code, oracle]
+        options: [codico, claude-code, oracle, noop]
       model:
         description: Model ID (OpenRouter for codico; Claude model or empty for claude-code; ignored for oracle)
         required: false
@@ -24,6 +24,11 @@ on:
         required: false
         default: false
         type: boolean
+      suite:
+        description: Task suite file (eval/tasks.json is the frozen holdout)
+        required: false
+        default: eval/tasks.json
+        type: string
       filter:
         description: Regex matched against task id or category
         required: true
@@ -85,6 +90,7 @@ jobs:
           AGENT: ${{ inputs.agent }}
           MODEL: ${{ inputs.model }}
           FILTER: ${{ inputs.filter }}
+          SUITE: ${{ inputs.suite }}
           ESCALATION: ${{ inputs.escalation_model }}
           CODICO_EVAL_ACCO_ENABLED: ${{ inputs.acco && '1' || '0' }}
           CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
@@ -93,9 +99,10 @@ jobs:
         run: |
           if [ "$AGENT" = codico ]; then test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1); fi
           if [ "$AGENT" = claude-code ]; then test -n "$ANTHROPIC_API_KEY" || (echo "ANTHROPIC_API_KEY secret is required" && exit 1); fi
-          if [ "$AGENT" = oracle ]; then MODEL=; fi
+          if [ "$AGENT" = oracle ] || [ "$AGENT" = noop ]; then MODEL=; fi
           xvfb-run -a npm run eval:coding -- \
             --agent "$AGENT" \
+            --suite "${SUITE:-eval/tasks.json}" \
             ${MODEL:+--model "$MODEL"} \
             ${ESCALATION:+--escalation-model "$ESCALATION"} \
             --filter "$FILTER" \

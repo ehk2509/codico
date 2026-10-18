@@ -161,6 +161,12 @@ export class AgentTurn {
             let turnRanTools = false;
             let askedForAnswer = false;
             let askedToFinish = false;
+            // A reminder that sends the reply back for another step (recorded in the benchmark trace by its kind)
+            const sendBack = (kind: string, content: string): void => {
+                this._host.history.push({ role: 'user', content });
+                if (this._host.evaluationMode) { this._host.evalTrace.push({ step: this._host.evalSteps, tool: 'nudge', target: kind }); }
+                this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+            };
             for (let i = 0; shouldRunAgentIteration(i, maxIterations, exploration.verificationPending, verificationGraceIterations, exploration.mutationGracePending, mutationGraceIterations, exploration.lastMutationIteration, checkResultUnread); i++) {
                 if (signal.aborted) { break; }
                 if (this._host.evaluationMode && this._host.evaluationTokenBudget > 0 &&
@@ -589,41 +595,34 @@ export class AgentTurn {
                             break;
                         }
                         verificationNudges++;
-                        this._host.history.push({ role: 'user', content: verificationGuidance });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
+                        sendBack('verification', verificationGuidance); continue;
                     }
                     // The reply hands the decision back (an offer to go on, a question) while the requested work is not done
                     if (!askedToFinish && turnRanTools && endsWithOfferOrQuestion(fullContent) && this._host.workUnfinished?.()) {
                         askedToFinish = true;
-                        this._host.history.push({ role: 'user', content: '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.' });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        sendBack('offer', '[System] Your reply ends by offering to continue or asking how to proceed, but the request already asks for this work and Codico\'s check does not show it done. Do the remaining work now, the way the request asks. Ask only if the request truly leaves the choice open, and then say plainly what each option means.');
                         continue;
                     }
                     // Criteria were stated and some are not verified on the final code: once or twice, the reply may not end on that
                     const acceptanceGuidance = await this._host.acceptanceGuidance?.(signal);
                     if (acceptanceGuidance) {
-                        if (acceptanceGuidance.startsWith(REVIEW_DISPUTE_PREFIX)) { escalate('the independent reviewer disputes that the request is met.'); }
-                        this._host.history.push({ role: 'user', content: acceptanceGuidance });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' }); continue;
+                        const dispute = acceptanceGuidance.startsWith(REVIEW_DISPUTE_PREFIX);
+                        if (dispute) { escalate('the independent reviewer disputes that the request is met.'); }
+                        sendBack(dispute ? 'review-dispute' : acceptanceGuidance.includes('show that the request itself is met') ? 'request-check' : 'acceptance', acceptanceGuidance); continue;
                     }
                     // Some models announce an action ("I'll locate the file.") and end the
                     // turn without emitting the tool fence. Ask them to issue it rather than
                     // treating the announcement as the final answer. Bounded per request.
                     if (isUnfulfilledActionAnnouncement(fullContent) && actionNudges < MAX_ACTION_NUDGES) {
                         actionNudges++;
-                        this._host.history.push({
-                            role: 'user',
-                            content: '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
-                                'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.',
-                        });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        sendBack('announced-action', '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
+                            'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.');
                         continue;
                     }
                     // Work was done but the reply ends without a word: the user would get no account of it
                     if (!fullContent.trim() && turnRanTools && !askedForAnswer) {
                         askedForAnswer = true;
-                        this._host.history.push({ role: 'user', content: '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.' });
-                        this._host.post({ type: 'appendContent', id: msgId, text: '\n\n' });
+                        sendBack('no-answer', '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.');
                         continue;
                     }
                     break;
