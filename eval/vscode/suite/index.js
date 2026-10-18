@@ -35,6 +35,7 @@ async function run() {
       maxIterations,
       maxTotalTokens,
       escalationModel: process.env.CODICO_EVAL_ESCALATION_MODEL || '',
+      ...(process.env.CODICO_EVAL_EFFORT ? { thinkingEffort: process.env.CODICO_EVAL_EFFORT } : {}),
       accoEnabled,
       accoBaseUrl,
     });

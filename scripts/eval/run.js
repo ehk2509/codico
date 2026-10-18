@@ -244,6 +244,7 @@ async function main() {
           CODICO_EVAL_MAX_ITERATIONS: String(task.maxIterations ?? 16),
           CODICO_EVAL_MAX_TOTAL_TOKENS: String(maxTotalTokens),
           CODICO_EVAL_ESCALATION_MODEL: arg('--escalation-model', ''),
+          CODICO_EVAL_EFFORT: arg('--effort', ''),
           CODICO_EVAL_OUTPUT: rawAgentOutput,
           CODICO_EVAL_INSTANCE_DIR: instanceDir,
         };
