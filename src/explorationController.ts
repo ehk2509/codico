@@ -1,4 +1,5 @@
 import { checkResultHidden, classifyCheck } from './patchPassport';
+import { COMMAND_CHANGED_FILES } from './commandChanges';
 import type { ToolCall } from './toolParser';
 import type { NativeToolDefinition } from './nativeTools';
 import { nativeToolsForAgentPhase } from './nativeTools';
@@ -238,6 +239,13 @@ export class ExplorationController {
                     ? 'This is a lifecycle/state edit: check the changed lines shown in the edit result against the Local invariant audit (read further lines of the file only for a path the result does not show), then run a behavior-level test. '
                     : 'Start with the edited component, then follow dependencies only if correctness requires it. ') +
                 'Do not broaden mutations until this edit is locally verified.';
+        }
+
+        // A command that changed files (a script, sed -i) is a code change like an edit: it needs verifying too
+        if (tool.type === 'run_terminal' && result.includes(COMMAND_CHANGED_FILES)) {
+            this.streak = 0; this._locked = false; this._lastMutationIteration = this._iteration;
+            this._verificationPending = true; this._verificationFile = undefined;
+            this._verificationAuditSeen = false; this._verificationAuditReads = 0; this.targetVisits.clear();
         }
 
         if (!this._verificationPending) { return undefined; }

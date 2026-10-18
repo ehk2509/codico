@@ -191,6 +191,9 @@ export class PassportRecorder {
         return { outcome: 'passed', detail: 'exit 0' };
     }
 
+    /** A file's text as last recorded in this turn, by the path it was recorded under. */
+    textOf(path: string): string | undefined { return this._files.get(path)?.after; }
+
     /** When the code last changed in this turn (0: it did not). */
     get lastChange(): number {
         return Math.max(0, ...[...this._files.values()].filter(file => (file.before ?? '') !== file.after || file.before === null).map(file => file.lastChange));

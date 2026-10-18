@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { WriteFileTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool } from './toolParser';
 import { FileManager } from './fileManager';
@@ -11,6 +12,7 @@ import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOu
 import { ExtensionMessage } from './chatProtocol';
 import { editResultSnippet } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
+import { changesBetween, COMMAND_CHANGED_FILES, treeState } from './commandChanges';
 import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { filterAllowedWorkspaceUris, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { looksLikeIntendedRegex } from './agentEfficiency';
@@ -118,6 +120,7 @@ export class WorkspaceTools {
         );
 
         this._host.post({ type: 'terminalChunk', id: msgId, text: '' });
+        const treeBefore = cwd ? treeState(cwd) : undefined;
         const result = await runTerminalProcess({
             command: tool.command,
             cwd,
@@ -146,6 +149,7 @@ export class WorkspaceTools {
             ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
             : '';
         const success = result.exitCode === 0;
+        const changedNote = this._recordCommandChanges(treeBefore);
         const evidence = this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
         // Once there are acceptance criteria, a check's result can be named as evidence for them
         const evidenceNote = evidence && this._host.passport().acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})` : '';
@@ -157,7 +161,17 @@ export class WorkspaceTools {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}${changedNote}`;
+    }
+
+    /** Files the command changed, recorded as changes of the turn (before its result counts as a check), and said to the agent. */
+    private _recordCommandChanges(before: ReturnType<typeof treeState>): string {
+        const after = before && treeState(before.root);
+        if (!before || !after) { return ''; }
+        const passport = this._host.passport();
+        const changes = changesBetween(before, after, file => passport.textOf(file) ?? passport.textOf(path.join(before.root, file)));
+        for (const change of changes) { passport.recordChange(change.path, change.before, change.after); }
+        return changes.length ? `\n${COMMAND_CHANGED_FILES} ${changes.map(c => c.path).join(', ')}. Codico records and checks them like an edit; change files with edit_file or write_file instead, so each change is shown and reviewed.` : '';
     }
 
     /** Whether a command may run: asked on a card, unless allowed for the task or remembered. */
