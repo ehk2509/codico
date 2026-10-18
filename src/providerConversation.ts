@@ -52,6 +52,41 @@ export function flattenChatHistory(history: ChatMessage[]): PlainChatMessage[] {
 }
 
 /** @param reasoningField set for providers that require each reply's reasoning back (DeepSeek: `reasoning_content`) */
+/**
+ * The reasoning blocks a reply streamed through OpenRouter (`reasoning_details`), merged by index,
+ * as they must be sent back with the next request so the model keeps its reasoning between tool
+ * calls (Claude signs them; a block must come back unchanged).
+ */
+export class ReasoningDetailsAccumulator {
+    private readonly _blocks = new Map<number, Record<string, unknown>>();
+
+    add(items: unknown): void {
+        if (!Array.isArray(items)) { return; }
+        for (const item of items) {
+            if (!item || typeof item !== 'object') { continue; }
+            const delta = item as Record<string, unknown>;
+            const index = typeof delta.index === 'number' ? delta.index : this._blocks.size;
+            const block = this._blocks.get(index) ?? {};
+            for (const [key, value] of Object.entries(delta)) {
+                if (value === null || value === undefined) { continue; }
+                block[key] = (key === 'text' || key === 'summary' || key === 'data') && typeof block[key] === 'string' ? block[key] + String(value) : value;
+            }
+            this._blocks.set(index, block);
+        }
+    }
+
+    /** The blocks as JSON, or undefined when the reply had none. */
+    serialized(): string | undefined {
+        return this._blocks.size ? JSON.stringify([...this._blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, block]) => block)) : undefined;
+    }
+}
+
+/** Reasoning kept as `reasoning_details` JSON, back in the form a request takes; undefined for any other kept reasoning. */
+function reasoningDetails(reasoning: string | undefined): unknown[] | undefined {
+    if (!reasoning?.startsWith('[')) { return undefined; }
+    try { const parsed = JSON.parse(reasoning); return Array.isArray(parsed) ? parsed : undefined; } catch { return undefined; }
+}
+
 export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean, reasoningField?: string): unknown[] {
     if (!useNativeTools) { return flattenChatHistory(history); }
 
@@ -72,7 +107,9 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
                 role: 'assistant',
                 content,
                 // Replies from before the switch to this provider have none: the field must still be present
-                ...(reasoningField ? { [reasoningField]: message.reasoning ?? '' } : {}),
+                ...(reasoningField === 'reasoning_details'
+                    ? (reasoningDetails(message.reasoning) ? { reasoning_details: reasoningDetails(message.reasoning) } : {})
+                    : reasoningField ? { [reasoningField]: message.reasoning ?? '' } : {}),
                 tool_calls: message.nativeToolCalls.map(call => ({
                     id: call.id,
                     type: 'function',
@@ -84,6 +121,10 @@ export function toOpenAIMessages(history: ChatMessage[], useNativeTools: boolean
             };
         }
 
+        if (message.role === 'assistant' && reasoningField === 'reasoning_details') {
+            const details = reasoningDetails(message.reasoning);
+            return { role: 'assistant', content: message.content, ...(details ? { reasoning_details: details } : {}) };
+        }
         if (message.role === 'assistant' && reasoningField) {
             return { role: 'assistant', content: message.content, [reasoningField]: message.reasoning ?? '' };
         }

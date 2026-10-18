@@ -3,7 +3,10 @@ import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
-import { toOpenAIMessages } from './providerConversation';
+import { ReasoningDetailsAccumulator, toOpenAIMessages } from './providerConversation';
+
+/** Models whose reasoning blocks are sent back with later requests (Claude: its reasoning between tool calls). */
+const KEEPS_REASONING = /^~?anthropic\//;
 import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
 import { UNTRUSTED_CONTENT_RULE } from './untrustedContent';
 
@@ -340,15 +343,17 @@ export function streamOpenRouter(
             let nativeFallbackUsed = false;
 
             function buildBody(): Record<string, unknown> {
+                // Claude's reasoning goes back with each reply, so it is kept between tool calls
                 const messages = toOpenAIMessages([
                     { role: 'system', content: systemPrompt(useNativeTools) },
                     ...history,
-                ], useNativeTools);
+                ], useNativeTools, KEEPS_REASONING.test(model) ? 'reasoning_details' : undefined);
                 return {
                     model,
                     messages,
                     stream: true,
-                    max_tokens: 131072,
+                    // Enough for any one step; asking for far more makes a low balance refuse the request early
+                    max_tokens: 32000,
                     include_reasoning: true,
                     reasoning: { effort: thinkingEffort },
                     stream_options: { include_usage: true },
@@ -451,6 +456,7 @@ export function streamOpenRouter(
                     let buffer = '';
                     const completion = new StreamCompletionGuard();
                     const nativeCalls = new OpenAIToolCallAccumulator();
+                    const reasoningBlocks = new ReasoningDetailsAccumulator();
 
                     function emitReadyNativeTools(final = false): void {
                         for (const call of nativeCalls.flushReady(final)) {
@@ -465,7 +471,13 @@ export function streamOpenRouter(
                     }
                     // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
                     let streamEnded = false;
-                    function pushEnd(): void { if (!streamEnded) { streamEnded = true; think.flush(); push(null); } }
+                    function pushEnd(): void {
+                        if (streamEnded) { return; }
+                        streamEnded = true; think.flush();
+                        const kept = KEEPS_REASONING.test(model) ? reasoningBlocks.serialized() : undefined;
+                        if (kept) { push({ type: 'reasoning', text: kept }); }
+                        push(null);
+                    }
 
                     function processSSELine(trimmed: string): void {
                         if (!trimmed) { return; }
@@ -488,6 +500,7 @@ export function streamOpenRouter(
                             const delta = json.choices?.[0]?.delta as
                                 | {
                                     reasoning?: string;
+                                    reasoning_details?: unknown[];
                                     content?: string;
                                     tool_calls?: Array<{
                                         index?: number;
@@ -497,6 +510,7 @@ export function streamOpenRouter(
                                 }
                                 | undefined;
                             if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
+                            reasoningBlocks.add(delta?.reasoning_details);
                             if (typeof delta?.content === 'string') { think.push(delta.content); }
                             for (const toolCall of delta?.tool_calls ?? []) {
                                 nativeCalls.add(toolCall);
