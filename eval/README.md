@@ -231,6 +231,30 @@ Measured as an A/B comparison, 5 tasks × 3 repetitions on each build, the chang
 
 Median steps were higher on all five tasks. The changes were reverted. A single run per task had not been able to show this: one task's step count varies by 4× between runs.
 
+### Efficiency changes measured one at a time (2026-10-17/18)
+
+Five changes aimed at Codico's extra steps were built and A/B tested one at a time with Claude Haiku 5.5, on the 10 valid mined candidates v7 does not use (`eval/tasks-unused.json`: 8 runnable, × 3 repetitions) and then on the five hard v7 tasks. Together they cut steps by about 30% and tokens by about a third on the 8 tasks. Measured with more runs, though, they lowered the success rate: 20/24 against 24/24 on the 8 tasks, 8/15 against 13/15 on the hard tasks. On one task (tools-write-nested-fences) the baseline passed 21 of 21 runs and the changed build 13 of 21. Bisecting showed that a system-prompt sentence announcing Codico's own check made the agent hand design choices back to the user (7 of 18 runs ended on a question, against 1 of 18), and that the rest of the savings came from checking less. Those changes were not kept.
+
+Kept, because they fix wrong behaviour rather than check less:
+- **A test edit no longer asks for a lifecycle re-read.** A test's words (done, finished, error) made its edit look like lifecycle logic, and only a re-read of the test file itself closed the gate: Codico sent the reply back every other step (61 times in 24 runs, 22 in one).
+- **A check followed by another command on the line has no known result.** `npm test > log; echo "exit $?"` always exited 0 and counted as a passing check whatever the tests did.
+- The benchmark trace records each reminder that sends a reply back, by its kind, and each failed model request.
+
+Measured against the baseline, both builds run at the same time (runs cut short by the provider left out):
+
+| | Baseline | With the kept fixes |
+|---|---|---|
+| 5 hard tasks × 6: solved | 24/30 | 22/30 |
+| Mean steps / tokens per run | 34.5 / 1.27M | 24.2 / 0.83M |
+| Cost per solved task | $0.069 | $0.050 |
+| 8 tasks × 3: solved | 21/24 | 21/24 |
+| Mean steps / tokens per run | 37.1 / 1.44M | 29.3 / 1.10M |
+| Cost per solved task | $0.068 | $0.059 |
+
+On the five tasks that failed most, run 6 more times on both builds, they solved 35/51 and 30/51 (12 runs a task, all rounds), a difference within noise, in both directions per task.
+
+Two rounds were lost to the OpenRouter account running out of credits: runs ended at step 1 with 0 tokens and nothing said why. The runner now prints such errors.
+
 ### A verifier corrected in v7: stream-resume-overlap
 
 v6's verifier for stream-resume-overlap followed only *exported* functions written `export function name(`. It rejected two valid solutions from Claude Haiku 5.5, which applied the overlap calculation on the resume path through a generator (`export async function* trimResumedContent`) and an internal helper. v7 uses a corrected copy, `eval/verifiers/streamResumeOverlapIntegrated.v7.verifier.js`, which follows every function of the module, generators included. The archived v6 suite keeps the original. The corrected copy was checked from every side:

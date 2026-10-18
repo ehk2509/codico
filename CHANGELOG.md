@@ -2,6 +2,15 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Fixed
+- Codico could send the reply back every other step after a test was edited. Words in the test such as "done", "finished" or "error" made the edit look like lifecycle logic, and only a re-read of the test file itself (not the code it tests) closed the check. A passing test run now verifies the change. In the coding holdout this happened 61 times in 24 runs, 22 times in one.
+- A check followed by another command on the same line (`npm test > log; echo "exit $?"`) counted as passing whatever the tests did: the line exits with the last command's code. It now has no known result unless its test summary is printed, like a check behind a pipe.
+
+### Changed
+- The coding holdout records each reminder that sends a reply back, by its kind, and each failed model request (out of credits, rate limited, provider down); the runner prints the error next to the result. The Coding Holdout workflow takes a task suite file and can run the noop agent. `eval/tasks-unused.json` holds the 10 valid mined tasks v7 does not use.
+
 ## 0.7.0 - 2026-10-16
 
 ### Added
