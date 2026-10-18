@@ -290,7 +290,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
                 criteria: { type: 'string', description: 'For action "criteria": the criteria, one per line.' },
                 criterion: { type: 'string', description: 'AC1, AC2…' },
                 result: { type: 'string', enum: ['pass', 'fail'] },
-                evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids: E1, E2…' },
+                evidence: { type: 'string', description: 'For action "verify": the evidence ids, e.g. "E1 E3".' },
                 how: { type: 'string' },
             },
             required: ['action'],
@@ -765,6 +765,13 @@ export class OpenAIToolCallAccumulator {
 
     pendingNames(): string[] {
         return [...this._calls.values()].filter(call => !call.emitted && call.name).map(call => call.name);
+    }
+
+    /** The start and end of the first unreadable call's arguments, as received, so the error shows what went wrong. */
+    pendingSample(): string {
+        const call = [...this._calls.values()].find(c => !c.emitted && c.name);
+        const text = call ? JSON.stringify(call.args) : '';
+        return text.length <= 240 ? text : `${text.slice(0, 160)} … ${text.slice(-80)}`;
     }
 
     flushReady(): NativeToolCall[] {

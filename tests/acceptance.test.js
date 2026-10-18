@@ -306,3 +306,10 @@ test('the reviewer asks for the request\'s own example, given to the code the us
   // Without a request there is no request line at all
   assert.doesNotMatch(reviewPrompt(r.build(0), [], '', [], ''), /Where the request gives an example/);
 });
+
+test('evidence ids are given as text too: lists of strings are where models wrote invalid JSON', () => {
+  const { getNativeToolDefinitions, nativeToolCallToToolCall } = require('../out/nativeTools.js');
+  assert.equal(getNativeToolDefinitions(false).find(t => t.name === 'acceptance').inputSchema.properties.evidence.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: 'E1 E3' } }).evidence, ['E1', 'E3']);
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: ['E2'] } }).evidence, ['E2']);
+});

@@ -459,7 +459,7 @@ export function streamOpenRouter(
                         if (final && nativeCalls.hasPending) {
                             push({
                                 type: 'stream_error',
-                                message: `OpenRouter returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
+                                message: `OpenRouter returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')} (received: ${nativeCalls.pendingSample()})`,
                             });
                         }
                     }
