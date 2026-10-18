@@ -76,10 +76,15 @@ export function classifyCheck(command: string): CheckKind | null {
     return null;
 }
 
-/** A pipe hides the exit code of the command before it (unless the shell is told otherwise). */
+/**
+ * The exit code is not the check's: a pipe hides it (unless the shell is told otherwise), and so does
+ * another command after it on the line (`npm test > log; echo done`: the line's code is echo's).
+ */
 export function exitCodeHidden(command: string): boolean {
     const unquoted = command.replace(/'[^']*'|"[^"]*"/g, '');
-    return /(?<!\|)\|(?!\|)/.test(unquoted) && !/pipefail/.test(command);
+    if (/(?<!\|)\|(?!\|)/.test(unquoted) && !/pipefail/.test(command)) { return true; }
+    const segments = unquoted.split(/;|\n/).map(segment => segment.trim()).filter(Boolean);
+    return segments.length > 1 && !classifyCheck(segments[segments.length - 1]) && segments.slice(0, -1).some(segment => classifyCheck(segment) !== null);
 }
 
 /** Pass and fail counts printed by a test runner, when the output has a summary we know. */
@@ -182,7 +187,7 @@ export class PassportRecorder {
         if (exitCode === null) { return { outcome: 'failed', detail: 'did not finish' }; }
         // A failure always counts; a success behind a pipe proves nothing
         if (exitCode !== 0) { return { outcome: 'failed', detail: `exit ${exitCode}` }; }
-        if (exitCodeHidden(command)) { return { outcome: 'unknown', detail: 'result hidden by a pipe' }; }
+        if (exitCodeHidden(command)) { return { outcome: 'unknown', detail: 'result hidden by a pipe or a later command' }; }
         return { outcome: 'passed', detail: 'exit 0' };
     }
 
