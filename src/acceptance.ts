@@ -217,6 +217,24 @@ export function acceptanceMarkdown(report: AcceptanceReport): string[] {
 export interface ReviewedTest { path: string; text: string }
 
 /** What the reviewer is asked: the request, the criteria, and only what Codico observed. Nothing of the agent's reasoning. */
+/**
+ * What a reviewer needs of a changed file: the part the turn changed, with some lines around it,
+ * not the file's start (new tests are often appended to a long test file). A new file, or a short
+ * one, is given whole.
+ */
+export function changedPart(before: string | null | undefined, after: string, max = 8000, context = 20): string {
+    const cut = (text: string) => text.length > max ? `${text.slice(0, max)}\n… (cut)` : text;
+    if (before === null || before === undefined || after.length <= max) { return cut(after); }
+    const a = before.split('\n'); const b = after.split('\n');
+    let start = 0;
+    while (start < a.length && start < b.length && a[start] === b[start]) { start++; }
+    let end = 0;
+    while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) { end++; }
+    const from = Math.max(0, start - context); const to = Math.min(b.length, b.length - end + context);
+    const lines = b.slice(from, to).map((line, i) => `${from + i + 1}\t${line}`).join('\n');
+    return `(lines ${from + 1}–${to} of ${b.length}: the part this turn changed; the rest of the file is unchanged)\n${cut(lines)}`;
+}
+
 export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = ''): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');

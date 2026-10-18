@@ -1,4 +1,4 @@
-import { criterionLine, parseReview, reviewPrompt } from './acceptance';
+import { changedPart, criterionLine, parseReview, reviewPrompt } from './acceptance';
 import { AppRunner } from './appRunner';
 import { commandSandbox } from './commandSandboxService';
 import { ExtensionMessage, WebviewMessage } from './chatProtocol';
@@ -224,14 +224,14 @@ export class VerifyRuntime {
         }
     }
 
-    /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each cut). */
+    /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each the part the turn changed). */
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
         return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
-                return [{ path: p, text: text.length > 8000 ? `${text.slice(0, 8000)}\n… (cut)` : text }];
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text) }];
             } catch { return []; }
         });
     }
