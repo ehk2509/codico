@@ -766,6 +766,14 @@ export class OpenAIToolCallAccumulator {
         return [...this._calls.values()].filter(call => !call.emitted && call.name).map(call => call.name);
     }
 
+    /** The start and end of the first unreadable call's arguments, as received (to diagnose a provider's format). */
+    pendingSample(): string {
+        const call = [...this._calls.values()].find(c => !c.emitted && c.name);
+        if (!call) { return ''; }
+        const text = JSON.stringify(call.args);
+        return text.length <= 300 ? text : `${text.slice(0, 200)} … ${text.slice(-100)}`;
+    }
+
     flushReady(): NativeToolCall[] {
         const ready: NativeToolCall[] = [];
         for (const [, call] of [...this._calls.entries()].sort((a, b) => a[0] - b[0])) {
