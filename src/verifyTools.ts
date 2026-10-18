@@ -95,7 +95,7 @@ export const APP_TOOL_DESCRIPTION = 'Start the project\'s app on this machine so
     'action "start" needs command (e.g. "npm run dev -- --port 5173") and url (the local address it serves, e.g. http://localhost:5173); it waits until the address answers. The app stops when the task ends. The browser may open that address.';
 export const BROWSER_EXPECT_DESCRIPTION = 'Check the current browser page; Codico runs the check itself and records the result as evidence (E1, E2…) for the acceptance criteria. ' +
     'With selector and text: the element shows the text. With text alone: the page shows it. With selector and state: visible, hidden, exists or absent. It waits up to timeout_ms (5000) for the page to update. Console errors seen on the page are reported.';
-export const ACCEPTANCE_DESCRIPTION = 'Acceptance criteria of the request. action "criteria": state them (criteria: list), at the start of a feature or a fix: concrete, observable outcomes, not "the code compiles". ' +
+export const ACCEPTANCE_DESCRIPTION = 'Acceptance criteria of the request. action "criteria": state them (criteria: one per line), at the start of a feature or a fix: concrete, observable outcomes, not "the code compiles". ' +
     'action "verify": say whether one is met (criterion: AC1, result: pass or fail, evidence: ids of browser_expect results and test commands that show it, how: what you did). ' +
     'A criterion counts as verified only on evidence Codico observed after the last code change.';
 

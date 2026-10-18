@@ -264,3 +264,13 @@ test('the reviewer is given the user\'s request and judges whether the criteria 
   p.acceptance.setReview('REQUEST', { agrees: true, reason: 'the normal form is tested' });
   assert.equal(verdictNote(p.build().acceptance), undefined);
 });
+
+test('criteria are given as text, one per line: a list of free-text items is where models wrote invalid JSON', () => {
+  const { getNativeToolDefinitions, nativeToolCallToToolCall } = require('../out/nativeTools.js');
+  const schema = getNativeToolDefinitions(false).find(t => t.name === 'acceptance').inputSchema.properties.criteria;
+  assert.equal(schema.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'criteria', criteria: '- A waiting task shows "needs you"\n2. A running task does not\n\n' } }),
+    { type: 'acceptance', action: 'criteria', criteria: ['A waiting task shows "needs you"', 'A running task does not'] });
+  // A list still works, from models that send one
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'criteria', criteria: ['One', 'Two'] } }).criteria, ['One', 'Two']);
+});

@@ -286,7 +286,8 @@ const ALL_TOOLS: NativeToolDefinition[] = [
             type: 'object',
             properties: {
                 action: { type: 'string', enum: ['criteria', 'verify'] },
-                criteria: { type: 'array', items: { type: 'string' } },
+                // Text, one per line: a list of free-text items is where models write invalid JSON (repeated keys, unquoted text)
+                criteria: { type: 'string', description: 'For action "criteria": the criteria, one per line.' },
                 criterion: { type: 'string', description: 'AC1, AC2…' },
                 result: { type: 'string', enum: ['pass', 'fail'] },
                 evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids: E1, E2…' },
