@@ -7,7 +7,7 @@ import { ChatMessage, CHAT_SYSTEM_PROMPT, MUTATION_ONLY_SYSTEM_PROMPT, SYSTEM_PR
 export const ACTION_PHASE_SYSTEM_PROMPT = `## Current phase — act on the evidence
 
 You have enough evidence to stop open-ended exploration.
-Your next response should make the smallest evidence-backed code change unless one concrete missing fact is required for correctness.
+Your next response should make the code change the request needs, in every place the request says it applies, unless one concrete missing fact is required for correctness.
 If such a fact exists, inspect only that dependency/caller/invariant/test, then make the change immediately.
 
 Discovery tools remain available, but they are an escape hatch for a named correctness gap—not a reason to keep surveying the repository.
@@ -37,10 +37,10 @@ The goal is: existing evidence → exact-file locator → precise source range �
 
 export const POST_EDIT_VERIFICATION_PROMPT = `## Current phase — satisfy the acceptance contract
 
-You changed code. Do not declare success until the current edit is verified.
-Keep mutation focus on the edited file until its local invariant is coherent. You may read callers, consumers, shared abstractions, sibling implementations, or tests when needed, but do not mutate siblings merely to broaden the fix before the current edit passes verification.
+You changed code. Do not declare success until every part of the request is done and verified.
+Finish every part of the request, in every place the request says it applies (each form, path or caller it names). Read callers, consumers, shared abstractions, sibling implementations, or tests when needed. Change nothing the request does not call for.
 
-Before finishing or broadening:
+Before finishing:
 - review any [Local invariant audit] attached to the edit result; treat its semantic-completion candidates as explicit proof obligations, not background context;
 - re-read lifecycle/state control flow after mutation when requested and reconcile every normal success, completion, terminal, cancellation, error, and no-op path;
 - check requested behavior and every preservation / negative constraint;

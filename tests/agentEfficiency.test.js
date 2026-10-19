@@ -23,7 +23,7 @@ test('exploration transitions into action phase after six evidence calls', () =>
   const action = explorationDecision(6, 1);
   assert.equal(action.lock, true);
   assert.equal(action.block, undefined);
-  assert.match(action.guidance, /make the smallest evidence-backed code change/i);
+  assert.match(action.guidance, /make the code change the request needs, wherever it applies/i);
 
   const later = explorationDecision(14, 1);
   assert.equal(later.lock, true);

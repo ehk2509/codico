@@ -328,3 +328,9 @@ test('small JSON slips in a complete tool call are repaired; a partial call is l
   assert.deepEqual(acc.flushReady(), [], 'not repaired before the stream ends');
   assert.deepEqual(acc.flushReady(true), [{ id: 'c1', name: 'read_file', arguments: { filepath: 'a.ts', start_line: 3 } }]);
 });
+
+test('a turn that changed code without stating any criteria ends with the not-verified note', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  assert.match(verdictNote(undefined, true), /no acceptance criteria were stated\*\*, so nothing shows that the request is met\. Whatever the reply above says, this is not verified as done\./);
+  assert.equal(verdictNote(undefined, false), undefined, 'no code changed: nothing to say');
+});

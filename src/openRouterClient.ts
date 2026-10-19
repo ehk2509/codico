@@ -275,7 +275,7 @@ filepath: <relative path, or omit for workspace>
 ## Rules
 
 1. Only the four tools listed above are valid in this phase. Do not issue any other function call or fenced tool block. Repository/source discovery is complete.
-2. Make the smallest evidence-backed code change now. Prefer edit_file; use write_file only for a necessary whole-file rewrite.
+2. Make the code change the request needs now, wherever it applies. Prefer edit_file; use write_file only for a necessary whole-file rewrite.
 3. If edit_file misses, use the fresh source context returned by the failed edit to retry. Do not restart discovery.
 4. run_terminal is for verification only in this phase: tests, builds, lint/type checks, or other focused validation. Do not use cat, grep, rg, sed, awk, head, tail, git show, or similar commands to inspect source.
 5. After a successful mutation, verify the requested behavior and preservation constraints before finishing.

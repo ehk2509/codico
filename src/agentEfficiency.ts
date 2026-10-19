@@ -58,7 +58,7 @@ export function explorationDecision(streak: number, targetVisits: number): Explo
             lock: actionPhase || undefined,
             guidance: actionPhase
                 ? '[System Action] You have enough evidence to stop open-ended exploration and have revisited this target repeatedly. ' +
-                    'Make the smallest evidence-backed code change in your next response unless you can name one concrete missing fact required for correctness; if so, inspect only that fact and then act.'
+                    'Make the code change the request needs, wherever it applies, in your next response unless you can name one concrete missing fact required for correctness; if so, inspect only that fact and then act.'
                 : '[System Guidance] You have inspected this target repeatedly. Do not repeat the same read/search unless new evidence justifies it. ' +
                     'Either act, inspect a different dependency that closes a concrete gap, or verify.',
         };
@@ -68,7 +68,7 @@ export function explorationDecision(streak: number, targetVisits: number): Explo
         return {
             lock: true,
             guidance: '[System Action] You have enough evidence to stop open-ended exploration. ' +
-                'Make the smallest evidence-backed code change in your next response unless one concrete missing fact is required for correctness. ' +
+                'Make the code change the request needs, wherever it applies, in your next response unless one concrete missing fact is required for correctness. ' +
                 'Discovery remains available only to close that specific fact; after inspecting it, act.',
         };
     }

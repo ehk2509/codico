@@ -191,8 +191,10 @@ export function criterionLine(criterion: CriterionReport): string {
  * One line for the end of the reply when the acceptance was not established, so the reply never
  * presents as done what Codico's own check does not accept. Undefined when it was accepted.
  */
-export function verdictNote(report: AcceptanceReport | undefined): string | undefined {
-    if (!report || report.verdict === 'accepted') { return undefined; }
+export function verdictNote(report: AcceptanceReport | undefined, changedCode = false): string | undefined {
+    // Code changed and no criteria were ever stated: nothing shows the request is met
+    if (!report) { return changedCode ? `\n\n> **Codico's check: no acceptance criteria were stated**, so nothing shows that the request is met. Whatever the reply above says, this is not verified as done.` : undefined; }
+    if (report.verdict === 'accepted') { return undefined; }
     const open = report.criteria.filter(c => c.status !== 'verified' || c.review?.agrees === false)
         .map(c => `${c.id} ${c.review?.agrees === false ? 'disputed by the reviewer' : STATUS_TEXT[c.status]}`);
     if (report.requestReview?.agrees === false) { open.push(`the request as asked, disputed by the reviewer: ${report.requestReview.reason.replace(/[.\s]+$/, '')}`); }

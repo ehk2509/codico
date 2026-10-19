@@ -10,7 +10,7 @@ const {
 
 test('action phase is strong guidance layered on the normal tool contract', () => {
   assert.match(ACTION_PHASE_SYSTEM_PROMPT, /act on the evidence/i);
-  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /next response should make the smallest evidence-backed code change/i);
+  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /next response should make the code change the request needs, in every place the request says it applies/i);
   assert.match(ACTION_PHASE_SYSTEM_PROMPT, /Discovery tools remain available/i);
 
   const prompt = systemPromptForAgentPhase(false, true, false);
@@ -24,7 +24,8 @@ test('post-edit phase keeps mutation local and requires behavioral evidence', ()
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /Local invariant audit/);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /semantic-completion candidates as explicit proof obligations/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal, cancellation/i);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings/i);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Finish every part of the request, in every place the request says it applies/);
+  assert.doesNotMatch(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings|Keep mutation focus/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /behavior-level test-like command/i);
 
   const first = systemPromptForAgentPhase(false, true, true, 'src/openRouterClient.ts', '', true);

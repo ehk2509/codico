@@ -131,6 +131,11 @@ export class VerifyRuntime {
         }
     }
 
+    /** The turn changed code, not only documentation. */
+    changedCode(): boolean {
+        return (this._host.passport().build()?.files ?? []).some(file => !isDocumentationFile(file.path));
+    }
+
     /** The turn changed code (not only documentation) and the acceptance is not established. */
     unfinished(): boolean {
         const passport = this._host.passport().build();
