@@ -37,3 +37,18 @@ test('nothing is derived from the request by splitting sentences: a problem stat
   // The request is whole, every bullet in it
   assert.ok(contract.includes(request));
 });
+
+test('normalization must be checked at every public input boundary, not just storage', () => {
+  const contract = buildTaskAcceptanceContract('Accept a name in both the fenced and native tool form; clean "Fancy UI!" into fancy-ui.');
+  assert.match(contract, /value each named public entry point must RETURN/);
+  assert.match(contract, /exercise EACH public entry point independently/);
+  assert.match(contract, /UNCONVERTED value/);
+  assert.match(contract, /later service converts it/);
+});
+
+test('task contract requires direct raw-input service/action verification', () => {
+  const contract = buildTaskAcceptanceContract('Clean the name in both tool forms.');
+  assert.match(contract, /owning action or service boundary even if parsers already normalize/);
+  assert.match(contract, /test the owning service or action DIRECTLY with the unconverted input/);
+  assert.match(contract, /already-clean value misses this edge/);
+});

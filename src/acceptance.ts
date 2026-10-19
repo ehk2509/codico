@@ -133,7 +133,16 @@ export class AcceptanceRecorder {
      * @param checks the test, build and type-check runs of the turn, as evidence
      */
     build(lastChange: number): AcceptanceReport | undefined {
-        if (this._criteria.length === 0) { return undefined; }
+        if (this._criteria.length === 0) {
+            // Preserve a request-level review dispute when the agent omitted acceptance criteria.
+            const requestReview = this._reviews.get('REQUEST');
+            if (!requestReview) { return undefined; }
+            return {
+                verdict: requestReview.agrees ? 'unverified' : 'disputed',
+                criteria: [], consoleErrors: [], steps: this._steps.length,
+                evidenceFolder: this.evidenceFolder, requestReview,
+            };
+        }
         const byId = new Map(this._evidence.map(e => [e.id, e]));
         const criteria = this._criteria.map((criterion): CriterionReport => {
             const last = criterion.claims[criterion.claims.length - 1];
@@ -237,18 +246,20 @@ export function changedPart(before: string | null | undefined, after: string, ma
     return `(lines ${from + 1}–${to} of ${b.length}: the part this turn changed; the rest of the file is unchanged)\n${cut(lines)}`;
 }
 
-export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = ''): string {
+export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = '', sources: readonly ReviewedTest[] = []): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
     const trail = steps.slice(-25).map(step => `- ${step.action} ${step.target} → ${step.url}${step.text ? `\n  page text: ${step.text.slice(0, 300).replace(/\s+/g, ' ')}` : ''}`).join('\n');
     return `You review the acceptance of a code change, independently of the agent that made it. For each criterion decide whether the evidence below, which the tool observed itself, actually shows that the criterion is met on the final code. A build or a test that does not exercise the criterion does not show it. An assertion that checks something weaker than the criterion does not show it. When the tests are given, read their assertions: one that compares loosely (a substring, a trimmed or partial value) where the criterion needs an exact result, or that tests a different case than the one the criterion names, does not show it.\n\n` +
         (request.trim() ? `The user's request, which the change must meet as asked:\n${request.trim().slice(0, 4000)}\n\n` : '') +
-        `Files changed:\n${diffStat || '(none)'}\n\nCriteria and evidence:\n${evidence}\n\n` +
+        `Files changed:\n${diffStat || '(none)'}\n\n` +
+        (sources.length ? `Changed production implementation (not proof that unmodified paths work):\n${sources.map(s => `--- ${s.path}\n${s.text}`).join('\n\n')}\n\n` : '') +
+        `Criteria and evidence:\n${evidence}\n\n` +
         (tests.length ? `Tests the agent wrote or changed:\n${tests.map(t => `--- ${t.path}\n${t.text}`).join('\n\n')}\n\n` : '') +
         `Browser steps (most recent last):\n${trail || '(none)'}\n` +
         `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
-        'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>' +
-        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for, not a different mechanism (a new syntax, option or mode) or a narrower case. Where the request gives an example (an input and what it must produce), a test must give that very input to the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output; a test of the helper alone, or with an input already in its final form, does not cover it. Where the request says a value is converted (cleaned, normalized, formatted) on a path it names, a test that expects the unconverted value on that path contradicts the request:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
+        (report.criteria.length ? 'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>' : 'No acceptance criteria were registered. This cannot be accepted as completed work. Answer with a REQUEST: no line explaining what must be verified.') +
+        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for. For multiple named entry points, tool-call forms or public APIs, require a distinct exact observed assertion for EACH entry point. Testing the final downstream object does not prove that the public parser or adapter returns the required output. Testing only a pre-normalized parser output passed to the service does not prove the service normalizes a RAW input passed directly by a caller. Require an exact test of the owning service or action with original unconverted user input and assert its observable output. Production snippets are context, not proof that unmodified paths work. If an entry point lacks an exact test, answer REQUEST: no and name it. If an assertion shows the parser or adapter returning an original/unconverted input despite the request saying that input becomes a normalized output, answer REQUEST: no EVEN IF a downstream service eventually stores the expected normalized output. A passing assertion for the wrong returned value contradicts the request; do not approve it as evidence of correct integration. Quote the contradicting assertion in the rejection. Do not infer missing coverage from a passing suite, not a different mechanism (a new syntax, option or mode) or a narrower case. Where the request gives an example (an input and what it must produce), a test must give that very input to the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output; a test of the helper alone, or with an input already in its final form, does not cover it. Where the request says a value is converted (cleaned, normalized, formatted) on a path it names, a test that expects the unconverted value on that path contradicts the request:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
 }
 
 /** The reviewer's answer, criterion by criterion. */

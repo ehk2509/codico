@@ -12,7 +12,7 @@ import { SubagentHost } from './subagent';
 import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
 import { requestCheckGuidance } from './requestCheck';
-import { isDocumentationFile } from './agentEfficiency';
+import { isDocumentationFile, isTestFile } from './agentEfficiency';
 import { WorkspaceTools } from './workspaceTools';
 
 /** What verification needs from the conversation. */
@@ -173,7 +173,11 @@ export class VerifyRuntime {
      */
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
         const reminder = this.guidance();
-        if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        if (reminder || !enabled || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        if (!reviewer) {
+            if (this.changedCode()) { this._host.passport().acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review unavailable.' }); }
+            return undefined;
+        }
         // The agent changed nothing since the last dispute (it answered it, or gave up): no point repeating it
         if (this._disputes > 0 && this._state() === this._disputedState) { return undefined; }
         // Reviewed again only when the code or the evidence changed since the last review
@@ -198,6 +202,7 @@ export class VerifyRuntime {
         const passport = this._host.passport();
         // The report names where its screenshots are
         passport.acceptance.evidenceFolder = this._store?.folder;
+        if (enabled && !reviewer && this.changedCode()) { passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review unavailable.' }); }
         if (enabled && reviewer && this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
     }
 
@@ -212,21 +217,50 @@ export class VerifyRuntime {
     private async _review(reviewer: SubagentHost, signal: AbortSignal): Promise<void> {
         const passport = this._host.passport();
         const report = passport.acceptance.build(passport.lastChange);
-        if (signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
+        // Review the request even when the agent omitted all acceptance criteria.
+        const requestNeedsReview = this.changedCode() && !!this._request.trim();
+        if (signal.aborted || (!requestNeedsReview && (!report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')))) { return; }
+        const reviewable = report ?? { verdict: 'unverified' as const, criteria: [], consoleErrors: [], steps: 0 };
         this._reviewedState = this._state();
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
         try {
             const built = passport.build();
             const diffStat = (built?.files ?? []).map(file => `${file.path} +${file.added} -${file.removed}`).join('\n');
             let text = '';
-            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request) }], REVIEW_SYSTEM, [])) {
+            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(reviewable, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request, this._sourcesChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
                 if (signal.aborted) { return; }
                 if (chunk.type === 'content') { text += chunk.text; } else if (chunk.type === 'usage') { reviewer.onUsage?.(chunk); }
             }
-            for (const [id, review] of parseReview(text)) { passport.acceptance.setReview(id, review); }
-        } catch { /* the report stands without the review: it says none was given */ } finally {
+            const reviews = parseReview(text);
+            for (const [id, review] of reviews) { passport.acceptance.setReview(id, review); }
+            // Incomplete review output must never silently count as approval.
+            if (this._request.trim() && !reviews.has('REQUEST')) {
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Reviewer did not confirm coverage of the original request.' });
+            }
+            if (requestNeedsReview && (!report || report.criteria.length === 0)) {
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'No acceptance criteria registered for the original request. Verify every public input form and the owning action/service with raw user input.' });
+            }
+            for (const criterion of reviewable.criteria.filter(c => c.status === 'verified')) {
+                if (!reviews.has(criterion.id)) { passport.acceptance.setReview(criterion.id, { agrees: false, reason: 'Reviewer did not confirm this criterion.' }); }
+            }
+        } catch {
+            if (this._request.trim()) { passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review failed; request remains unverified.' }); }
+        } finally {
             this._host.post({ type: 'activity', text: null });
         }
+    }
+
+    /** Show the reviewer what was actually changed in production, not just a file list. */
+    private _sourcesChanged(paths: string[]): Array<{ path: string; text: string }> {
+        const root = toolFolders()?.[0]?.uri.fsPath;
+        if (!root) { return []; }
+        return paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
+            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6).flatMap(p => {
+            try {
+                const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, 12000, 12) }];
+            } catch { return []; }
+        });
     }
 
     /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each the part the turn changed). */

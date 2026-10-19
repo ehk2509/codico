@@ -33,3 +33,9 @@ test('no code changed (nothing, or only documentation): nothing is asked', () =>
   assert.equal(requestCheckGuidance(changed('README.md').build()), undefined);
   assert.equal(requestCheckGuidance(changed('docs/notes.txt').build()), undefined);
 });
+
+test('request check requires direct service or action input, independently of parsers', () => {
+  const message = requestCheckGuidance(changed().build());
+  assert.match(message, /Exercise the owning service\/action directly with raw unconverted input/);
+  assert.match(message, /parser-to-service tests alone cannot prove this/);
+});

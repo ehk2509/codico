@@ -131,3 +131,14 @@ test('a phase change is added to the conversation without changing earlier messa
   assert.equal(fenced.length, 3);
   assert.match(fenced[2].content, /^\[Tool Results\]\n\nok\n\n\[System Phase\]\nThe previous phase is complete/);
 });
+
+test('post-edit verification disallows passing assertions of raw unnormalized parser results', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /test the exact return value at that boundary/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /service normalizing it later does NOT verify/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /a passing assertion of an unconverted input is evidence of an incomplete fix/);
+});
+
+test('post-edit phase requires directly exercising the owning service with raw input', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /exercise the owning service\/action DIRECTLY with raw inputs/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Normalize before uniqueness and output formatting/);
+});
