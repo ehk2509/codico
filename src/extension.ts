@@ -104,6 +104,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('codico.__evalTurns', (thread?: boolean) => provider.evaluationTurns(thread)),
             vscode.commands.registerCommand('codico.__evalUsage', () => provider.lastReplyUsage()),
             vscode.commands.registerCommand('codico.__evalReplyText', () => provider.lastReplyText()),
+            vscode.commands.registerCommand('codico.__evalHistory', () => provider.evaluationHistory()),
             vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean | 'commands') => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );

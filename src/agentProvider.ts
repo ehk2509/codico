@@ -777,6 +777,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
 
     /** Automated tests only: the change report of the last turn. */
     public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
+    public evaluationHistory(): ChatMessage[] { return this._evaluationMode ? this._history : []; }
 
     public lastReplyUsage(): DisplayMessage['usage'] { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
     /** The text of the agent's last reply in full, without its tool calls: what a team's worker reports. */
