@@ -57,7 +57,7 @@ permissions:
 
 jobs:
   coding-holdout:
-    # One scoped same-repo PR holdout; forks never receive secrets.
+    # A single trusted same-repo PR run, while manual dispatch remains unchanged.
     if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/agent-acceptance-surface-evidence')
     runs-on: ubuntu-latest
     steps:
@@ -98,7 +98,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AGENT: ${{ inputs.agent || 'codico' }}
           MODEL: ${{ inputs.model || 'anthropic/claude-sonnet-5.5' }}
-          FILTER: ${{ inputs.filter || '^team-worker-names
+          FILTER: ${{ inputs.filter || '^team-worker-names$' }}
           SUITE: ${{ inputs.suite || 'eval/tasks-unused.json' }}
           ESCALATION: ${{ inputs.escalation_model }}
           EFFORT: ${{ inputs.effort }}
@@ -106,39 +106,6 @@ jobs:
           CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
           LIMIT: ${{ inputs.limit || '0' }}
           REPETITIONS: ${{ inputs.repetitions || '3' }}
-        run: |
-          if [ "$AGENT" = codico ]; then test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1); fi
-          if [ "$AGENT" = claude-code ]; then test -n "$ANTHROPIC_API_KEY" || (echo "ANTHROPIC_API_KEY secret is required" && exit 1); fi
-          if [ "$AGENT" = oracle ] || [ "$AGENT" = noop ]; then MODEL=; fi
-          xvfb-run -a npm run eval:coding -- \
-            --agent "$AGENT" \
-            --suite "${SUITE:-eval/tasks.json}" \
-            ${MODEL:+--model "$MODEL"} \
-            ${ESCALATION:+--escalation-model "$ESCALATION"} \
-            ${EFFORT:+--effort "$EFFORT"} \
-            --filter "$FILTER" \
-            --limit "$LIMIT" \
-            --repetitions "$REPETITIONS"
-
-      - name: Scorecard
-        if: always()
-        run: for f in eval/results/*/summary.md; do [ -f "$f" ] && cat "$f" >> "$GITHUB_STEP_SUMMARY"; done; true
-
-      - name: Upload holdout evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: codico-coding-holdout
-          path: eval/results/
-          if-no-files-found: warn
- }}
-          SUITE: ${{ inputs.suite }}
-          ESCALATION: ${{ inputs.escalation_model }}
-          EFFORT: ${{ inputs.effort }}
-          CODICO_EVAL_ACCO_ENABLED: ${{ inputs.acco && '1' || '0' }}
-          CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
-          LIMIT: ${{ inputs.limit }}
-          REPETITIONS: ${{ inputs.repetitions }}
         run: |
           if [ "$AGENT" = codico ]; then test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1); fi
           if [ "$AGENT" = claude-code ]; then test -n "$ANTHROPIC_API_KEY" || (echo "ANTHROPIC_API_KEY secret is required" && exit 1); fi
