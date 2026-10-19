@@ -342,7 +342,7 @@ function start(port0) {
       }
       let entry;
       // The independent acceptance reviewer: no scenario, its own system prompt
-      if (/independent acceptance reviewer/.test(system)) { entry = /E\d+ PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.' : 'AC1: no — the evidence was not given.'; }
+      if (/independent acceptance reviewer/.test(system)) { entry = /E\d+ PASSED \[expect\] #count shows "Count: 1"/.test(lastUser) ? 'AC1: yes — the assertion reads the count after one click on the fixed code.\nREQUEST: yes — the exact requested counter behavior was verified on the page.' : 'AC1: no — the evidence was not given.\nREQUEST: no — the requested behavior has not been verified.'; }
       const needsVerify = /\[System Follow-through\] Code changed|\[System Verification\] You changed code/.test(lastUser);
       if (entry) { /* the reviewer's answer */ }
       else if (needsVerify && !(scenario || '').startsWith('stuck_')) { entry = VERIFY; }
