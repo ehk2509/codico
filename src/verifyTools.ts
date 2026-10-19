@@ -135,3 +135,6 @@ result: pass
 evidence: E3 E4
 how: set quantity to 3 in the browser; the total showed $42.00
 \`\`\``;
+
+/** Asked at a turn's first code change when no acceptance criteria were stated. */
+export const CRITERIA_NOW = '[System Acceptance] No acceptance criteria are stated yet. State them now (acceptance, action "criteria"), in the request\'s own words: what the user asked for, every part of it. Then name them in the test runs that show them (run_terminal verifies: AC1 AC2), so the evidence is recorded as you work.';

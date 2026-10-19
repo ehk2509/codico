@@ -429,3 +429,9 @@ test('a test command names the criteria it shows: its result records them, with 
   assert.match(r.acceptance.claimByCheck(['AC2'], hidden, 'npm test | tail -3'), /not recorded: the result of this command cannot be told/);
   assert.match(r.acceptance.claimByCheck(['AC9'], passed, 'x'), /no criterion "AC9"/);
 });
+
+test('at a turn\'s first code change without criteria, the agent is asked for them then, once', () => {
+  const { CRITERIA_NOW } = require('../out/verifyTools.js');
+  assert.match(CRITERIA_NOW, /No acceptance criteria are stated yet\. State them now/);
+  assert.match(CRITERIA_NOW, /run_terminal verifies: AC1 AC2/);
+});
