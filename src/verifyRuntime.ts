@@ -217,14 +217,17 @@ export class VerifyRuntime {
     private async _review(reviewer: SubagentHost, signal: AbortSignal): Promise<void> {
         const passport = this._host.passport();
         const report = passport.acceptance.build(passport.lastChange);
-        if (signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
+        // Review the request even when the agent omitted all acceptance criteria.
+        const requestNeedsReview = this.changedCode() && !!this._request.trim();
+        if (signal.aborted || (!requestNeedsReview && (!report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')))) { return; }
+        const reviewable = report ?? { verdict: 'unverified' as const, criteria: [], consoleErrors: [], steps: 0 };
         this._reviewedState = this._state();
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
         try {
             const built = passport.build();
             const diffStat = (built?.files ?? []).map(file => `${file.path} +${file.added} -${file.removed}`).join('\n');
             let text = '';
-            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request, this._sourcesChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
+            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(reviewable, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request, this._sourcesChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
                 if (signal.aborted) { return; }
                 if (chunk.type === 'content') { text += chunk.text; } else if (chunk.type === 'usage') { reviewer.onUsage?.(chunk); }
             }
@@ -234,7 +237,10 @@ export class VerifyRuntime {
             if (this._request.trim() && !reviews.has('REQUEST')) {
                 passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Reviewer did not confirm coverage of the original request.' });
             }
-            for (const criterion of report.criteria.filter(c => c.status === 'verified')) {
+            if (requestNeedsReview && (!report || report.criteria.length === 0)) {
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'No acceptance criteria registered for the original request. Verify every public input form and the owning action/service with raw user input.' });
+            }
+            for (const criterion of reviewable.criteria.filter(c => c.status === 'verified')) {
                 if (!reviews.has(criterion.id)) { passport.acceptance.setReview(criterion.id, { agrees: false, reason: 'Reviewer did not confirm this criterion.' }); }
             }
         } catch {
