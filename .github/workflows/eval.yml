@@ -19,6 +19,11 @@ on:
         required: false
         default: ''
         type: string
+      effort:
+        description: Codico only — reasoning effort asked of the model (empty = Codico's default, medium)
+        required: false
+        default: ''
+        type: string
       acco:
         description: Codico only — optimize provider requests through a local ACCO SDK service (pip install acco)
         required: false
@@ -92,6 +97,7 @@ jobs:
           FILTER: ${{ inputs.filter }}
           SUITE: ${{ inputs.suite }}
           ESCALATION: ${{ inputs.escalation_model }}
+          EFFORT: ${{ inputs.effort }}
           CODICO_EVAL_ACCO_ENABLED: ${{ inputs.acco && '1' || '0' }}
           CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
           LIMIT: ${{ inputs.limit }}
@@ -105,6 +111,7 @@ jobs:
             --suite "${SUITE:-eval/tasks.json}" \
             ${MODEL:+--model "$MODEL"} \
             ${ESCALATION:+--escalation-model "$ESCALATION"} \
+            ${EFFORT:+--effort "$EFFORT"} \
             --filter "$FILTER" \
             --limit "$LIMIT" \
             --repetitions "$REPETITIONS"

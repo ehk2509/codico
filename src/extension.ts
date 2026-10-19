@@ -55,6 +55,8 @@ export function activate(context: vscode.ExtensionContext): void {
                 escalationModel?: string;
                 accoEnabled?: boolean;
                 accoBaseUrl?: string;
+                /** The reasoning effort asked of the model (as the panel's effort picker sets it). */
+                thinkingEffort?: 'low' | 'medium' | 'high';
                 /** Keys for direct providers, by provider id (e.g. { deepseek: '…' }). */
                 directApiKeys?: Record<string, string>;
             }) => {
@@ -76,6 +78,7 @@ export function activate(context: vscode.ExtensionContext): void {
                     await cfg.update('accoBaseUrl', options.accoBaseUrl, vscode.ConfigurationTarget.Global);
                 }
                 provider.setEvaluationTokenBudget(options.maxTotalTokens ?? 0);
+                if (options.thinkingEffort) { await provider.handleEvaluationWebviewMessage({ type: 'changeEffort', effort: options.thinkingEffort }); }
                 await cfg.update('followUpSuggestionsEnabled', false, vscode.ConfigurationTarget.Global);
                 await cfg.update('completionNotificationsEnabled', false, vscode.ConfigurationTarget.Global);
                 await cfg.update('responseSummaryEnabled', false, vscode.ConfigurationTarget.Global);
@@ -101,6 +104,7 @@ export function activate(context: vscode.ExtensionContext): void {
             vscode.commands.registerCommand('codico.__evalTurns', (thread?: boolean) => provider.evaluationTurns(thread)),
             vscode.commands.registerCommand('codico.__evalUsage', () => provider.lastReplyUsage()),
             vscode.commands.registerCommand('codico.__evalReplyText', () => provider.lastReplyText()),
+            vscode.commands.registerCommand('codico.__evalHistory', () => provider.evaluationHistory()),
             vscode.commands.registerCommand('codico.__evalApprovals', (require?: boolean | 'commands') => provider.evaluationApprovals(require)),
             vscode.commands.registerCommand('codico.__evalWebviewMessage', (msg: WebviewMessage) => provider.handleEvaluationWebviewMessage(msg)),
         );

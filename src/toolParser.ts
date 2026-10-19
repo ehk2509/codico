@@ -24,6 +24,13 @@ export interface ListDirectoryTool {
 export interface RunTerminalTool {
     type: 'run_terminal';
     command: string;
+    /** Acceptance criteria the command shows (AC1…): a passing run records them as met on its result. */
+    verifies?: string[];
+}
+
+/** Criterion ids named in a list ("AC1, AC2", "ac3 AC4"). */
+export function criterionIds(text: string | undefined): string[] {
+    return [...new Set((text ?? '').split(/[\s,;]+/).filter(id => /^AC\d+$/i.test(id)).map(id => id.toUpperCase()))];
 }
 
 export interface SearchFilesTool {
@@ -320,7 +327,8 @@ export function parseToolBody(toolType: string, body: string): ToolCall[] {
         }
         case 'run_terminal': {
             const cmd = extractMultilineField(body, 'command');
-            if (cmd) { tools.push({ type: 'run_terminal', command: cmd }); }
+            const verifies = criterionIds(extractField(body, 'verifies'));
+            if (cmd) { tools.push({ type: 'run_terminal', command: cmd, ...(verifies.length ? { verifies } : {}) }); }
             break;
         }
         case 'search_files': {

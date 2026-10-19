@@ -248,7 +248,7 @@ test('the reviewer is given the user\'s request and judges whether the criteria 
   const prompt = reviewPrompt(p.build().acceptance, [], 'src/toolParser.ts +40 -3', [], request);
   assert.match(prompt, /The user's request, which the change must meet as asked:\nAllow write_file content to contain Markdown code fences/);
   assert.match(prompt, /REQUEST: yes — <why> \(or no — <what is not covered>\)/);
-  assert.match(prompt, /not a different mechanism \(a new syntax, option or mode\) or a narrower case/);
+  assert.match(prompt, /A different mechanism \(a new syntax, option or mode\) or a narrower case does not cover the request/);
   // Without a request the prompt asks nothing about it
   assert.doesNotMatch(reviewPrompt(p.build().acceptance, [], ''), /REQUEST:/);
 
@@ -263,4 +263,177 @@ test('the reviewer is given the user\'s request and judges whether the criteria 
   // Accepted: no note
   p.acceptance.setReview('REQUEST', { agrees: true, reason: 'the normal form is tested' });
   assert.equal(verdictNote(p.build().acceptance), undefined);
+});
+
+test('criteria are given as text, one per line: a list of free-text items is where models wrote invalid JSON', () => {
+  const { getNativeToolDefinitions, nativeToolCallToToolCall } = require('../out/nativeTools.js');
+  const schema = getNativeToolDefinitions(false).find(t => t.name === 'acceptance').inputSchema.properties.criteria;
+  assert.equal(schema.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'criteria', criteria: '- A waiting task shows "needs you"\n2. A running task does not\n\n' } }),
+    { type: 'acceptance', action: 'criteria', criteria: ['A waiting task shows "needs you"', 'A running task does not'] });
+  // A list still works, from models that send one
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'criteria', criteria: ['One', 'Two'] } }).criteria, ['One', 'Two']);
+});
+
+test('the reviewer is shown the part of a test file the turn changed, not its start', () => {
+  const { changedPart } = require('../out/acceptance.js');
+  // Seen in the holdout: new tests appended to a long test file were cut off, and the reviewer could not see them
+  const old = Array.from({ length: 800 }, (_, i) => `test('existing ${i}', () => { assert.ok(true); });`).join('\n') + '\n';
+  const added = "test('names: fenced and native forms', () => {\n  assert.equal(parseTeamFence('action: start\\nname: Front End!').name, 'front-end');\n});\n";
+  const part = changedPart(old, old + added);
+  assert.match(part, /^\(lines 7\d\d–80\d of 80\d: the part this turn changed; the rest of the file is unchanged\)/);
+  assert.match(part, /names: fenced and native forms/);
+  assert.match(part, /\n80\d\t  assert/);
+  assert.doesNotMatch(part, /existing 0'/);
+  // A change in the middle: that region, with its context
+  const lines = old.split('\n'); lines[200] = "test('existing 200', () => { assert.equal(f(), 2); });";
+  const middle = changedPart(old, lines.join('\n'));
+  assert.match(middle, /assert\.equal\(f\(\), 2\)/);
+  assert.match(middle, /^\(lines 181–221 of /);
+  // A new file, or a short one: whole
+  assert.equal(changedPart(null, added), added);
+  assert.equal(changedPart('a\n', added), added);
+  assert.match(changedPart(undefined, 'x'.repeat(21000)), /… \(cut\)$/);
+  assert.equal(changedPart(undefined, 'x'.repeat(9000)), 'x'.repeat(9000), 'up to 20,000 characters are shown');
+});
+
+test('the reviewer asks for the request\'s own example, given to the code the user calls', () => {
+  const { reviewPrompt, AcceptanceRecorder } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  r.setCriteria(['A worker named "Backend API" shows as backend-api']);
+  const prompt = reviewPrompt(r.build(0), [], 'src/teamTools.ts +5', [], 'The start action takes a name ("Backend API"): `Started worker backend-api (1a2b3c4d)`.');
+  assert.match(prompt, /Where the request gives an example \(an input and what it must produce\), a test must give that very input to the code the user calls \(the tool, command or public function, not a helper behind it\)/);
+  assert.match(prompt, /a test of the helper alone, or with an input already in its final form, does not cover it/);
+  assert.match(prompt, /a test that expects the unconverted value on that path contradicts the request/);
+  // Without a request there is no request line at all
+  assert.doesNotMatch(reviewPrompt(r.build(0), [], '', [], ''), /Where the request gives an example/);
+});
+
+test('evidence ids are given as text too: lists of strings are where models wrote invalid JSON', () => {
+  const { getNativeToolDefinitions, nativeToolCallToToolCall } = require('../out/nativeTools.js');
+  assert.equal(getNativeToolDefinitions(false).find(t => t.name === 'acceptance').inputSchema.properties.evidence.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: 'E1 E3' } }).evidence, ['E1', 'E3']);
+  assert.deepEqual(nativeToolCallToToolCall({ name: 'acceptance', arguments: { action: 'verify', criterion: 'AC1', result: 'pass', evidence: ['E2'] } }).evidence, ['E2']);
+});
+
+test('small JSON slips in a complete tool call are repaired; a partial call is left to finish', () => {
+  const { parseArguments, OpenAIToolCallAccumulator } = require('../out/nativeTools.js');
+  // Seen from Claude Sonnet: a stray comma on its own line
+  assert.deepEqual(parseArguments('{"filepath": "tests/a.test.js", "start_line": 121, \n, "end_line": 130}'), { filepath: 'tests/a.test.js', start_line: 121, end_line: 130 });
+  assert.deepEqual(parseArguments('{"a": [1, 2,], }'), { a: [1, 2] });
+  assert.throws(() => parseArguments('{"criteria": unquoted text}'));
+  assert.throws(() => parseArguments('{"a": 1,', false), 'still streaming: not repaired');
+  const acc = new OpenAIToolCallAccumulator();
+  acc.add({ index: 0, id: 'c1', function: { name: 'read_file', arguments: '{"filepath": "a.ts", , "start_line": 3}' } });
+  assert.deepEqual(acc.flushReady(), [], 'not repaired before the stream ends');
+  assert.deepEqual(acc.flushReady(true), [{ id: 'c1', name: 'read_file', arguments: { filepath: 'a.ts', start_line: 3 } }]);
+});
+
+test('a turn that changed code without stating any criteria ends with the not-verified note', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  assert.match(verdictNote(undefined, true), /no acceptance criteria were stated\*\*, so nothing shows that the request is met\. Whatever the reply above says, this is not verified as done\./);
+  assert.equal(verdictNote(undefined, false), undefined, 'no code changed: nothing to say');
+});
+
+test('review shows production implementation and distinguishes the requested public paths', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/teamService.ts', 'a', 'b');
+  p.acceptance.setCriteria(['Worker names are cleaned']);
+  const run = p.recordCommand('npm test', 0, '# pass 4\\n# fail 0\\n');
+  p.acceptance.claim('AC1', 'pass', 'workers clean', [run]);
+  const prompt = reviewPrompt(p.build().acceptance, [], 'src/teamService.ts +1 -1',
+    [{ path: 'tests/worker.test.js', text: "assert.equal(task.name, 'front-end');" }],
+    'Accept names in fenced and native tools: Front End! becomes front-end.',
+    [{ path: 'src/teamService.ts', text: 'const name = cleanWorkerName(tool.name);' }]);
+  assert.match(prompt, /Changed production implementation/);
+  assert.match(prompt, /distinct exact observed assertion for EACH entry point/);
+  assert.match(prompt, /public parser or adapter/);
+  assert.match(prompt, /answer REQUEST: no and name it/);
+});
+
+test('review explicitly rejects downstream-only normalization and a passing assertion of the wrong parser value', () => {
+  const a = new AcceptanceRecorder(() => 1);
+  a.setCriteria(['Parser converts an input name into a canonical identifier']);
+  const prompt = reviewPrompt(a.build(0), [], 'src/action.ts +3', [
+    { path: 'tests/action.test.js', text: "assert.equal(parsed.name, 'Fancy UI!'); assert.equal(task.name, 'fancy-ui');" },
+  ], 'Both public tool forms clean "Fancy UI!" into fancy-ui.');
+  assert.match(prompt, /answer REQUEST: no EVEN IF a downstream service eventually stores/);
+  assert.match(prompt, /Quote the contradicting assertion in the rejection/);
+});
+
+test('request-level dispute survives an absent acceptance checklist', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  assert.equal(r.build(0), undefined);
+  r.setReview('REQUEST', { agrees: false, reason: 'Direct TeamService raw-name call was not tested' });
+  const report = r.build(0);
+  assert.equal(report.verdict, 'disputed');
+  assert.deepEqual(report.criteria, []);
+  assert.match(verdictNote(report), /Direct TeamService raw-name call was not tested/);
+  r.setReview('REQUEST', { agrees: true, reason: 'looks good' });
+  assert.equal(r.build(0).verdict, 'unverified', 'independent approval does not replace missing evidence');
+});
+
+test('request reviewer rejects parser-only service checks and missing checklist', () => {
+  const r = new AcceptanceRecorder(() => 1);
+  r.setCriteria(['Names are cleaned']);
+  const prompt = reviewPrompt(r.build(0), [], '', [
+    { path: 'tests/workers.test.js', text: "const parsed = parseTeamFence('name: Backend API'); await service.run(parsed);" },
+  ], 'The start action cleans Backend API to backend-api.');
+  assert.match(prompt, /service normalizes a RAW input passed directly by a caller/);
+  assert.match(prompt, /original unconverted user input and assert its observable output/);
+  const noCriteria = reviewPrompt({ verdict: 'unverified', criteria: [], steps: 0, consoleErrors: [] }, [], '', [], 'Implement the requested behavior.');
+  assert.match(noCriteria, /No acceptance criteria were registered/);
+  assert.match(noCriteria, /REQUEST: no/);
+});
+
+test('local acceptance preflight rejects missing proof without invoking a reviewer', () => {
+  const { acceptanceReviewPreflight, reviewSnippetBudget } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  const request = 'Make Backend API become backend-api for fenced, native and direct service calls.';
+  assert.equal(acceptanceReviewPreflight(undefined, request, true).startsWith('No acceptance criteria'), true);
+  assert.equal(acceptanceReviewPreflight(undefined, request, false), undefined, 'reading-only requests do not review code');
+  assert.equal(acceptanceReviewPreflight(undefined, '', true), undefined, 'without a request no deterministic judgement');
+  r.setCriteria(['Fenced name returns backend-api', 'Direct service start emits backend-api']);
+  assert.match(acceptanceReviewPreflight(r.build(0), request, true), /AC1 \(open\), AC2 \(open\)/);
+  const e = r.addEvidence({ kind: 'check', description: 'run test', passed: true, detail: '1 passed' });
+  r.claim('AC1', 'pass', 'test', [e]);
+  assert.match(acceptanceReviewPreflight(r.build(0), request, true), /AC2 \(open\)/);
+  r.claim('AC2', 'pass', 'direct test', [e]);
+  assert.equal(acceptanceReviewPreflight(r.build(0), request, true), undefined, 'verified evidence still requires real review');
+  assert.equal(reviewSnippetBudget(6, 48000, 12000), 8000);
+  assert.equal(reviewSnippetBudget(3, 36000, 20000), 12000);
+  assert.equal(reviewSnippetBudget(1, 36000, 20000), 20000);
+});
+
+test('a test command names the criteria it shows: its result records them, with no step of the agent\'s own', () => {
+  const { PassportRecorder } = require('../out/patchPassport.js');
+  const { parseToolBody } = require('../out/toolParser.js');
+  const { nativeToolCallToToolCall, getNativeToolDefinitions } = require('../out/nativeTools.js');
+  // Both tool forms take the criteria, as ids only
+  assert.deepEqual(parseToolBody('run_terminal', 'command: npm test\nverifies: AC1, ac2 AC2 everything'), [{ type: 'run_terminal', command: 'npm test', verifies: ['AC1', 'AC2'] }]);
+  assert.deepEqual(parseToolBody('run_terminal', 'command: npm test'), [{ type: 'run_terminal', command: 'npm test' }]);
+  assert.deepEqual(nativeToolCallToToolCall({ id: 'c', name: 'run_terminal', arguments: { command: 'npm test', verifies: ['AC3'] } }), { type: 'run_terminal', command: 'npm test', verifies: ['AC3'] });
+  // Text, not a list: Claude Sonnet wrote invalid JSON for a list of strings here, and the whole command was lost
+  assert.equal(getNativeToolDefinitions(false).find(t => t.name === 'run_terminal').inputSchema.properties.verifies.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ id: 'c', name: 'run_terminal', arguments: { command: 'npm test', verifies: 'AC1 AC2' } }), { type: 'run_terminal', command: 'npm test', verifies: ['AC1', 'AC2'] });
+
+  const r = new PassportRecorder();
+  r.acceptance.setCriteria(['Parses nested fences', 'Keeps plain fences']);
+  r.recordChange('src/parser.ts', 'a', 'b');
+  const passed = r.recordCommand('node --test tests/parser.test.js', 0, '# pass 4\n# fail 0\n');
+  assert.equal(r.acceptance.claimByCheck(['AC1', 'AC2'], passed, 'node --test tests/parser.test.js'), `AC1 recorded as met on ${passed}.\nAC2 recorded as met on ${passed}.`);
+  assert.deepEqual(r.acceptance.build(r.lastChange).criteria.map(c => c.status), ['verified', 'verified']);
+  // A failing run records them as not met; an unknown one records nothing; a wrong id is said
+  const failed = r.recordCommand('node --test tests/parser.test.js', 1, '# pass 3\n# fail 1\n');
+  assert.match(r.acceptance.claimByCheck(['AC1'], failed, 'node --test tests/parser.test.js'), /AC1 recorded as not met/);
+  const hidden = r.recordCommand('npm test | tail -3', 0, 'done');
+  assert.match(r.acceptance.claimByCheck(['AC2'], hidden, 'npm test | tail -3'), /not recorded: the result of this command cannot be told/);
+  assert.match(r.acceptance.claimByCheck(['AC9'], passed, 'x'), /no criterion "AC9"/);
+});
+
+test('at a turn\'s first code change without criteria, the agent is asked for them then, once', () => {
+  const { CRITERIA_NOW } = require('../out/verifyTools.js');
+  assert.match(CRITERIA_NOW, /No acceptance criteria are stated yet\. State them now/);
+  assert.match(CRITERIA_NOW, /run_terminal verifies: AC1 AC2/);
 });

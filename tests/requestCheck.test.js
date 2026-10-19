@@ -13,6 +13,8 @@ test('a code change with no stated criteria and no reproduced failure: asked for
   assert.match(text, /State its acceptance criteria in the request's own words/);
   assert.match(text, /a test of exactly the scenario they described, which fails without your change and passes with it/);
   assert.match(text, /a new syntax, option or mode that callers must switch to/);
+  assert.match(text, /Where the request gives an example \(an input and what it must produce\), test that very input through the code the user calls/);
+  assert.match(text, /it is normalized at every entry point the request names, each form it accepts and the code callers use/);
 });
 
 test('a test that failed and then passed is the reproduction; with criteria too, nothing is asked', () => {
@@ -30,4 +32,10 @@ test('no code changed (nothing, or only documentation): nothing is asked', () =>
   assert.equal(requestCheckGuidance(undefined), undefined);
   assert.equal(requestCheckGuidance(changed('README.md').build()), undefined);
   assert.equal(requestCheckGuidance(changed('docs/notes.txt').build()), undefined);
+});
+
+test('request check requires direct service or action input, independently of parsers', () => {
+  const message = requestCheckGuidance(changed().build());
+  assert.match(message, /Exercise the owning service\/action directly with raw unconverted input/);
+  assert.match(message, /parser-to-service tests alone cannot prove this/);
 });

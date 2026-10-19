@@ -1,4 +1,4 @@
-import { criterionLine, parseReview, reviewPrompt } from './acceptance';
+import { acceptanceReviewPreflight, changedPart, criterionLine, parseReview, reviewPrompt, reviewSnippetBudget } from './acceptance';
 import { AppRunner } from './appRunner';
 import { commandSandbox } from './commandSandboxService';
 import { ExtensionMessage, WebviewMessage } from './chatProtocol';
@@ -12,7 +12,7 @@ import { SubagentHost } from './subagent';
 import { toolFolders } from './toolRoot';
 import { VerifyTool, BrowserExpectTool } from './verifyTools';
 import { requestCheckGuidance } from './requestCheck';
-import { isDocumentationFile } from './agentEfficiency';
+import { isDocumentationFile, isTestFile } from './agentEfficiency';
 import { WorkspaceTools } from './workspaceTools';
 
 /** What verification needs from the conversation. */
@@ -30,6 +30,8 @@ export const MAX_APP_WAIT_SECONDS = 300;
 export const MAX_ACCEPTANCE_REMINDERS = 2;
 /** Times a disputed acceptance goes back to the agent before the reply may end with it. */
 export const MAX_REVIEW_DISPUTES = 2;
+/** Times Codico itself asks for the missing criteria before calling the reviewer (it never approves work). */
+export const MAX_PREFLIGHT_PROMPTS = 1;
 /** How a reviewer's dispute starts: the agent loop may hand the turn to a stronger model on it. */
 export const REVIEW_DISPUTE_PREFIX = '[System Acceptance] An independent reviewer';
 const REVIEW_SYSTEM = 'You are an independent acceptance reviewer. You did not write the change. Judge only from the evidence given. Be strict: a criterion is shown only when the evidence exercises exactly what it says.';
@@ -53,7 +55,11 @@ export class VerifyRuntime {
     private _requestReminded = false;
     /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
     private _reviewedState = '';
+    /** A local preflight rejection is not an opinion issued by the external reviewer. */
+    private _reviewWasPreflight = false;
+    /** The reviewer's disputes: Codico's own preflight prompts are counted apart, so they never use up the reviewer's. */
     private _disputes = 0;
+    private _preflightPrompts = 0;
     /** The code and evidence when the last dispute was given: another is given only after the agent worked on it. */
     private _disputedState = '';
     /** The user's request of this turn, for the reviewer. */
@@ -77,7 +83,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0; this._disputedState = '';
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._reviewWasPreflight = false; this._disputes = 0; this._preflightPrompts = 0; this._disputedState = '';
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -122,13 +128,18 @@ export class VerifyRuntime {
                     const listed = acceptance.setCriteria(tool.criteria ?? []);
                     const ok = !listed.startsWith('ERROR');
                     post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: ok ? `${acceptance.criteria.length} criteria` : 'criteria', success: ok, error: ok ? undefined : 'No criteria' });
-                    return ok ? `[acceptance criteria]\n${listed}\nCheck each on the final code, then record it with action "verify" and the evidence ids that show it.` : `[acceptance] ${listed}`;
+                    return ok ? `[acceptance criteria]\n${listed}\nCheck each on the final code. Name the criteria a test shows in its command (run_terminal verifies: AC1 AC2) and a passing run records them; record any other with action "verify" and the evidence ids that show it.` : `[acceptance] ${listed}`;
                 }
                 const claimed = acceptance.claim(tool.criterion ?? '', tool.result ?? 'pass', tool.how ?? '', tool.evidence ?? []);
                 post({ type: 'toolResult', id: msgId, tool: 'acceptance', label: `${tool.criterion} ${tool.result}`, success: claimed.ok, error: claimed.ok ? undefined : 'Not recorded' });
                 return `[acceptance verify] ${claimed.text}`;
             }
         }
+    }
+
+    /** The turn changed code, not only documentation. */
+    changedCode(): boolean {
+        return (this._host.passport().build()?.files ?? []).some(file => !isDocumentationFile(file.path));
     }
 
     /** The turn changed code (not only documentation) and the acceptance is not established. */
@@ -157,7 +168,7 @@ export class VerifyRuntime {
         if (pending.length === 0) { return undefined; }
         this._reminders++;
         return `[System Acceptance] Not verified on the final code yet:\n${pending.map(criterionLine).join('\n')}\n` +
-            'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record it with acceptance verify. ' +
+            'Check each with evidence Codico observes (browser_expect on the running app, or a test that exercises it) and record it: run the test with verifies naming the criteria, or use acceptance verify. ' +
             'If one cannot be checked or is not met, record it as failing or say so plainly in your answer; do not present the work as complete.';
     }
 
@@ -168,12 +179,24 @@ export class VerifyRuntime {
      */
     async guidanceBeforeEnd(reviewer: SubagentHost | undefined, enabled: boolean, signal: AbortSignal): Promise<string | undefined> {
         const reminder = this.guidance();
-        if (reminder || !enabled || !reviewer || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        if (reminder || !enabled || this._disputes >= MAX_REVIEW_DISPUTES) { return reminder; }
+        if (!reviewer) {
+            if (this.changedCode()) { this._host.passport().acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review unavailable.' }); }
+            return undefined;
+        }
         // The agent changed nothing since the last dispute (it answered it, or gave up): no point repeating it
         if (this._disputes > 0 && this._state() === this._disputedState) { return undefined; }
         // Reviewed again only when the code or the evidence changed since the last review
         if (this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
+        if (this._reviewWasPreflight) {
+            // Evidence the reviewer would need is missing, so it was not called. With criteria stated but
+            // unverified, the reminders above have said so already; with none stated, ask once for them.
+            if ((report?.criteria.length ?? 0) > 0 || this._preflightPrompts >= MAX_PREFLIGHT_PROMPTS) { return undefined; }
+            this._preflightPrompts++;
+            return `[System Acceptance] Codico cannot review this work yet: ${report?.requestReview?.reason ?? 'no acceptance criteria were stated.'}\n` +
+                'State the criteria in the request\'s own words, check each on the final code, and record it; the independent review runs once they are verified.';
+        }
         const disputed = (report?.criteria.filter(c => c.review?.agrees === false) ?? []).map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`);
         if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
@@ -193,6 +216,7 @@ export class VerifyRuntime {
         const passport = this._host.passport();
         // The report names where its screenshots are
         passport.acceptance.evidenceFolder = this._store?.folder;
+        if (enabled && !reviewer && this.changedCode()) { passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review unavailable.' }); }
         if (enabled && reviewer && this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
     }
 
@@ -207,31 +231,73 @@ export class VerifyRuntime {
     private async _review(reviewer: SubagentHost, signal: AbortSignal): Promise<void> {
         const passport = this._host.passport();
         const report = passport.acceptance.build(passport.lastChange);
-        if (signal.aborted || !report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')) { return; }
+        // Review the request even when the agent omitted all acceptance criteria.
+        const requestNeedsReview = this.changedCode() && !!this._request.trim();
+        if (signal.aborted || (!requestNeedsReview && (!report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')))) { return; }
+        const preflight = acceptanceReviewPreflight(report, this._request, this.changedCode());
+        if (preflight) {
+            // Fail closed locally; never spend tokens asking a model to confirm known missing evidence.
+            this._reviewedState = this._state();
+            this._reviewWasPreflight = true;
+            passport.acceptance.setReview('REQUEST', { agrees: false, reason: preflight });
+            return;
+        }
+        this._reviewWasPreflight = false;
+        const reviewable = report ?? { verdict: 'unverified' as const, criteria: [], consoleErrors: [], steps: 0 };
         this._reviewedState = this._state();
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
         try {
             const built = passport.build();
             const diffStat = (built?.files ?? []).map(file => `${file.path} +${file.added} -${file.removed}`).join('\n');
             let text = '';
-            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(report, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request) }], REVIEW_SYSTEM, [])) {
+            for await (const chunk of reviewer.request([{ role: 'user', content: reviewPrompt(reviewable, passport.acceptance.steps, diffStat, this._testsChanged(built?.files.map(f => f.path) ?? []), this._request, this._sourcesChanged(built?.files.map(f => f.path) ?? [])) }], REVIEW_SYSTEM, [])) {
                 if (signal.aborted) { return; }
                 if (chunk.type === 'content') { text += chunk.text; } else if (chunk.type === 'usage') { reviewer.onUsage?.(chunk); }
             }
-            for (const [id, review] of parseReview(text)) { passport.acceptance.setReview(id, review); }
-        } catch { /* the report stands without the review: it says none was given */ } finally {
+            const reviews = parseReview(text);
+            for (const [id, review] of reviews) { passport.acceptance.setReview(id, review); }
+            // Incomplete review output must never silently count as approval.
+            if (this._request.trim() && !reviews.has('REQUEST')) {
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Reviewer did not confirm coverage of the original request.' });
+            }
+            if (requestNeedsReview && (!report || report.criteria.length === 0)) {
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'No acceptance criteria registered for the original request. Verify every public input form and the owning action/service with raw user input.' });
+            }
+            for (const criterion of reviewable.criteria.filter(c => c.status === 'verified')) {
+                if (!reviews.has(criterion.id)) { passport.acceptance.setReview(criterion.id, { agrees: false, reason: 'Reviewer did not confirm this criterion.' }); }
+            }
+        } catch {
+            if (this._request.trim()) { passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Independent acceptance review failed; request remains unverified.' }); }
+        } finally {
             this._host.post({ type: 'activity', text: null });
         }
     }
 
-    /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each cut). */
+    /** Show the reviewer what was actually changed in production, not just a file list. */
+    private _sourcesChanged(paths: string[]): Array<{ path: string; text: string }> {
+        const root = toolFolders()?.[0]?.uri.fsPath;
+        if (!root) { return []; }
+        const files = paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
+            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6);
+        const perFile = reviewSnippetBudget(files.length, 48000, 12000);
+        return files.flatMap(p => {
+            try {
+                const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, perFile, 12) }];
+            } catch { return []; }
+        });
+    }
+
+    /** The test files changed in the turn, as they are now: what the evidence's assertions really check (at most three, each the part the turn changed). */
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
+        const files = paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3);
+        const perFile = reviewSnippetBudget(files.length, 36000, 20000);
+        return files.flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
-                return [{ path: p, text: text.length > 8000 ? `${text.slice(0, 8000)}\n… (cut)` : text }];
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, perFile) }];
             } catch { return []; }
         });
     }

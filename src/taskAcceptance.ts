@@ -1,60 +1,39 @@
 const MAX_TASK_CONTRACT_CHARS = 2200;
-const MAX_CHECKLIST_ITEMS = 4;
-const MAX_CHECKLIST_ITEM_CHARS = 220;
 
 function normalized(text: string): string {
     return text.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function clauses(text: string): string[] {
-    return text
-        .split(/(?<=[.!?])\s+|\n+/)
-        .map(part => part.trim())
-        .filter(Boolean);
-}
-
-function boundedClauses(text: string, predicate?: (part: string) => boolean): string[] {
-    const selected = predicate ? clauses(text).filter(predicate) : clauses(text);
-    return selected
-        .slice(0, MAX_CHECKLIST_ITEMS)
-        .map(part => part.length > MAX_CHECKLIST_ITEM_CHARS
-            ? part.slice(0, MAX_CHECKLIST_ITEM_CHARS - 1).trimEnd() + '…'
-            : part);
-}
-
-function preservationClauses(text: string): string[] {
-    const preserve = /\b(?:keep|preserve|unchanged|without|do not|don't|must not|should not|still|remain|avoid|only)\b/i;
-    return boundedClauses(text, part => preserve.test(part));
-}
-
+/**
+ * The rules the agent keeps in view while working, with the request itself. Nothing is derived
+ * from the request by splitting its sentences: a checklist of its first sentences dropped most of
+ * a long request and cut a rule from the cases it applies to, and a sentence that only described
+ * the problem ("…knows its workers only by an id") was taken for a constraint to preserve.
+ */
 export function buildTaskAcceptanceContract(rawText: string): string {
     const request = normalized(rawText).slice(0, MAX_TASK_CONTRACT_CHARS);
-    const acceptance = boundedClauses(request);
-    const preservation = preservationClauses(request);
-    const checklist = acceptance.length > 0
-        ? '\n\nAcceptance checklist derived from the request:\n' + acceptance.map(item => `- ${item}`).join('\n')
-        : '';
-    const preservationBlock = preservation.length > 0
-        ? '\n\nExplicit preservation / negative constraints:\n' + preservation.map(item => `- ${item}`).join('\n')
-        : '';
-
     return `## Task acceptance contract
 
-The original user request remains authoritative. A fix is incomplete unless it satisfies the requested behavior and preserves every stated invariant.
+The original user request remains authoritative. A fix is incomplete unless it satisfies every part of the requested behavior and keeps everything the request says must not change.
 
 Original request:
-${request}${checklist}${preservationBlock}
+${request}
 
 Implementation discipline:
 - identify the abstraction or API boundary that owns the behavior before patching a convenient call site;
-- prefer one reusable invariant over enumerating only variants visible in the first file;
+- apply each requested rule wherever the request says it applies (every form, path or caller it names), through one shared piece of code rather than a copy per place;
+- for an input conversion (cleaning, normalization, formatting, parsing), identify what value each named public entry point must RETURN, not merely what a later service stores. The converted value must be observable through every requested entry point;
+- for input conversions, enforce the invariant at the owning action or service boundary even if parsers already normalize; callers can invoke services with raw values directly;
 - inspect callers, consumers, sibling implementations, or existing tests when they materially affect correctness;
 - do not optimize for guessed hidden tests or a particular file layout: optimize for requested observable behavior.
 
 Verification requirements:
 - verify changed behavior, not only compilation;
+- when the request names multiple forms or APIs, exercise EACH public entry point independently and assert its exact returned value before testing downstream consumers; tests of eventual persistence do not prove an input parser is correct;
+- test the owning service or action DIRECTLY with the unconverted input, without a parser/helper in front. Verify its observable output and stored state; testing a service with an already-clean value misses this edge;
+- an assertion that a named input boundary returns an UNCONVERTED value when the request requires a converted value is a failing test of the request, even when that assertion passes and a later service converts it. Fix the boundary and the test;
 - when an edit introduces a reusable helper for an observable behavior change, verify a production caller/path actually invokes that helper; a standalone helper definition is not behavioral completion;
-- verify every explicit preservation / negative constraint;
+- verify everything the request says must stay unchanged;
 - if a focused test exists, run it;
 - otherwise inspect control-flow or integration paths that distinguish the failure case from normal success/completion paths before finishing.`;
 }

@@ -1,3 +1,4 @@
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { WriteFileTool, RunTerminalTool, SearchFilesTool, FindFilesTool, EditFileTool } from './toolParser';
 import { FileManager } from './fileManager';
@@ -11,9 +12,11 @@ import { killProcessGroup, processGroupAlive, runTerminalProcess, clipTerminalOu
 import { ExtensionMessage } from './chatProtocol';
 import { editResultSnippet } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
+import { CRITERIA_NOW } from './verifyTools';
+import { changesBetween, COMMAND_CHANGED_FILES, treeState } from './commandChanges';
 import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { filterAllowedWorkspaceUris, resolveWorkspaceToolPath } from './workspaceSecurity';
-import { looksLikeIntendedRegex } from './agentEfficiency';
+import { isDocumentationFile, isTestFile, looksLikeIntendedRegex } from './agentEfficiency';
 import { computeLineDiff } from './lineDiff';
 import { renderSearchMatches } from './leanContext';
 import { readCurrentBytes, revealFile, sameBytes, writeCurrentBytes } from './workspaceText';
@@ -89,7 +92,7 @@ export class WorkspaceTools {
             this._host.passport().recordChange(tool.filepath, beforeBytes ? beforeText : null, contentToWrite);
             this._host.fileWritten();
             const lineCount = contentToWrite.split('\n').length;
-            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath, beforeText)}`;
+            return `[write_file: ${tool.filepath}] Written successfully (${lineCount} lines). File is on disk — no need to read it back to verify.${buildLocalInvariantAudit(contentToWrite, '', tool.filepath, beforeText)}${this._criteriaNote(tool.filepath)}`;
         } catch (err: unknown) {
             const errorMsg = err instanceof Error ? err.message : String(err);
             this._host.post({ type: 'fileWriteResult', id: msgId, filepath: tool.filepath, granted: false, error: errorMsg });
@@ -118,6 +121,7 @@ export class WorkspaceTools {
         );
 
         this._host.post({ type: 'terminalChunk', id: msgId, text: '' });
+        const treeBefore = cwd ? treeState(cwd) : undefined;
         const result = await runTerminalProcess({
             command: tool.command,
             cwd,
@@ -146,9 +150,12 @@ export class WorkspaceTools {
             ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
             : '';
         const success = result.exitCode === 0;
+        const changedNote = this._recordCommandChanges(treeBefore);
         const evidence = this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
         // Once there are acceptance criteria, a check's result can be named as evidence for them
-        const evidenceNote = evidence && this._host.passport().acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})` : '';
+        const acceptance = this._host.passport().acceptance;
+        const named = evidence && tool.verifies?.length ? acceptance.claimByCheck(tool.verifies, evidence, tool.command) : '';
+        const evidenceNote = evidence && acceptance.criteria.length > 0 ? `\n(recorded as evidence ${evidence})${named ? `\n${named}` : ''}` : '';
         this._host.post({
             type: 'toolResult',
             id: msgId,
@@ -157,7 +164,26 @@ export class WorkspaceTools {
             success,
             error: success ? undefined : `Exit ${result.exitCode}`,
         });
-        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}`;
+        return `[run_terminal: ${tool.command}]\nExit: ${result.exitCode}\n${clipTerminalOutput(result.output)}${bgNote}${sandbox.explain(result.output, result.exitCode)}${evidenceNote}${changedNote}`;
+    }
+
+    /** Files the command changed, recorded as changes of the turn (before its result counts as a check), and said to the agent. */
+    private _recordCommandChanges(before: ReturnType<typeof treeState>): string {
+        const after = before && treeState(before.root);
+        if (!before || !after) { return ''; }
+        const passport = this._host.passport();
+        const changes = changesBetween(before, after, file => passport.textOf(file) ?? passport.textOf(path.join(before.root, file)));
+        for (const change of changes) { passport.recordChange(change.path, change.before, change.after); }
+        return changes.length ? `\n${COMMAND_CHANGED_FILES} ${changes.map(c => c.path).join(', ')}. Codico records and checks them like an edit; change files with edit_file or write_file instead, so each change is shown and reviewed.` : '';
+    }
+
+    private readonly _criteriaAsked = new WeakSet<object>(); // the turns already asked for their criteria (by their change report)
+
+    /** At a turn's first code change with no acceptance criteria stated: ask for them now, so the checks that follow verify them, instead of at the end. */
+    private _criteriaNote(filepath: string): string {
+        const passport = this._host.passport();
+        if (isDocumentationFile(filepath) || isTestFile(filepath) || passport.acceptance.criteria.length > 0 || this._criteriaAsked.has(passport)) { return ''; }
+        this._criteriaAsked.add(passport); return `\n\n${CRITERIA_NOW}`;
     }
 
     /** Whether a command may run: asked on a card, unless allowed for the task or remembered. */
@@ -393,7 +419,7 @@ export class WorkspaceTools {
             const snippet = editResultSnippet(newContentLF.split('\n'), linesBefore, effectiveNewStr.split('\n').length);
             const invariantAudit = buildLocalInvariantAudit(newContentLF, effectiveNewStr, tool.filepath, content);
             const matchNote = editMatch.mode === 'exact' ? '' : ` (${editMatch.mode} unique match)`;
-            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${snippet.from}–${snippet.to}, numbered like read_file):\n\`\`\`\n${snippet.text}\n\`\`\`${invariantAudit}`;
+            return `[edit_file: ${tool.filepath}] Edit applied successfully${matchNote}.\nResult (lines ${snippet.from}–${snippet.to}, numbered like read_file):\n\`\`\`\n${snippet.text}\n\`\`\`${invariantAudit}${this._criteriaNote(tool.filepath)}`;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
             this._host.post({ type: 'toolResult', id: msgId, tool: 'edit_file', label: tool.filepath, success: false, error: message });

@@ -3,7 +3,10 @@ import * as http from 'http';
 import * as https from 'https';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
 import { NativeToolCall, NativeToolDefinition, NATIVE_TOOL_PROMPT, OpenAIToolCallAccumulator } from './nativeTools';
-import { toOpenAIMessages } from './providerConversation';
+import { ReasoningDetailsAccumulator, toOpenAIMessages } from './providerConversation';
+
+/** Models whose reasoning blocks are sent back with later requests (Claude: its reasoning between tool calls). */
+const KEEPS_REASONING = /^~?anthropic\//;
 import type { ProviderRequestOptimizer } from './accoProviderOptimizer';
 import { UNTRUSTED_CONTENT_RULE } from './untrustedContent';
 
@@ -207,7 +210,7 @@ frame_id: <optional frame index, 0 = top of stack>
 4. edit_file old_str must match exactly once, including all whitespace.
 5. One sentence before each tool call so the user sees what you are doing, followed by the tool fence in the same response — never end a response after announcing an action.
 6. Each response costs a full request, so do not spend one per look: when several reads or searches do not depend on each other, issue them together in the same response (several tool calls) and wait for all the results. Issue an edit, or a command whose input depends on a result, in a later response. Continue autonomously after each batch of results.
-7. Read and search with read_file, search_files and find_files, never with run_terminal (no cat, sed, awk, head, tail or grep for looking at files): read_file shows line numbers and takes start_line/end_line, search_files returns file:line for every match, and they need no approval. Keep run_terminal for building, testing and running things.
+7. Read and search with read_file, search_files and find_files, never with run_terminal (no cat, sed, awk, head, tail or grep for looking at files): read_file shows line numbers and takes start_line/end_line, search_files returns file:line for every match, and they need no approval. Change files with edit_file and write_file, never through run_terminal (no sed -i, and no script or heredoc that writes a file): those are the changes the user sees and Codico checks. Keep run_terminal for building, testing and running things.
 8. For a question that needs many files read before you can act (how a feature works end to end, every place something is used, what a change would affect), use delegate: a subagent reads in a conversation of its own and returns a report, so this conversation stays small. Give it a self-contained task that asks for exactly what you need, no wider than the question you are answering, and say what to report. Do not delegate a lookup that one or two reads would answer, and never delegate edits or commands.
 9. Run get_diagnostics after code changes to verify no new errors.
 10. Use fetch_url for static docs/READMEs; use browser_navigate for SPAs and interactive pages. When you need something from the web and have no address for it, use web_search, then fetch_url on the result you want to read.
@@ -272,7 +275,7 @@ filepath: <relative path, or omit for workspace>
 ## Rules
 
 1. Only the four tools listed above are valid in this phase. Do not issue any other function call or fenced tool block. Repository/source discovery is complete.
-2. Make the smallest evidence-backed code change now. Prefer edit_file; use write_file only for a necessary whole-file rewrite.
+2. Make the code change the request needs now, wherever it applies. Prefer edit_file; use write_file only for a necessary whole-file rewrite.
 3. If edit_file misses, use the fresh source context returned by the failed edit to retry. Do not restart discovery.
 4. run_terminal is for verification only in this phase: tests, builds, lint/type checks, or other focused validation. Do not use cat, grep, rg, sed, awk, head, tail, git show, or similar commands to inspect source.
 5. After a successful mutation, verify the requested behavior and preservation constraints before finishing.
@@ -340,15 +343,17 @@ export function streamOpenRouter(
             let nativeFallbackUsed = false;
 
             function buildBody(): Record<string, unknown> {
+                // Claude's reasoning goes back with each reply, so it is kept between tool calls
                 const messages = toOpenAIMessages([
                     { role: 'system', content: systemPrompt(useNativeTools) },
                     ...history,
-                ], useNativeTools);
+                ], useNativeTools, KEEPS_REASONING.test(model) ? 'reasoning_details' : undefined);
                 return {
                     model,
                     messages,
                     stream: true,
-                    max_tokens: 131072,
+                    // Enough for any one step; asking for far more makes a low balance refuse the request early
+                    max_tokens: 32000,
                     include_reasoning: true,
                     reasoning: { effort: thinkingEffort },
                     stream_options: { include_usage: true },
@@ -451,21 +456,28 @@ export function streamOpenRouter(
                     let buffer = '';
                     const completion = new StreamCompletionGuard();
                     const nativeCalls = new OpenAIToolCallAccumulator();
+                    const reasoningBlocks = new ReasoningDetailsAccumulator();
 
                     function emitReadyNativeTools(final = false): void {
-                        for (const call of nativeCalls.flushReady()) {
+                        for (const call of nativeCalls.flushReady(final)) {
                             push({ type: 'native_tool', call });
                         }
                         if (final && nativeCalls.hasPending) {
                             push({
                                 type: 'stream_error',
-                                message: `OpenRouter returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')}`,
+                                message: `OpenRouter returned malformed native tool arguments for: ${nativeCalls.pendingNames().join(', ')} (received: ${nativeCalls.pendingSample()})`,
                             });
                         }
                     }
                     // Dedup terminal pushes: [DONE] in data + end event both call pushEnd
                     let streamEnded = false;
-                    function pushEnd(): void { if (!streamEnded) { streamEnded = true; think.flush(); push(null); } }
+                    function pushEnd(): void {
+                        if (streamEnded) { return; }
+                        streamEnded = true; think.flush();
+                        const kept = KEEPS_REASONING.test(model) ? reasoningBlocks.serialized() : undefined;
+                        if (kept) { push({ type: 'reasoning', text: kept }); }
+                        push(null);
+                    }
 
                     function processSSELine(trimmed: string): void {
                         if (!trimmed) { return; }
@@ -488,6 +500,7 @@ export function streamOpenRouter(
                             const delta = json.choices?.[0]?.delta as
                                 | {
                                     reasoning?: string;
+                                    reasoning_details?: unknown[];
                                     content?: string;
                                     tool_calls?: Array<{
                                         index?: number;
@@ -497,6 +510,7 @@ export function streamOpenRouter(
                                 }
                                 | undefined;
                             if (delta?.reasoning) { push({ type: 'thinking', text: delta.reasoning }); }
+                            reasoningBlocks.add(delta?.reasoning_details);
                             if (typeof delta?.content === 'string') { think.push(delta.content); }
                             for (const toolCall of delta?.tool_calls ?? []) {
                                 nativeCalls.add(toolCall);

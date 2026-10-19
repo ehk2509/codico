@@ -12,7 +12,7 @@ export const MAX_STEPS_WITHOUT_PROGRESS = 20;
 
 export interface StepTool { type: string; command?: string; result: string }
 
-const CHANGED = /^\[(?:write_file|edit_file)[^\]]*\]\s+(?:Written successfully|Edit applied successfully)/m;
+const CHANGED = /^\[(?:write_file|edit_file)[^\]]*\]\s+(?:Written successfully|Edit applied successfully)|^\[Files changed by this command\]/m;
 
 /** The outcome of a check run, as text: its test counts, or its exit status. */
 function outcome(result: string): string {

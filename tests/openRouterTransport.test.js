@@ -279,3 +279,42 @@ test('Claude models are asked to cache the prompt; cached tokens are reported', 
   assert.equal(bodies[1].cache_control, undefined, 'other providers cache automatically');
   assert.equal(chunks.find(c => c.type === 'usage').cachedTokens, 900);
 });
+
+test('Claude\'s reasoning blocks are kept with the reply and sent back with the next request', async () => {
+  const { ReasoningDetailsAccumulator, toOpenAIMessages } = require('../out/providerConversation.js');
+  // Streamed in pieces, as OpenRouter sends them: the text in parts, the signature at the end
+  const acc = new ReasoningDetailsAccumulator();
+  acc.add([{ type: 'reasoning.text', text: 'Clean the name ', index: 0, format: 'anthropic-claude-v1' }]);
+  acc.add([{ type: 'reasoning.text', text: 'where it is parsed.', index: 0, signature: null }]);
+  acc.add([{ type: 'reasoning.text', signature: 'SIG', index: 0 }]);
+  assert.deepEqual(JSON.parse(acc.serialized()), [{ type: 'reasoning.text', text: 'Clean the name where it is parsed.', index: 0, format: 'anthropic-claude-v1', signature: 'SIG' }]);
+  assert.equal(new ReasoningDetailsAccumulator().serialized(), undefined);
+
+  const history = [
+    { role: 'user', content: 'name the workers' },
+    { role: 'assistant', content: '', reasoning: acc.serialized(), nativeToolCalls: [{ id: 'c1', name: 'read_file', arguments: { filepath: 'a.ts' } }] },
+    { role: 'tool', toolCallId: 'c1', toolName: 'read_file', content: 'x' },
+    { role: 'assistant', content: 'done', reasoning: 'plain DeepSeek reasoning' },
+  ];
+  const sent = toOpenAIMessages(history, true, 'reasoning_details');
+  assert.deepEqual(sent[1].reasoning_details, JSON.parse(acc.serialized()));
+  assert.equal('reasoning_details' in sent[3], false, 'text reasoning is not sent as blocks');
+  assert.equal('reasoning_details' in toOpenAIMessages(history, true)[1], false, 'other models: not sent');
+
+  // Through the stream: a reasoning chunk at the end, for Claude only; the request asks for a bounded output
+  const bodies = [];
+  const run = (model) => withFakeServer((req, res) => {
+    let raw = ''; req.on('data', d => raw += d); req.on('end', () => {
+      bodies.push(JSON.parse(raw));
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"choices":[{"delta":{"reasoning":"think","reasoning_details":[{"type":"reasoning.text","text":"think","index":0}]}}]}\n\n' +
+        'data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","signature":"S","index":0}]}}]}\n\n' +
+        'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}\n\ndata: [DONE]\n\n');
+    });
+  }, endpoint => collect(streamOpenRouter('k', [{ role: 'user', content: 'hi' }], model, undefined, undefined, 'low', undefined, [], endpoint)));
+  const claude = await run('anthropic/claude-sonnet-5.5');
+  const other = await run('deepseek/deepseek-v4-flash');
+  assert.deepEqual(JSON.parse(claude.find(c => c.type === 'reasoning').text), [{ type: 'reasoning.text', text: 'think', index: 0, signature: 'S' }]);
+  assert.equal(other.find(c => c.type === 'reasoning'), undefined);
+  assert.equal(bodies[0].max_tokens, 32000);
+});

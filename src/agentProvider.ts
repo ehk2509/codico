@@ -776,7 +776,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     }
 
     /** Automated tests only: the change report of the last turn. */
-    public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; }
+    public evaluationPassport(): PatchPassport | undefined { return this._evaluationMode ? this._passport.build() : undefined; } public evaluationHistory(): ChatMessage[] { return this._evaluationMode ? this._history : []; }
 
     public lastReplyUsage(): DisplayMessage['usage'] { return this._displayMessages.filter(m => m.role === 'assistant').at(-1)?.usage; }
     /** The text of the agent's last reply in full, without its tool calls: what a team's worker reports. */
@@ -1051,7 +1051,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._verify.endTurn(this._subagentHost, config.get<boolean>('acceptanceReview', true), signal);
         const passport = config.get<boolean>('changeReport', true) ? this._passport.build() : undefined;
         if (passport) { const markdown = passportMarkdown(passport); this._post({ type: 'patchPassport', id: msgId, passport, markdown }); this._verify.finish(markdown); }
-        const note = verdictNote(passport?.acceptance); const reply = [...this._history].reverse().find(m => m.role === 'assistant'); if (note) { this._post({ type: 'appendContent', id: msgId, text: note }); if (reply && typeof reply.content === 'string') { reply.content += note; } }
+        const note = verdictNote(passport?.acceptance, this._verify.changedCode() && vscode.workspace.getConfiguration('codico').get<boolean>('acceptanceChecks', true)); const reply = [...this._history].reverse().find(m => m.role === 'assistant'); if (note) { this._post({ type: 'appendContent', id: msgId, text: note }); if (reply && typeof reply.content === 'string') { reply.content += note; } }
         if (this._teamSteer && this._steer) { this._pendingUserMessages.push({ text: this._steer }); }
         this._steer = ''; this._teamSteer = false;
         this._post({ type: 'endMessage', id: msgId });

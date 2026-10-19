@@ -1,4 +1,5 @@
 import {
+    criterionIds,
     ToolCall,
     UpdateTodoTool,
 } from './toolParser';
@@ -85,7 +86,10 @@ const ALL_TOOLS: NativeToolDefinition[] = [
         description: 'Run a shell command in the workspace.',
         inputSchema: {
             type: 'object',
-            properties: { command: { type: 'string' } },
+            properties: {
+                command: { type: 'string' },
+                verifies: { type: 'string', description: 'For a test run: the acceptance criteria it shows, e.g. "AC1 AC2". If it passes, Codico records them as met on its result; no separate acceptance verify is needed.' },
+            },
             required: ['command'],
             additionalProperties: false,
         },
@@ -286,10 +290,11 @@ const ALL_TOOLS: NativeToolDefinition[] = [
             type: 'object',
             properties: {
                 action: { type: 'string', enum: ['criteria', 'verify'] },
-                criteria: { type: 'array', items: { type: 'string' } },
+                // Text, one per line: a list of free-text items is where models write invalid JSON (repeated keys, unquoted text)
+                criteria: { type: 'string', description: 'For action "criteria": the criteria, one per line.' },
                 criterion: { type: 'string', description: 'AC1, AC2…' },
                 result: { type: 'string', enum: ['pass', 'fail'] },
-                evidence: { type: 'array', items: { type: 'string' }, description: 'Evidence ids: E1, E2…' },
+                evidence: { type: 'string', description: 'For action "verify": the evidence ids, e.g. "E1 E3".' },
                 how: { type: 'string' },
             },
             required: ['action'],
@@ -636,7 +641,8 @@ export function nativeToolCallToToolCall(call: NativeToolCall): ToolCall | null 
         }
         case 'run_terminal': {
             const command = stringArg(args, 'command');
-            return command ? { type: 'run_terminal', command } : null;
+            const verifies = criterionIds(Array.isArray(args.verifies) ? args.verifies.filter(item => typeof item === 'string').join(' ') : typeof args.verifies === 'string' ? args.verifies : '');
+            return command ? { type: 'run_terminal', command, ...(verifies.length ? { verifies } : {}) } : null;
         }
         case 'search_files': {
             const pattern = stringArg(args, 'pattern');
@@ -746,6 +752,17 @@ interface OpenAIDeltaToolCall {
     function?: { name?: string; arguments?: string };
 }
 
+/**
+ * A tool call's JSON arguments. Once the call is complete, small slips models make are repaired
+ * (a doubled or stray comma, one before a closing brace); anything else still fails.
+ */
+export function parseArguments(text: string, complete = true): unknown {
+    try { return JSON.parse(text); } catch (error) {
+        if (!complete) { throw error; }
+        return JSON.parse(text.replace(/,(\s*,)+/g, ',').replace(/,\s*([}\]])/g, '$1').replace(/([{\[])\s*,/g, '$1'));
+    }
+}
+
 export class OpenAIToolCallAccumulator {
     private readonly _calls = new Map<number, { id?: string; name: string; args: string; emitted: boolean }>();
 
@@ -766,12 +783,19 @@ export class OpenAIToolCallAccumulator {
         return [...this._calls.values()].filter(call => !call.emitted && call.name).map(call => call.name);
     }
 
-    flushReady(): NativeToolCall[] {
+    /** The start and end of the first unreadable call's arguments, as received, so the error shows what went wrong. */
+    pendingSample(): string {
+        const call = [...this._calls.values()].find(c => !c.emitted && c.name);
+        const text = call ? JSON.stringify(call.args) : '';
+        return text.length <= 240 ? text : `${text.slice(0, 160)} … ${text.slice(-80)}`;
+    }
+
+    flushReady(final = false): NativeToolCall[] {
         const ready: NativeToolCall[] = [];
         for (const [, call] of [...this._calls.entries()].sort((a, b) => a[0] - b[0])) {
             if (call.emitted || !call.name) { continue; }
             try {
-                const parsed = call.args.trim() ? JSON.parse(call.args) : {};
+                const parsed = call.args.trim() ? parseArguments(call.args, final) : {};
                 if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) { continue; }
                 call.emitted = true;
                 ready.push({ id: call.id, name: call.name, arguments: parsed as Record<string, unknown> });

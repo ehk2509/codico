@@ -1,4 +1,5 @@
 import { checkResultHidden, classifyCheck } from './patchPassport';
+import { COMMAND_CHANGED_FILES } from './commandChanges';
 import type { ToolCall } from './toolParser';
 import type { NativeToolDefinition } from './nativeTools';
 import { nativeToolsForAgentPhase } from './nativeTools';
@@ -72,7 +73,7 @@ export class ExplorationController {
     public completionGuidance(): string | undefined {
         if (!this._verificationPending) {
             if (this.mutationRequired && this._lastMutationIteration === 0) {
-                return '[System Action] This request requires a code change, but no mutation has succeeded yet. Continue gathering only the evidence needed for correctness, then make the smallest evidence-backed edit. Do not finish with analysis only.';
+                return '[System Action] This request requires a code change, but no mutation has succeeded yet. Continue gathering only the evidence needed for correctness, then make the change the request needs. Do not finish with analysis only.';
             }
             return undefined;
         }
@@ -208,12 +209,6 @@ export class ExplorationController {
             } else {
                 this._unwiredImports.delete(tool.filepath);
             }
-            const previousVerificationFile = this._verificationFile;
-            const broadenedWhilePending =
-                this._verificationPending &&
-                previousVerificationFile &&
-                tool.filepath !== previousVerificationFile;
-
             this.streak = 0;
             this._locked = false;
             this._lastMutationIteration = this._iteration;
@@ -229,15 +224,18 @@ export class ExplorationController {
                 return '[System Follow-through] An edited file has an unused local import. An imported helper is not implemented until a caller actually invokes it. Wire the helper into the behavior path or remove the unused import, then verify.';
             }
 
-            if (broadenedWhilePending) {
-                return '[System Follow-through] You changed a second file before the previous edit was behaviorally verified. Keep this new edit local now: audit its control flow and run behavior-level verification before changing another sibling.';
-            }
-
             return '[System Follow-through] Code changed. Do not declare success yet. Verify the full task acceptance contract. ' +
                 (this._verificationAuditSeen
                     ? 'This is a lifecycle/state edit: check the changed lines shown in the edit result against the Local invariant audit (read further lines of the file only for a path the result does not show), then run a behavior-level test. '
                     : 'Start with the edited component, then follow dependencies only if correctness requires it. ') +
-                'Do not broaden mutations until this edit is locally verified.';
+                'Make the rest of the change the request needs, wherever it applies, and verify each part.';
+        }
+
+        // A command that changed files (a script, sed -i) is a code change like an edit: it needs verifying too
+        if (tool.type === 'run_terminal' && result.includes(COMMAND_CHANGED_FILES)) {
+            this.streak = 0; this._locked = false; this._lastMutationIteration = this._iteration;
+            this._verificationPending = true; this._verificationFile = undefined;
+            this._verificationAuditSeen = false; this._verificationAuditReads = 0; this.targetVisits.clear();
         }
 
         if (!this._verificationPending) { return undefined; }

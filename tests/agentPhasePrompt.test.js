@@ -10,7 +10,7 @@ const {
 
 test('action phase is strong guidance layered on the normal tool contract', () => {
   assert.match(ACTION_PHASE_SYSTEM_PROMPT, /act on the evidence/i);
-  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /next response should make the smallest evidence-backed code change/i);
+  assert.match(ACTION_PHASE_SYSTEM_PROMPT, /next response should make the code change the request needs, in every place the request says it applies/i);
   assert.match(ACTION_PHASE_SYSTEM_PROMPT, /Discovery tools remain available/i);
 
   const prompt = systemPromptForAgentPhase(false, true, false);
@@ -24,7 +24,8 @@ test('post-edit phase keeps mutation local and requires behavioral evidence', ()
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /Local invariant audit/);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /semantic-completion candidates as explicit proof obligations/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /normal success, completion, terminal, cancellation/i);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings/i);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Finish every part of the request, in every place the request says it applies/);
+  assert.doesNotMatch(POST_EDIT_VERIFICATION_PROMPT, /do not mutate siblings|Keep mutation focus/i);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /behavior-level test-like command/i);
 
   const first = systemPromptForAgentPhase(false, true, true, 'src/openRouterClient.ts', '', true);
@@ -129,4 +130,15 @@ test('a phase change is added to the conversation without changing earlier messa
   appendPhaseNote(fenced, '');
   assert.equal(fenced.length, 3);
   assert.match(fenced[2].content, /^\[Tool Results\]\n\nok\n\n\[System Phase\]\nThe previous phase is complete/);
+});
+
+test('post-edit verification disallows passing assertions of raw unnormalized parser results', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /test the exact return value at that boundary/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /service normalizing it later does NOT verify/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /a passing assertion of an unconverted input is evidence of an incomplete fix/);
+});
+
+test('post-edit phase requires directly exercising the owning service with raw input', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /exercise the owning service\/action DIRECTLY with raw inputs/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Normalize before uniqueness and output formatting/);
 });
