@@ -334,3 +334,19 @@ test('a turn that changed code without stating any criteria ends with the not-ve
   assert.match(verdictNote(undefined, true), /no acceptance criteria were stated\*\*, so nothing shows that the request is met\. Whatever the reply above says, this is not verified as done\./);
   assert.equal(verdictNote(undefined, false), undefined, 'no code changed: nothing to say');
 });
+
+test('review shows production implementation and distinguishes the requested public paths', () => {
+  const p = new PassportRecorder();
+  p.recordChange('src/teamService.ts', 'a', 'b');
+  p.acceptance.setCriteria(['Worker names are cleaned']);
+  const run = p.recordCommand('npm test', 0, '# pass 4\\n# fail 0\\n');
+  p.acceptance.claim('AC1', 'pass', 'workers clean', [run]);
+  const prompt = reviewPrompt(p.build().acceptance, [], 'src/teamService.ts +1 -1',
+    [{ path: 'tests/worker.test.js', text: "assert.equal(task.name, 'front-end');" }],
+    'Accept names in fenced and native tools: Front End! becomes front-end.',
+    [{ path: 'src/teamService.ts', text: 'const name = cleanWorkerName(tool.name);' }]);
+  assert.match(prompt, /Changed production implementation/);
+  assert.match(prompt, /distinct exact observed assertion for EACH entry point/);
+  assert.match(prompt, /public parser or adapter/);
+  assert.match(prompt, /answer REQUEST: no and name it/);
+});
