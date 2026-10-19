@@ -30,6 +30,8 @@ export const MAX_APP_WAIT_SECONDS = 300;
 export const MAX_ACCEPTANCE_REMINDERS = 2;
 /** Times a disputed acceptance goes back to the agent before the reply may end with it. */
 export const MAX_REVIEW_DISPUTES = 2;
+/** Times Codico itself asks for the missing criteria before calling the reviewer (it never approves work). */
+export const MAX_PREFLIGHT_PROMPTS = 1;
 /** How a reviewer's dispute starts: the agent loop may hand the turn to a stronger model on it. */
 export const REVIEW_DISPUTE_PREFIX = '[System Acceptance] An independent reviewer';
 const REVIEW_SYSTEM = 'You are an independent acceptance reviewer. You did not write the change. Judge only from the evidence given. Be strict: a criterion is shown only when the evidence exercises exactly what it says.';
@@ -55,7 +57,9 @@ export class VerifyRuntime {
     private _reviewedState = '';
     /** A local preflight rejection is not an opinion issued by the external reviewer. */
     private _reviewWasPreflight = false;
+    /** The reviewer's disputes: Codico's own preflight prompts are counted apart, so they never use up the reviewer's. */
     private _disputes = 0;
+    private _preflightPrompts = 0;
     /** The code and evidence when the last dispute was given: another is given only after the agent worked on it. */
     private _disputedState = '';
     /** The user's request of this turn, for the reviewer. */
@@ -79,7 +83,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._reviewWasPreflight = false; this._disputes = 0; this._disputedState = '';
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._reviewWasPreflight = false; this._disputes = 0; this._preflightPrompts = 0; this._disputedState = '';
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -185,14 +189,20 @@ export class VerifyRuntime {
         // Reviewed again only when the code or the evidence changed since the last review
         if (this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
+        if (this._reviewWasPreflight) {
+            // Evidence the reviewer would need is missing, so it was not called. With criteria stated but
+            // unverified, the reminders above have said so already; with none stated, ask once for them.
+            if ((report?.criteria.length ?? 0) > 0 || this._preflightPrompts >= MAX_PREFLIGHT_PROMPTS) { return undefined; }
+            this._preflightPrompts++;
+            return `[System Acceptance] Codico cannot review this work yet: ${report?.requestReview?.reason ?? 'no acceptance criteria were stated.'}\n` +
+                'State the criteria in the request\'s own words, check each on the final code, and record it; the independent review runs once they are verified.';
+        }
         const disputed = (report?.criteria.filter(c => c.review?.agrees === false) ?? []).map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`);
         if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
         this._disputes++;
         this._disputedState = this._state();
-        return (this._reviewWasPreflight
-            ? '[System Acceptance] Required final-code evidence is missing; independent review has not been called yet:\n'
-            : `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n`) +
+        return `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n` +
             disputed.join('\n') +
             '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';
     }

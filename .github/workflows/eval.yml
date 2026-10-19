@@ -1,8 +1,6 @@
 name: Coding Holdout
 
 on:
-  pull_request:
-    branches: [fix/review-request-examples]
   workflow_dispatch:
     inputs:
       agent:
@@ -57,8 +55,6 @@ permissions:
 
 jobs:
   coding-holdout:
-    # A single trusted same-repo PR run, while manual dispatch remains unchanged.
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'perf/acceptance-review-efficiency')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -96,16 +92,16 @@ jobs:
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AGENT: ${{ inputs.agent || 'codico' }}
-          MODEL: ${{ inputs.model || 'anthropic/claude-sonnet-5.5' }}
-          FILTER: ${{ inputs.filter || '^team-worker-names$' }}
-          SUITE: ${{ inputs.suite || 'eval/tasks-unused.json' }}
+          AGENT: ${{ inputs.agent }}
+          MODEL: ${{ inputs.model }}
+          FILTER: ${{ inputs.filter }}
+          SUITE: ${{ inputs.suite }}
           ESCALATION: ${{ inputs.escalation_model }}
           EFFORT: ${{ inputs.effort }}
           CODICO_EVAL_ACCO_ENABLED: ${{ inputs.acco && '1' || '0' }}
           CODICO_EVAL_ACCO_BASE_URL: http://127.0.0.1:8770
-          LIMIT: ${{ inputs.limit || '0' }}
-          REPETITIONS: ${{ inputs.repetitions || '3' }}
+          LIMIT: ${{ inputs.limit }}
+          REPETITIONS: ${{ inputs.repetitions }}
         run: |
           if [ "$AGENT" = codico ]; then test -n "$OPENROUTER_API_KEY" || (echo "OPENROUTER_API_KEY secret is required" && exit 1); fi
           if [ "$AGENT" = claude-code ]; then test -n "$ANTHROPIC_API_KEY" || (echo "ANTHROPIC_API_KEY secret is required" && exit 1); fi

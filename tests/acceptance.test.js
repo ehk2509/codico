@@ -248,7 +248,7 @@ test('the reviewer is given the user\'s request and judges whether the criteria 
   const prompt = reviewPrompt(p.build().acceptance, [], 'src/toolParser.ts +40 -3', [], request);
   assert.match(prompt, /The user's request, which the change must meet as asked:\nAllow write_file content to contain Markdown code fences/);
   assert.match(prompt, /REQUEST: yes — <why> \(or no — <what is not covered>\)/);
-  assert.match(prompt, /not a different mechanism \(a new syntax, option or mode\) or a narrower case/);
+  assert.match(prompt, /A different mechanism \(a new syntax, option or mode\) or a narrower case does not cover the request/);
   // Without a request the prompt asks nothing about it
   assert.doesNotMatch(reviewPrompt(p.build().acceptance, [], ''), /REQUEST:/);
 
