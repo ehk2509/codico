@@ -350,3 +350,13 @@ test('review shows production implementation and distinguishes the requested pub
   assert.match(prompt, /public parser or adapter/);
   assert.match(prompt, /answer REQUEST: no and name it/);
 });
+
+test('review explicitly rejects downstream-only normalization and a passing assertion of the wrong parser value', () => {
+  const a = new AcceptanceRecorder(() => 1);
+  a.setCriteria(['Parser converts an input name into a canonical identifier']);
+  const prompt = reviewPrompt(a.build(0), [], 'src/action.ts +3', [
+    { path: 'tests/action.test.js', text: "assert.equal(parsed.name, 'Fancy UI!'); assert.equal(task.name, 'fancy-ui');" },
+  ], 'Both public tool forms clean "Fancy UI!" into fancy-ui.');
+  assert.match(prompt, /answer REQUEST: no EVEN IF a downstream service eventually stores/);
+  assert.match(prompt, /Quote the contradicting assertion in the rejection/);
+});
