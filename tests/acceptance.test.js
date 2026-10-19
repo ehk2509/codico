@@ -414,7 +414,9 @@ test('a test command names the criteria it shows: its result records them, with 
   assert.deepEqual(parseToolBody('run_terminal', 'command: npm test\nverifies: AC1, ac2 AC2 everything'), [{ type: 'run_terminal', command: 'npm test', verifies: ['AC1', 'AC2'] }]);
   assert.deepEqual(parseToolBody('run_terminal', 'command: npm test'), [{ type: 'run_terminal', command: 'npm test' }]);
   assert.deepEqual(nativeToolCallToToolCall({ id: 'c', name: 'run_terminal', arguments: { command: 'npm test', verifies: ['AC3'] } }), { type: 'run_terminal', command: 'npm test', verifies: ['AC3'] });
-  assert.ok(getNativeToolDefinitions(false).find(t => t.name === 'run_terminal').inputSchema.properties.verifies);
+  // Text, not a list: Claude Sonnet wrote invalid JSON for a list of strings here, and the whole command was lost
+  assert.equal(getNativeToolDefinitions(false).find(t => t.name === 'run_terminal').inputSchema.properties.verifies.type, 'string');
+  assert.deepEqual(nativeToolCallToToolCall({ id: 'c', name: 'run_terminal', arguments: { command: 'npm test', verifies: 'AC1 AC2' } }), { type: 'run_terminal', command: 'npm test', verifies: ['AC1', 'AC2'] });
 
   const r = new PassportRecorder();
   r.acceptance.setCriteria(['Parses nested fences', 'Keeps plain fences']);

@@ -88,7 +88,7 @@ const ALL_TOOLS: NativeToolDefinition[] = [
             type: 'object',
             properties: {
                 command: { type: 'string' },
-                verifies: { type: 'array', items: { type: 'string' }, description: 'For a test run: the acceptance criteria it shows (AC1, AC2…). If it passes, Codico records them as met on its result; no separate acceptance verify is needed.' },
+                verifies: { type: 'string', description: 'For a test run: the acceptance criteria it shows, e.g. "AC1 AC2". If it passes, Codico records them as met on its result; no separate acceptance verify is needed.' },
             },
             required: ['command'],
             additionalProperties: false,
