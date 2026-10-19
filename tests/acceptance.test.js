@@ -360,3 +360,29 @@ test('review explicitly rejects downstream-only normalization and a passing asse
   assert.match(prompt, /answer REQUEST: no EVEN IF a downstream service eventually stores/);
   assert.match(prompt, /Quote the contradicting assertion in the rejection/);
 });
+
+test('request-level dispute survives an absent acceptance checklist', () => {
+  const { verdictNote } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  assert.equal(r.build(0), undefined);
+  r.setReview('REQUEST', { agrees: false, reason: 'Direct TeamService raw-name call was not tested' });
+  const report = r.build(0);
+  assert.equal(report.verdict, 'disputed');
+  assert.deepEqual(report.criteria, []);
+  assert.match(verdictNote(report), /Direct TeamService raw-name call was not tested/);
+  r.setReview('REQUEST', { agrees: true, reason: 'looks good' });
+  assert.equal(r.build(0).verdict, 'unverified', 'independent approval does not replace missing evidence');
+});
+
+test('request reviewer rejects parser-only service checks and missing checklist', () => {
+  const r = new AcceptanceRecorder(() => 1);
+  r.setCriteria(['Names are cleaned']);
+  const prompt = reviewPrompt(r.build(0), [], '', [
+    { path: 'tests/workers.test.js', text: "const parsed = parseTeamFence('name: Backend API'); await service.run(parsed);" },
+  ], 'The start action cleans Backend API to backend-api.');
+  assert.match(prompt, /service normalizes a RAW input passed directly by a caller/);
+  assert.match(prompt, /original unconverted user input and assert its observable output/);
+  const noCriteria = reviewPrompt({ verdict: 'unverified', criteria: [], steps: 0, consoleErrors: [] }, [], '', [], 'Implement the requested behavior.');
+  assert.match(noCriteria, /No acceptance criteria were registered/);
+  assert.match(noCriteria, /REQUEST: no/);
+});

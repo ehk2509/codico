@@ -137,3 +137,8 @@ test('post-edit verification disallows passing assertions of raw unnormalized pa
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /service normalizing it later does NOT verify/);
   assert.match(POST_EDIT_VERIFICATION_PROMPT, /a passing assertion of an unconverted input is evidence of an incomplete fix/);
 });
+
+test('post-edit phase requires directly exercising the owning service with raw input', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /exercise the owning service\/action DIRECTLY with raw inputs/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Normalize before uniqueness and output formatting/);
+});
