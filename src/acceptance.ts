@@ -246,6 +246,29 @@ export function changedPart(before: string | null | undefined, after: string, ma
     return `(lines ${from + 1}–${to} of ${b.length}: the part this turn changed; the rest of the file is unchanged)\n${cut(lines)}`;
 }
 
+/**
+ * Local proof obligations to check before spending a reviewer model call.
+ * A missing checklist or an unverified criterion already makes the acceptance fail;
+ * independent review is useful only after the agent has produced final-code evidence.
+ * This never upgrades a verdict to accepted: only the independent reviewer can.
+ */
+export function acceptanceReviewPreflight(report: AcceptanceReport | undefined, request: string, changedCode: boolean): string | undefined {
+    if (!changedCode || !request.trim()) { return undefined; }
+    if (!report || report.criteria.length === 0) {
+        return 'No acceptance criteria registered for the original request. State and verify each requested input path and the direct owning-service call with raw user input.';
+    }
+    const pending = report.criteria.filter(c => c.status !== 'verified');
+    if (pending.length) {
+        return `Acceptance evidence is not ready: ${pending.map(c => `${c.id} (${c.status})`).join(', ')}. Run the exact requested behavior on the final code and record passing evidence for every criterion before independent review.`;
+    }
+    return undefined;
+}
+
+/** Maximum source/test context for reviewer model calls, shared fairly between files. */
+export function reviewSnippetBudget(fileCount: number, totalChars: number, perFileCap: number): number {
+    return Math.min(perFileCap, Math.floor(totalChars / Math.max(1, fileCount)));
+}
+
 export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = '', sources: readonly ReviewedTest[] = []): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
@@ -259,7 +282,7 @@ export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserSt
         `Browser steps (most recent last):\n${trail || '(none)'}\n` +
         `${report.consoleErrors.length ? `\nConsole errors after the last change:\n${report.consoleErrors.slice(0, 10).join('\n')}\n` : ''}\n` +
         (report.criteria.length ? 'Answer with one line per criterion and nothing else, in this form:\nAC1: yes — <one sentence why>\nAC2: no — <one sentence why>' : 'No acceptance criteria were registered. This cannot be accepted as completed work. Answer with a REQUEST: no line explaining what must be verified.') +
-        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for. For multiple named entry points, tool-call forms or public APIs, require a distinct exact observed assertion for EACH entry point. Testing the final downstream object does not prove that the public parser or adapter returns the required output. Testing only a pre-normalized parser output passed to the service does not prove the service normalizes a RAW input passed directly by a caller. Require an exact test of the owning service or action with original unconverted user input and assert its observable output. Production snippets are context, not proof that unmodified paths work. If an entry point lacks an exact test, answer REQUEST: no and name it. If an assertion shows the parser or adapter returning an original/unconverted input despite the request saying that input becomes a normalized output, answer REQUEST: no EVEN IF a downstream service eventually stores the expected normalized output. A passing assertion for the wrong returned value contradicts the request; do not approve it as evidence of correct integration. Quote the contradicting assertion in the rejection. Do not infer missing coverage from a passing suite, not a different mechanism (a new syntax, option or mode) or a narrower case. Where the request gives an example (an input and what it must produce), a test must give that very input to the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output; a test of the helper alone, or with an input already in its final form, does not cover it. Where the request says a value is converted (cleaned, normalized, formatted) on a path it names, a test that expects the unconverted value on that path contradicts the request:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
+        (request.trim() ? '\nThen one more line on whether the criteria and the tests, together, cover the request as the user asked it: every case, argument and value it names, with the behavior it asks for. For multiple named entry points, tool-call forms or public APIs, require a distinct exact observed assertion for EACH entry point. Testing the final downstream object does not prove that the public parser or adapter returns the required output. Testing only a pre-normalized parser output passed to the service does not prove the service normalizes a RAW input passed directly by a caller. Require an exact test of the owning service or action with original unconverted user input and assert its observable output. Production snippets are context, not proof that unmodified paths work. If an entry point lacks an exact test, answer REQUEST: no and name it. If an assertion shows the parser or adapter returning an original/unconverted input despite the request saying that input becomes a normalized output, answer REQUEST: no EVEN IF a downstream service eventually stores the expected normalized output. A passing assertion for the wrong returned value contradicts the request; do not approve it as evidence of correct integration. Quote the contradicting assertion in the rejection. Do not infer coverage from a passing suite. A different mechanism (a new syntax, option or mode) or a narrower case does not cover the request. Where the request gives an example (an input and what it must produce), a test must give that very input to the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output; a test of the helper alone, or with an input already in its final form, does not cover it. Where the request says a value is converted (cleaned, normalized, formatted) on a path it names, a test that expects the unconverted value on that path contradicts the request:\nREQUEST: yes — <why> (or no — <what is not covered>)' : '');
 }
 
 /** The reviewer's answer, criterion by criterion. */

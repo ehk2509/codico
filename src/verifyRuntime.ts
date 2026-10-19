@@ -1,4 +1,4 @@
-import { changedPart, criterionLine, parseReview, reviewPrompt } from './acceptance';
+import { acceptanceReviewPreflight, changedPart, criterionLine, parseReview, reviewPrompt, reviewSnippetBudget } from './acceptance';
 import { AppRunner } from './appRunner';
 import { commandSandbox } from './commandSandboxService';
 import { ExtensionMessage, WebviewMessage } from './chatProtocol';
@@ -30,6 +30,8 @@ export const MAX_APP_WAIT_SECONDS = 300;
 export const MAX_ACCEPTANCE_REMINDERS = 2;
 /** Times a disputed acceptance goes back to the agent before the reply may end with it. */
 export const MAX_REVIEW_DISPUTES = 2;
+/** Times Codico itself asks for the missing criteria before calling the reviewer (it never approves work). */
+export const MAX_PREFLIGHT_PROMPTS = 1;
 /** How a reviewer's dispute starts: the agent loop may hand the turn to a stronger model on it. */
 export const REVIEW_DISPUTE_PREFIX = '[System Acceptance] An independent reviewer';
 const REVIEW_SYSTEM = 'You are an independent acceptance reviewer. You did not write the change. Judge only from the evidence given. Be strict: a criterion is shown only when the evidence exercises exactly what it says.';
@@ -53,7 +55,11 @@ export class VerifyRuntime {
     private _requestReminded = false;
     /** What the last review saw (the code and evidence then), and whether its objections were given to the agent. */
     private _reviewedState = '';
+    /** A local preflight rejection is not an opinion issued by the external reviewer. */
+    private _reviewWasPreflight = false;
+    /** The reviewer's disputes: Codico's own preflight prompts are counted apart, so they never use up the reviewer's. */
     private _disputes = 0;
+    private _preflightPrompts = 0;
     /** The code and evidence when the last dispute was given: another is given only after the agent worked on it. */
     private _disputedState = '';
     /** The user's request of this turn, for the reviewer. */
@@ -77,7 +83,7 @@ export class VerifyRuntime {
     beginTurn(workspaceRoot: string | undefined, request = ''): void {
         this._request = request;
         this._store = new EvidenceStore(workspaceRoot);
-        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._disputes = 0; this._disputedState = '';
+        this._sinceStep = []; this._onPage = []; this._reminders = 0; this._requestReminded = false; this._reviewedState = ''; this._reviewWasPreflight = false; this._disputes = 0; this._preflightPrompts = 0; this._disputedState = '';
     }
 
     async run(tool: VerifyTool, msgId: string, signal: AbortSignal): Promise<string> {
@@ -183,6 +189,14 @@ export class VerifyRuntime {
         // Reviewed again only when the code or the evidence changed since the last review
         if (this._state() !== this._reviewedState) { await this._review(reviewer, signal); }
         const report = this._host.passport().acceptance.build(this._host.passport().lastChange);
+        if (this._reviewWasPreflight) {
+            // Evidence the reviewer would need is missing, so it was not called. With criteria stated but
+            // unverified, the reminders above have said so already; with none stated, ask once for them.
+            if ((report?.criteria.length ?? 0) > 0 || this._preflightPrompts >= MAX_PREFLIGHT_PROMPTS) { return undefined; }
+            this._preflightPrompts++;
+            return `[System Acceptance] Codico cannot review this work yet: ${report?.requestReview?.reason ?? 'no acceptance criteria were stated.'}\n` +
+                'State the criteria in the request\'s own words, check each on the final code, and record it; the independent review runs once they are verified.';
+        }
         const disputed = (report?.criteria.filter(c => c.review?.agrees === false) ?? []).map(c => `${c.id} ${c.text} — ${c.review?.reason ?? ''}`);
         if (report?.requestReview?.agrees === false) { disputed.push(`The request as the user asked it is not covered — ${report.requestReview.reason}`); }
         if (disputed.length === 0) { return undefined; }
@@ -220,6 +234,15 @@ export class VerifyRuntime {
         // Review the request even when the agent omitted all acceptance criteria.
         const requestNeedsReview = this.changedCode() && !!this._request.trim();
         if (signal.aborted || (!requestNeedsReview && (!report || !report.criteria.some(c => c.status === 'verified' || c.status === 'claimed')))) { return; }
+        const preflight = acceptanceReviewPreflight(report, this._request, this.changedCode());
+        if (preflight) {
+            // Fail closed locally; never spend tokens asking a model to confirm known missing evidence.
+            this._reviewedState = this._state();
+            this._reviewWasPreflight = true;
+            passport.acceptance.setReview('REQUEST', { agrees: false, reason: preflight });
+            return;
+        }
+        this._reviewWasPreflight = false;
         const reviewable = report ?? { verdict: 'unverified' as const, criteria: [], consoleErrors: [], steps: 0 };
         this._reviewedState = this._state();
         this._host.post({ type: 'activity', text: 'Reviewing acceptance…' });
@@ -254,11 +277,13 @@ export class VerifyRuntime {
     private _sourcesChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        return paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
-            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6).flatMap(p => {
+        const files = paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
+            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6);
+        const perFile = reviewSnippetBudget(files.length, 48000, 12000);
+        return files.flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
-                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, 12000, 12) }];
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, perFile, 12) }];
             } catch { return []; }
         });
     }
@@ -267,10 +292,12 @@ export class VerifyRuntime {
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        return paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3).flatMap(p => {
+        const files = paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3);
+        const perFile = reviewSnippetBudget(files.length, 36000, 20000);
+        return files.flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
-                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text) }];
+                return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, perFile) }];
             } catch { return []; }
         });
     }

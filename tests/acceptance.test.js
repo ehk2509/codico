@@ -248,7 +248,7 @@ test('the reviewer is given the user\'s request and judges whether the criteria 
   const prompt = reviewPrompt(p.build().acceptance, [], 'src/toolParser.ts +40 -3', [], request);
   assert.match(prompt, /The user's request, which the change must meet as asked:\nAllow write_file content to contain Markdown code fences/);
   assert.match(prompt, /REQUEST: yes — <why> \(or no — <what is not covered>\)/);
-  assert.match(prompt, /not a different mechanism \(a new syntax, option or mode\) or a narrower case/);
+  assert.match(prompt, /A different mechanism \(a new syntax, option or mode\) or a narrower case does not cover the request/);
   // Without a request the prompt asks nothing about it
   assert.doesNotMatch(reviewPrompt(p.build().acceptance, [], ''), /REQUEST:/);
 
@@ -385,4 +385,23 @@ test('request reviewer rejects parser-only service checks and missing checklist'
   const noCriteria = reviewPrompt({ verdict: 'unverified', criteria: [], steps: 0, consoleErrors: [] }, [], '', [], 'Implement the requested behavior.');
   assert.match(noCriteria, /No acceptance criteria were registered/);
   assert.match(noCriteria, /REQUEST: no/);
+});
+
+test('local acceptance preflight rejects missing proof without invoking a reviewer', () => {
+  const { acceptanceReviewPreflight, reviewSnippetBudget } = require('../out/acceptance.js');
+  const r = new AcceptanceRecorder(() => 1);
+  const request = 'Make Backend API become backend-api for fenced, native and direct service calls.';
+  assert.equal(acceptanceReviewPreflight(undefined, request, true).startsWith('No acceptance criteria'), true);
+  assert.equal(acceptanceReviewPreflight(undefined, request, false), undefined, 'reading-only requests do not review code');
+  assert.equal(acceptanceReviewPreflight(undefined, '', true), undefined, 'without a request no deterministic judgement');
+  r.setCriteria(['Fenced name returns backend-api', 'Direct service start emits backend-api']);
+  assert.match(acceptanceReviewPreflight(r.build(0), request, true), /AC1 \(open\), AC2 \(open\)/);
+  const e = r.addEvidence({ kind: 'check', description: 'run test', passed: true, detail: '1 passed' });
+  r.claim('AC1', 'pass', 'test', [e]);
+  assert.match(acceptanceReviewPreflight(r.build(0), request, true), /AC2 \(open\)/);
+  r.claim('AC2', 'pass', 'direct test', [e]);
+  assert.equal(acceptanceReviewPreflight(r.build(0), request, true), undefined, 'verified evidence still requires real review');
+  assert.equal(reviewSnippetBudget(6, 48000, 12000), 8000);
+  assert.equal(reviewSnippetBudget(3, 36000, 20000), 12000);
+  assert.equal(reviewSnippetBudget(1, 36000, 20000), 20000);
 });
