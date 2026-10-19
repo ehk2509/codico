@@ -249,7 +249,7 @@ export class VerifyRuntime {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
         return paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
-            && /\\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6).flatMap(p => {
+            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6).flatMap(p => {
             try {
                 const text = fs.readFileSync(path.isAbsolute(p) ? p : path.join(root, p), 'utf8');
                 return [{ path: p, text: changedPart(this._host.passport().beforeOf(p), text, 12000, 12) }];
