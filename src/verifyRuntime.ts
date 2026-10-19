@@ -191,8 +191,8 @@ export class VerifyRuntime {
         this._disputes++;
         this._disputedState = this._state();
         return (this._reviewWasPreflight
-            ? '[System Acceptance] Required final-code evidence is missing; independent review has not been called yet:\\n'
-            : `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\\n`) +
+            ? '[System Acceptance] Required final-code evidence is missing; independent review has not been called yet:\n'
+            : `${REVIEW_DISPUTE_PREFIX}, who saw only the user's request, the evidence and your tests, does not agree that these are shown on the final code:\n`) +
             disputed.join('\n') +
             '\nShow each with a test that checks exactly what the criterion says (the exact result, the user\'s own case), or say plainly in your answer that it is not met. Do not present the work as complete otherwise.';
     }
@@ -268,7 +268,7 @@ export class VerifyRuntime {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
         const files = paths.filter(p => !isTestFile(p) && !isDocumentationFile(p)
-            && /\\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6);
+            && /\.(?:[cm]?[jt]sx?|py|go|rs)$/.test(p)).slice(0, 6);
         const perFile = reviewSnippetBudget(files.length, 48000, 12000);
         return files.flatMap(p => {
             try {
@@ -282,7 +282,7 @@ export class VerifyRuntime {
     private _testsChanged(paths: string[]): Array<{ path: string; text: string }> {
         const root = toolFolders()?.[0]?.uri.fsPath;
         if (!root) { return []; }
-        const files = paths.filter(p => /(^|\\/)(tests?|__tests__|spec)\\/|\\.(test|spec)\\.[cm]?[jt]sx?$|_test\\.(py|go)$|(^|\\/)test_[^/]*\\.py$/.test(p.replace(/\\\\/g, '/'))).slice(0, 3);
+        const files = paths.filter(p => /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[cm]?[jt]sx?$|_test\.(py|go)$|(^|\/)test_[^/]*\.py$/.test(p.replace(/\\/g, '/'))).slice(0, 3);
         const perFile = reviewSnippetBudget(files.length, 36000, 20000);
         return files.flatMap(p => {
             try {
