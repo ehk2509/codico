@@ -58,7 +58,7 @@ permissions:
 jobs:
   coding-holdout:
     # A single trusted same-repo PR run, while manual dispatch remains unchanged.
-    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/agent-acceptance-surface-evidence')
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'perf/acceptance-review-efficiency')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

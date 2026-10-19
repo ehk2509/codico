@@ -246,6 +246,29 @@ export function changedPart(before: string | null | undefined, after: string, ma
     return `(lines ${from + 1}–${to} of ${b.length}: the part this turn changed; the rest of the file is unchanged)\n${cut(lines)}`;
 }
 
+/**
+ * Local proof obligations to check before spending a reviewer model call.
+ * A missing checklist or an unverified criterion already makes the acceptance fail;
+ * independent review is useful only after the agent has produced final-code evidence.
+ * This never upgrades a verdict to accepted: only the independent reviewer can.
+ */
+export function acceptanceReviewPreflight(report: AcceptanceReport | undefined, request: string, changedCode: boolean): string | undefined {
+    if (!changedCode || !request.trim()) { return undefined; }
+    if (!report || report.criteria.length === 0) {
+        return 'No acceptance criteria registered for the original request. State and verify each requested input path and the direct owning-service call with raw user input.';
+    }
+    const pending = report.criteria.filter(c => c.status !== 'verified');
+    if (pending.length) {
+        return `Acceptance evidence is not ready: ${pending.map(c => `${c.id} (${c.status})`).join(', ')}. Run the exact requested behavior on the final code and record passing evidence for every criterion before independent review.`;
+    }
+    return undefined;
+}
+
+/** Maximum source/test context for reviewer model calls, shared fairly between files. */
+export function reviewSnippetBudget(fileCount: number, totalChars: number, perFileCap: number): number {
+    return Math.min(perFileCap, Math.floor(totalChars / Math.max(1, fileCount)));
+}
+
 export function reviewPrompt(report: AcceptanceReport, steps: readonly BrowserStep[], diffStat: string, tests: readonly ReviewedTest[] = [], request = '', sources: readonly ReviewedTest[] = []): string {
     const evidence = report.criteria.map(c => [`${c.id}: ${c.text}`, `  Agent says it checked it by: ${c.how ?? '(nothing)'}`,
         ...c.evidence.map(e => `  ${e.id} ${e.passed ? 'PASSED' : 'FAILED'} [${e.kind}] ${e.description} — ${e.detail}${e.url ? ` on ${e.url}` : ''}${e.consoleErrors?.length ? ` (console errors on the page: ${e.consoleErrors.slice(0, 3).join(' | ')})` : ''}`)].join('\n')).join('\n\n');
