@@ -38,4 +38,5 @@ test('request check names no task-specific internal entry point', () => {
   const message = requestCheckGuidance(changed().build());
   assert.doesNotMatch(message, /owning service/);
   assert.match(message, /normalized at every entry point the request names/);
+  assert.match(message, /Test each with input the way a caller passes it, not input another entry point already converted/);
 });

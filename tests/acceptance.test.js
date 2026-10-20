@@ -346,7 +346,7 @@ test('review shows production implementation and distinguishes the requested pub
     'Accept names in fenced and native tools: Front End! becomes front-end.',
     [{ path: 'src/teamService.ts', text: 'const name = cleanWorkerName(tool.name);' }]);
   assert.match(prompt, /Changed production implementation/);
-  assert.match(prompt, /each needs a test that checks what that entry point itself returns or does; a test of a later consumer does not show it/);
+  assert.match(prompt, /each needs a test that checks what that entry point itself returns or does, given input the way a caller passes it; a test of a later consumer, or one whose input another entry point already converted, does not show it/);
   assert.match(prompt, /do not require tests of internal code \(the agent loop, a host, a framework\) the request does not mention/);
   assert.match(prompt, /answer REQUEST: no and name it/);
 });

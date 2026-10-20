@@ -45,7 +45,7 @@ Before finishing:
 - re-read lifecycle/state control flow after mutation when requested and reconcile every normal success, completion, terminal, cancellation, error, and no-op path;
 - check requested behavior and every preservation / negative constraint;
 - prefer verifying the owning abstraction instead of only the edited call site;
-- for every input form or public function the request names, test what it returns; where the request converts a value (cleans, normalizes, formats), it must come out converted at each of them, not only in a later step;
+- for every input form or public function the request names, test what it returns, given input the way a caller passes it (not input another entry point already converted); where the request converts a value (cleans, normalizes, formats), it must come out converted at each of them, not only in a later step;
 - read your new assertions for the opposite of the requested behavior: a passing assertion of an unconverted value where the request converts it shows an incomplete fix, not success;
 - diagnostics, lint and compilation are static evidence; for lifecycle/state changes, run a behavior-level test-like command before considering the gate satisfied;
 - if verification exposes a gap, revise this edit first and verify again.`;
