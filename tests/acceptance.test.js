@@ -346,8 +346,8 @@ test('review shows production implementation and distinguishes the requested pub
     'Accept names in fenced and native tools: Front End! becomes front-end.',
     [{ path: 'src/teamService.ts', text: 'const name = cleanWorkerName(tool.name);' }]);
   assert.match(prompt, /Changed production implementation/);
-  assert.match(prompt, /distinct exact observed assertion for EACH entry point/);
-  assert.match(prompt, /public parser or adapter/);
+  assert.match(prompt, /each needs a test that checks what that entry point itself returns or does; a test of a later consumer does not show it/);
+  assert.match(prompt, /do not require tests of internal code \(the agent loop, a host, a framework\) the request does not mention/);
   assert.match(prompt, /answer REQUEST: no and name it/);
 });
 
@@ -357,8 +357,7 @@ test('review explicitly rejects downstream-only normalization and a passing asse
   const prompt = reviewPrompt(a.build(0), [], 'src/action.ts +3', [
     { path: 'tests/action.test.js', text: "assert.equal(parsed.name, 'Fancy UI!'); assert.equal(task.name, 'fancy-ui');" },
   ], 'Both public tool forms clean "Fancy UI!" into fancy-ui.');
-  assert.match(prompt, /answer REQUEST: no EVEN IF a downstream service eventually stores/);
-  assert.match(prompt, /Quote the contradicting assertion in the rejection/);
+  assert.match(prompt, /answer REQUEST: no and quote that assertion, even if a later step converts the value/);
 });
 
 test('request-level dispute survives an absent acceptance checklist', () => {
@@ -380,8 +379,8 @@ test('request reviewer rejects parser-only service checks and missing checklist'
   const prompt = reviewPrompt(r.build(0), [], '', [
     { path: 'tests/workers.test.js', text: "const parsed = parseTeamFence('name: Backend API'); await service.run(parsed);" },
   ], 'The start action cleans Backend API to backend-api.');
-  assert.match(prompt, /service normalizes a RAW input passed directly by a caller/);
-  assert.match(prompt, /original unconverted user input and assert its observable output/);
+  assert.match(prompt, /returns a value unconverted where the request says it is converted, answer REQUEST: no and quote that assertion, even if a later step converts the value/);
+  assert.doesNotMatch(prompt, /owning service|RAW|EACH|EVEN IF/);
   const noCriteria = reviewPrompt({ verdict: 'unverified', criteria: [], steps: 0, consoleErrors: [] }, [], '', [], 'Implement the requested behavior.');
   assert.match(noCriteria, /No acceptance criteria were registered/);
   assert.match(noCriteria, /REQUEST: no/);

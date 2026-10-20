@@ -19,6 +19,5 @@ export function requestCheckGuidance(passport: PatchPassport | undefined): strin
         (reproduced ? '' : '- Show it on the user\'s own case: a test of exactly the scenario they described, which fails without your change and passes with it. If no check of yours failed before your change, you have not shown the problem was reproduced.\n') +
         '- Where the request gives an example (an input and what it must produce), test that very input through the code the user calls (the tool, command or public function, not a helper behind it) and check the stated output.\n' +
         '- Where the request says a value is normalized (cleaned, trimmed, formatted), it is normalized at every entry point the request names, each form it accepts and the code callers use, not at one of them only.\n' +
-        '- Exercise the owning service/action directly with raw unconverted input and assert its output; parser-to-service tests alone cannot prove this.\n' +
         '- If you replaced the requested behavior with something else (a new syntax, option or mode that callers must switch to), the request is not met: fix it as asked, or say plainly what you did instead.';
 }

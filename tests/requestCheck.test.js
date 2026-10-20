@@ -34,8 +34,8 @@ test('no code changed (nothing, or only documentation): nothing is asked', () =>
   assert.equal(requestCheckGuidance(changed('docs/notes.txt').build()), undefined);
 });
 
-test('request check requires direct service or action input, independently of parsers', () => {
+test('request check names no task-specific internal entry point', () => {
   const message = requestCheckGuidance(changed().build());
-  assert.match(message, /Exercise the owning service\/action directly with raw unconverted input/);
-  assert.match(message, /parser-to-service tests alone cannot prove this/);
+  assert.doesNotMatch(message, /owning service/);
+  assert.match(message, /normalized at every entry point the request names/);
 });

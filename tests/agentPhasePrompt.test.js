@@ -133,12 +133,11 @@ test('a phase change is added to the conversation without changing earlier messa
 });
 
 test('post-edit verification disallows passing assertions of raw unnormalized parser results', () => {
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /test the exact return value at that boundary/);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /service normalizing it later does NOT verify/);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /a passing assertion of an unconverted input is evidence of an incomplete fix/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /it must come out converted at each of them, not only in a later step/);
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /a passing assertion of an unconverted value where the request converts it shows an incomplete fix/);
 });
 
-test('post-edit phase requires directly exercising the owning service with raw input', () => {
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /exercise the owning service\/action DIRECTLY with raw inputs/);
-  assert.match(POST_EDIT_VERIFICATION_PROMPT, /Normalize before uniqueness and output formatting/);
+test('post-edit phase asks for each named entry point to be tested, with no task-specific rule', () => {
+  assert.match(POST_EDIT_VERIFICATION_PROMPT, /for every input form or public function the request names, test what it returns/);
+  assert.doesNotMatch(POST_EDIT_VERIFICATION_PROMPT, /owning service|DIRECTLY|uniqueness|fix the parser itself/);
 });

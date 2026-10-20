@@ -45,9 +45,8 @@ Before finishing:
 - re-read lifecycle/state control flow after mutation when requested and reconcile every normal success, completion, terminal, cancellation, error, and no-op path;
 - check requested behavior and every preservation / negative constraint;
 - prefer verifying the owning abstraction instead of only the edited call site;
-- for every named input form or public API, test the exact return value at that boundary. If a parser returns a raw value but the request requires normalization, fix the parser itself; a service normalizing it later does NOT verify that input form;
-- exercise the owning service/action DIRECTLY with raw inputs, not only parsed/cleaned values; assert the returned message and persistence. Normalize before uniqueness and output formatting even if the parser also cleans names;
-- inspect your own new assertions for the opposite of the requested behavior: a passing assertion of an unconverted input is evidence of an incomplete fix, not success;
+- for every input form or public function the request names, test what it returns; where the request converts a value (cleans, normalizes, formats), it must come out converted at each of them, not only in a later step;
+- read your new assertions for the opposite of the requested behavior: a passing assertion of an unconverted value where the request converts it shows an incomplete fix, not success;
 - diagnostics, lint and compilation are static evidence; for lifecycle/state changes, run a behavior-level test-like command before considering the gate satisfied;
 - if verification exposes a gap, revise this edit first and verify again.`;
 
