@@ -123,7 +123,7 @@ async function run() {
     const afterAnswer = reqs.slice(1);
     const continuedPlan = afterAnswer.length > 0 && afterAnswer.every(r => /task planner/.test(r.lastUser) || /^\[Tool Results\]/.test(r.lastUser));
     const answerIncluded = afterAnswer.some(r => /plan the storage layer[\s\S]*answer to your clarifying question: Postgres/.test(r.lastUser));
-    const blocked = afterAnswer.some(r => /Not available in Ask mode/.test(r.lastUser));
+    const blocked = afterAnswer.some(r => /Not available in (Ask|Plan) mode/.test(r.lastUser));
     const written = read('live/eager.js') !== null;
     const ok = !error && reqs.length === 3 && continuedPlan && answerIncluded && blocked && !written;
     results.push({ name: 'plan_clarify', ms: Date.now() - t0, requests: reqs.length, ok,
@@ -340,7 +340,7 @@ async function run() {
     await waitFor(log => log.slice(before).filter(e => e.scenario === 'plan_q_b').length >= 2);
     await waitFor(log => false, 800);
     const b = (await getLog()).slice(before).filter(e => e.scenario === 'plan_q_b' && e.stream);
-    const blocked = b.some(r => /Not available in Ask mode/.test(r.lastUser));
+    const blocked = b.some(r => /Not available in (Ask|Plan) mode/.test(r.lastUser));
     const written = read('live/queued-plan.js') !== null;
     results.push({ name: 'plan_queued', ms: Date.now() - t0, requests: b.length, ok: b.length >= 2 && blocked && !written,
       why: `queued plan ran: ${b.length > 0}; its write blocked: ${blocked}; file written: ${written}` });
@@ -348,7 +348,7 @@ async function run() {
   }
 
   await scenario('plan_readonly', ({ reqs, text, read }) => {
-    const blocked = /Not available in Ask mode/.test(text);
+    const blocked = /Not available in (Ask|Plan) mode/.test(text);
     const written = read('live/planned.js') !== null;
     const nudged = /\[System Action\]/.test(text);
     return { ok: blocked && !written && !nudged && reqs.length === 2,
