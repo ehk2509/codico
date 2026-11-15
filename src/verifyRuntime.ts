@@ -261,7 +261,7 @@ export class VerifyRuntime {
                 passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'Reviewer did not confirm coverage of the original request.' });
             }
             if (requestNeedsReview && (!report || report.criteria.length === 0)) {
-                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'No acceptance criteria registered for the original request. Verify every public input form and the owning action/service with raw user input.' });
+                passport.acceptance.setReview('REQUEST', { agrees: false, reason: 'No acceptance criteria were registered for the original request. State what the request asks for as criteria that can be checked, then run each one on the final code and record the result.' });
             }
             for (const criterion of reviewable.criteria.filter(c => c.status === 'verified')) {
                 if (!reviews.has(criterion.id)) { passport.acceptance.setReview(criterion.id, { agrees: false, reason: 'Reviewer did not confirm this criterion.' }); }

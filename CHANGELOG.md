@@ -5,6 +5,15 @@ All notable changes to Codico will be documented in this file.
 ## Unreleased
 
 ### Fixed
+- Plan mode (and Ask mode) allows only tools known to look, instead of refusing a list of nine: `remember` (which writes a memory note) and `app` (which starts a command) used to get through. A tool added later is refused until it is classified.
+- A plan is made from the code, not from guesses: the plan prompt asks the model to read and search the files first. Before, it said "do not execute anything" and a literal-minded model made no tool call at all.
+- "Allow all" on an approval card only counts while that request is still open. A card left on screen after the request was declined (Stop, a headless run) could switch approvals off for the rest of the task with one click. Declined cards are now closed in the panel.
+- A model that repeats an acceptance claim in new words is detected as repeating itself: a claim is identified by its criterion, result and evidence, not by its explanation. A turn also ends after the loop guard has fired three times in it.
+- `search_code` with `path: "."` (the whole project) found nothing and said so as a success; `"./"`, a folder name without a slash and backslash paths are read as they were meant.
+- The reply a headless run prints no longer contains the model's tool fences ("```acceptance```acceptance…") and keeps Codico's own notes.
+- The message for a turn with no acceptance criteria no longer talks about web forms and services whatever the task was.
+- Ollama models could be loaded with a context far smaller than the conversation, which Ollama truncates silently. New setting `codico.ollamaContextLength` (and `codico run --ollama-context`), documented with `OLLAMA_CONTEXT_LENGTH`.
+- Test: a timer-driven task announcement took the answer queued for the next prompt, so the background task merge test failed on most runs on one fast machine (6 of 8) and never after the fix (0 of 12).
 - Files changed by a terminal command (a script, `sed -i`, a heredoc) are recorded and checked like an edit. Claude Sonnet often edits this way, and Codico saw none of those changes: no reminder to verify, no request check, no review, so unfinished work was reported as done. The system prompt also asks for edit_file and write_file.
 - Tool arguments that are lists of free text (acceptance criteria, evidence ids, the criteria a test run shows) are given as text, one item per line or space-separated. Claude Sonnet wrote invalid JSON for such lists, and Codico could not run the call. Small slips in a complete call (a stray or doubled comma) are repaired, and an unreadable call's error shows what was received.
 - Claude's reasoning is sent back with each reply through OpenRouter, so it is kept between tool calls; requests ask for at most 32,000 output tokens, which kept a low balance from refusing them early.
@@ -14,6 +23,9 @@ All notable changes to Codico will be documented in this file.
 - Codico's own evidence check no longer uses up the reviewer's disputes, so the reviewer's objections reach the agent while it can still act on them.
 - Codico could send the reply back every other step after a test was edited. Words in the test such as "done", "finished" or "error" made the edit look like lifecycle logic, and only a re-read of the test file itself (not the code it tests) closed the check. A passing test run now verifies the change. In the coding holdout this happened 61 times in 24 runs, 22 times in one.
 - A check followed by another command on the same line (`npm test > log; echo "exit $?"`) counted as passing whatever the tests did: the line exits with the last command's code. It now has no known result unless its test summary is printed, like a check behind a pipe.
+
+### Added
+- `codico run --plan` (or a task starting with `/plan`) produces a plan from a terminal, a script or CI, and `--ollama-context <tokens>` sets the Ollama context window for the run.
 
 ### Changed
 - Acceptance during the work, not after it: at a turn's first code change without criteria, Codico asks for them then, and a test run can name the criteria it shows (`run_terminal` with `verifies: AC1 AC2`) to record them on its result. The reviewer and the request check ask for the request's own examples to be tested through the code the user calls, at every entry point the request names. With Claude Sonnet 5.5, Codico solved 39 of 39 holdout runs (8 unused tasks and 5 hard v7 tasks, 3 each) with no false completion, for 22% fewer steps than before these two changes.

@@ -39,9 +39,11 @@ Options
   --allow-hooks         Project hooks in .codico/hooks.json may run
   --max-steps <n>       Requests the task may make (default: the codico.maxIterations setting)
   --timeout <seconds>   Stop the run after this long (default: 1800)
+  --plan                Plan only: the agent reads and searches, changes nothing, and prints a step-by-step plan
   --json                Print one JSON object per line instead of text
   --vscode <path>       The VS Code program to use (default: $CODICO_VSCODE, then "code" on the PATH)
   --ollama-url <url>    Base address of an Ollama server, for ollama/ models
+  --ollama-context <n>  Context window in tokens to load the Ollama model with (Ollama's own default is small: 4096 to 8192)
   -h, --help            Show this
 
 Options of automate
@@ -82,8 +84,14 @@ function parseArgs(argv) {
       case '--allow-web': options.allowWeb = true; break;
       case '--allow-hooks': options.allowHooks = true; break;
       case '--json': options.json = true; break;
+      case '--plan': options.plan = true; break;
       case '--vscode': options.vscode = value(arg, i++); break;
       case '--ollama-url': options.ollamaUrl = value(arg, i++); break;
+      case '--ollama-context': {
+        const tokens = Number(value(arg, i++));
+        if (!Number.isInteger(tokens) || tokens < 512) { throw new Error('--ollama-context needs a number of tokens, 512 or more'); }
+        options.ollamaContext = tokens; break;
+      }
       case '--state-dir': options.automate.stateDir = path.resolve(value(arg, i++)); break;
       case '--label': options.automate.label = value(arg, i++); break;
       case '--no-issues': options.automate.label = ''; break;
@@ -218,7 +226,7 @@ async function main(argv) {
 
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-run-'));
   const out = path.join(work, 'events.jsonl'); const taskFile = path.join(work, 'task.json');
-  fs.writeFileSync(taskFile, JSON.stringify({ mode: options.mode || 'run', prompt: options.prompt || '', out, model: options.model, permissions: options.permissions, allowWeb: !!options.allowWeb, allowHooks: !!options.allowHooks, maxSteps: options.maxSteps, ollamaUrl: options.ollamaUrl,
+  fs.writeFileSync(taskFile, JSON.stringify({ mode: options.mode || 'run', prompt: options.prompt || '', out, model: options.model, permissions: options.permissions, plan: !!options.plan, allowWeb: !!options.allowWeb, allowHooks: !!options.allowHooks, maxSteps: options.maxSteps, ollamaUrl: options.ollamaUrl, ollamaContext: options.ollamaContext,
     ...(options.mode === 'automate' ? { automate: options.automate } : {}) }), { mode: 0o600 });
   const env = { ...process.env, CODICO_HEADLESS: '1', CODICO_HEADLESS_TASK: taskFile };
   delete env.ELECTRON_RUN_AS_NODE;

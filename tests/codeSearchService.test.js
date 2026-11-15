@@ -153,3 +153,20 @@ test('the tool never throws: a failure is its result', async () => {
   const ok = await service.run({ query: 'cart total', path: 'web', maxResults: 1 });
   assert.equal(ok.label, 'cart total in web — 1 result');
 });
+
+test('the path a model gives is read the way it means it: "." is the whole project, a folder name is a folder', async () => {
+  const { searchPathPrefix } = require('../out/codeSearchService.js');
+  for (const whole of ['', '.', './', '  .  ', '/', '**/*.ts', '*']) { assert.equal(searchPathPrefix(whole), '', JSON.stringify(whole)); }
+  assert.equal(searchPathPrefix('./src'), 'src/');
+  assert.equal(searchPathPrefix('src'), 'src/');
+  assert.equal(searchPathPrefix('src/'), 'src/');
+  assert.equal(searchPathPrefix('src\\lib'), 'src/lib/');
+  assert.equal(searchPathPrefix('src/*.js'), 'src/');
+  assert.equal(searchPathPrefix('src/cart.js'), 'src/cart.js');   // a file stays a file
+  workspace();
+  const service = new CodeSearchService();
+  const everywhere = await service.run({ query: 'cart total', path: '.' });
+  assert.match(everywhere.label, /— [1-9]\d* results?$/, 'a "." path found nothing');
+  // "web" no longer also matches a sibling folder that merely starts with the same letters
+  assert.equal((await service.search('total', 8, 'we')).text.includes('web/src'), false);
+});

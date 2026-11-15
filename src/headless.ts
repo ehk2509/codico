@@ -6,6 +6,7 @@ import { directSecretKey } from './directProviderClient';
 import { AutomationService } from './automationService';
 import { jobLine } from './automations';
 import { lastQuestion } from './clarify';
+import { ReplyCleaner } from './headlessText';
 
 /**
  * Headless runs: Codico working on one task with nobody at the screen (a script, CI, a
@@ -18,6 +19,8 @@ export interface HeadlessTask {
     /** One task (codico run), or the repository's automations (codico automate). */
     mode?: 'run' | 'automate';
     prompt: string;
+    /** Plan only: the agent reads and searches, changes nothing, and its reply is a step-by-step plan. (A prompt starting with /plan does the same.) */
+    plan?: boolean;
     /** Where progress and the result are written, one JSON object per line. */
     out: string;
     model?: string;
@@ -27,6 +30,8 @@ export interface HeadlessTask {
     allowHooks?: boolean;
     maxSteps?: number;
     ollamaUrl?: string;
+    /** Context window (tokens) to load Ollama models with: the codico.ollamaContextLength setting. */
+    ollamaContext?: number;
     /** codico automate: what it reacts to and may publish, and where its state is kept between runs. */
     automate?: {
         stateDir: string;
@@ -94,6 +99,8 @@ export interface HeadlessAgent {
     backgroundPermissions: 'ask' | 'edits' | 'all';
     backgroundListener?: (message: ExtensionMessage) => void;
     sendMessage(text: string): Promise<void>;
+    /** Plan mode: read-only, ends with a plan to approve. */
+    runPlan(goal: string): Promise<void>;
     denyPrompts(): void;
     lastReplyUsage(): { tokens?: number; requests?: unknown[] } | undefined;
 }
@@ -135,6 +142,7 @@ async function prepareHeadless(context: vscode.ExtensionContext, task: HeadlessT
     const set = (key: string, value: unknown) => config.update(key, value, vscode.ConfigurationTarget.Global);
     if (task.model) { await set('model', task.model); }
     if (task.ollamaUrl) { await set('ollamaBaseUrl', task.ollamaUrl); }
+    if (task.ollamaContext) { await set('ollamaContextLength', Math.floor(task.ollamaContext)); }
     if (task.maxSteps) { await set('maxIterations', Math.max(1, Math.floor(task.maxSteps))); }
     // Nothing that is only for a person at the screen
     for (const off of ['followUpSuggestionsEnabled', 'completionNotificationsEnabled', 'responseSummaryEnabled', 'autoIndex']) { await set(off, false); }
@@ -153,13 +161,21 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
     for (let tries = 0; tries < 200 && !agent.ready; tries++) { await new Promise(resolve => setTimeout(resolve, 150)); }
     if (!agent.ready) { write({ type: 'end', status: 'failed', message: 'The Codico panel did not open.' }); return EXIT.failed; }
 
-    agent.backgroundPermissions = task.permissions === 'read' ? 'ask' : task.permissions;
+    // A plan changes nothing, whatever the command line allowed: nothing is approved while planning
+    const planGoal = task.plan ? task.prompt.trim() : /^\/plan\s+([\s\S]+)$/i.exec(task.prompt.trim())?.[1]?.trim();
+    agent.backgroundPermissions = planGoal || task.permissions === 'read' ? 'ask' : task.permissions;
+    // The reply as it should be read: the model's tool fences are not part of it
+    const cleaner = new ReplyCleaner();
+    const say = (text: string) => { if (text) { write({ type: 'text', text }); } };
     agent.backgroundListener = message => {
-        const event = headlessEvent(message);
-        if (event) { write(event); }
+        if (message.type === 'appendContent') { say(cleaner.push(message.text)); }
+        else {
+            const event = headlessEvent(message);
+            if (event) { write(event); }
+        }
         if (message.type === 'error') { failed = message.message; }
         // The whole reply, not one piece of it: a piece can end in the middle of the question's tag
-        if (message.type === 'startMessage') { replyText = ''; }
+        if (message.type === 'startMessage') { say(cleaner.flush()); cleaner.reset(); replyText = ''; }
         if (message.type === 'appendContent') { replyText += message.text; question = !!lastQuestion(replyText); }
         // A request for approval that the rules of this run did not grant: declined, and said
         if (message.type === 'writePermissionRequest' || message.type === 'terminalPermissionRequest' || message.type === 'checkpoint') {
@@ -170,10 +186,11 @@ export async function runHeadless(context: vscode.ExtensionContext, agent: Headl
         }
     };
     try {
-        await agent.sendMessage(task.prompt);
+        await (planGoal ? agent.runPlan(planGoal) : agent.sendMessage(task.prompt));
     } catch (error) {
         failed = error instanceof Error ? error.message : String(error);
     } finally {
+        say(cleaner.flush());
         agent.backgroundListener = undefined;
     }
     const usage = agent.lastReplyUsage();

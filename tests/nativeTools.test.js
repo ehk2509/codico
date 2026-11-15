@@ -257,3 +257,24 @@ test('unknown tools and invalid arguments produce a corrective tool result', () 
   assert.match(invalid, /Required: filepath/);
   assert.match(invalid, /"path":"a.ts"/);
 });
+
+test('Ask and Plan mode run only tools that look; every other tool, named or not, is refused', () => {
+  const { isReadOnlyTool, getNativeToolDefinitions } = require('../out/nativeTools.js');
+  const looks = ['read_file', 'list_directory', 'search_files', 'find_files', 'search_code', 'get_diagnostics', 'lsp_symbol', 'fetch_url', 'web_search', 'delegate',
+    'update_todo', 'browser_get_text', 'browser_screenshot', 'debug_get_variables', 'debug_get_callstack', 'debug_list_breakpoints'];
+  const changes = ['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call', 'debug',
+    'remember', 'app', 'team', 'acceptance', 'browser_expect', 'some_tool_added_later', ''];
+  for (const type of looks) { assert.equal(isReadOnlyTool(type), true, `${type} only looks`); }
+  for (const type of changes) { assert.equal(isReadOnlyTool(type), false, `${type} must not run while planning`); }
+  // What the model is offered while planning is a subset of what may run: it is never invited to call a refused tool
+  for (const tool of getNativeToolDefinitions(true)) { assert.equal(isReadOnlyTool(tool.name), true, `${tool.name} is offered in Plan mode but refused`); }
+});
+
+test('the plan prompt asks the model to read the code first, and keeps the opening that finds the plan in the history', () => {
+  const { PLAN_PROMPT } = require('../out/agentPrompts.js');
+  assert.match(PLAN_PROMPT, /First look at the code: use your read and search tools/);
+  assert.match(PLAN_PROMPT, /Never guess what the code contains/);
+  // approvedPlanExecution finds the planning turn by this opening
+  assert.equal(PLAN_PROMPT.slice(0, 40), 'You are a task planner. The user has des');
+  assert.match(PLAN_PROMPT, /> Approve the plan to begin execution\./);
+});

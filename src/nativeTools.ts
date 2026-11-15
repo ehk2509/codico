@@ -400,6 +400,17 @@ const READ_ONLY = new Set<ToolCall['type']>([
     'lsp_symbol',
 ]);
 
+/** What else may run in Ask and Plan mode: it changes nothing (a to-do list in the panel, reading a page already open, reading debugger state). */
+const ALSO_READ_ONLY = new Set<string>(['update_todo', 'browser_get_text', 'browser_screenshot', 'debug_get_variables', 'debug_get_callstack', 'debug_list_breakpoints']);
+
+/**
+ * Whether a tool may run in Ask and Plan mode. An allow list: a tool that is not named here is refused, so a
+ * tool added later (or one the model invents) cannot write, run a command or save a memory note while planning.
+ */
+export function isReadOnlyTool(type: string): boolean {
+    return (READ_ONLY as Set<string>).has(type) || ALSO_READ_ONLY.has(type);
+}
+
 /** @param team the orchestrator of an agent team: only then is the `team` tool offered */
 export function getNativeToolDefinitions(readOnly = false, team = false): NativeToolDefinition[] {
     return ALL_TOOLS.filter(tool => (!readOnly || READ_ONLY.has(tool.name)) && (team || tool.name !== 'team'));

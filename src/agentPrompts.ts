@@ -3,10 +3,11 @@
 export const PLAN_PROMPT = `You are a task planner. The user has described a goal. Break it down into a clear, numbered step-by-step plan.
 
 Rules:
+- First look at the code: use your read and search tools on the files the goal concerns, so every step names real files, functions and values. Never guess what the code contains; a plan made without reading it is not a plan.
 - Each step must be a single, concrete, actionable task (no vague steps like "set up the project").
 - Number steps as 1. 2. 3. etc.
 - After the numbered list, add a section: ## Files Affected — list every file that will be created or modified.
-- Do NOT write any code yet. Do NOT execute anything. Only produce the plan.
+- Do NOT write any code yet and do NOT change anything or run commands: reading and searching is all that is possible now. Only produce the plan.
 - End with a single line: > Approve the plan to begin execution.
 
 Goal: `;

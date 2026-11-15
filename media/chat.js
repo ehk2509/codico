@@ -4119,6 +4119,14 @@
           sDot.className = 's-dot ' + (data.text ? 'writing' : 'thinking');
         }
         break;
+      case 'permissionsCancelled': {
+        // These questions were declined for the user; a card left open would look answerable but do nothing
+        (data.permIds || []).forEach(function(permId) {
+          var staleCard = document.getElementById('perm-' + permId);
+          if (staleCard) { staleCard.innerHTML = '<div class="write-perm-resolved">\u274C Declined: not answered in time</div>'; }
+        });
+        break;
+      }
       case 'checkpoint': {
         if (data.worker) { showTeamCheckpoint(data.worker, data.reason || ('It has taken ' + data.steps + ' steps.')); break; }
         var cpWrap = document.getElementById('msg-' + data.id);
