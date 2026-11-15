@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.8.0 - 2026-11-15
 
 ### Fixed
 - Plan mode (and Ask mode) allows only tools known to look, instead of refusing a list of nine: `remember` (which writes a memory note) and `app` (which starts a command) used to get through. A tool added later is refused until it is classified.
