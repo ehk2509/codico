@@ -267,7 +267,7 @@ export function changedPart(before: string | null | undefined, after: string, ma
 export function acceptanceReviewPreflight(report: AcceptanceReport | undefined, request: string, changedCode: boolean): string | undefined {
     if (!changedCode || !request.trim()) { return undefined; }
     if (!report || report.criteria.length === 0) {
-        return 'No acceptance criteria registered for the original request. State and verify each requested input path and the direct owning-service call with raw user input.';
+        return 'No acceptance criteria were registered for the original request. State what the request asks for as criteria that can be checked, then run each one on the final code and record the result.';
     }
     const pending = report.criteria.filter(c => c.status !== 'verified');
     if (pending.length) {

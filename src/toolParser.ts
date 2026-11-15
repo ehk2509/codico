@@ -190,9 +190,16 @@ export type ToolCall =
  * Identity of a tool call for loop detection: the tool type plus a hash of all
  * of its arguments. Two calls only share a fingerprint when they are truly
  * identical (e.g. the same file written with the same content).
+ *
+ * An acceptance claim is identified by what it claims (the criterion, the result and the evidence it
+ * cites), not by its explanation: a model that is refused and tries again with the same claim worded
+ * a little differently is repeating itself, and must not look like new work each time.
  */
 export function toolFingerprint(tool: ToolCall): string {
-    const hash = createHash('sha1').update(JSON.stringify(tool)).digest('hex');
+    const identity = tool.type === 'acceptance'
+        ? { type: tool.type, action: tool.action, criterion: tool.criterion, result: tool.result, evidence: tool.evidence ? [...tool.evidence].sort() : undefined, criteria: tool.criteria }
+        : tool;
+    const hash = createHash('sha1').update(JSON.stringify(identity)).digest('hex');
     return `${tool.type}:${hash}`;
 }
 

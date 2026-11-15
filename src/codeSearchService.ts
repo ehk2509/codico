@@ -33,6 +33,20 @@ function within<T>(work: Thenable<T>, fallback: T): Promise<T> {
     return Promise.race([Promise.resolve(work).catch(() => fallback), new Promise<T>(resolve => setTimeout(() => resolve(fallback), EVIDENCE_TIMEOUT_MS))]);
 }
 
+/**
+ * The folder prefix files must start with, from the `path` a model gave. "." and "./" mean the whole
+ * project (they used to become the prefix "." and match no file, so a search reported zero results
+ * for symbols that exist). A name without an extension is a folder: "src" must not match "src2/a.ts".
+ */
+export function searchPathPrefix(raw: string): string {
+    let prefix = raw.trim().replace(/\\/g, '/').replace(/\*+.*$/, '');
+    prefix = prefix.replace(/^(?:\.\/)+/, '').replace(/^\/+/, '');
+    if (prefix === '.' || prefix === '') { return ''; }
+    if (prefix.endsWith('/')) { return prefix; }
+    const last = prefix.slice(prefix.lastIndexOf('/') + 1);
+    return last.includes('.') ? prefix : `${prefix}/`;
+}
+
 export class CodeSearchService {
     /** @param _semantic the embeddings index, asked only when it holds vectors */
     constructor(private readonly _semantic?: () => SemanticIndex | undefined) {
@@ -80,7 +94,7 @@ export class CodeSearchService {
         if (!query.trim()) { return { text: '[search_code] ERROR: give a query: a few words or identifiers describing what you are looking for.', results: 0 }; }
         const index = await this._ready(folders, signal);
         await this._applyPending(index);
-        const prefix = pathPrefix.trim().replace(/^\.\//, '').replace(/^\/+/, '').replace(/\*+.*$/, '');
+        const prefix = searchPathPrefix(pathPrefix);
         const hits = index.search(query, Math.min(20, Math.max(1, limit)), prefix, await this._evidence(query, index));
         const terms = tokenize(query);
         const rendered: RenderedHit[] = [];

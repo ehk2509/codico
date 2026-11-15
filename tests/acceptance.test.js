@@ -437,3 +437,10 @@ test('at a turn\'s first code change without criteria, the agent is asked for th
   assert.match(CRITERIA_NOW, /No acceptance criteria are stated yet\. State them now/);
   assert.match(CRITERIA_NOW, /run_terminal verifies: AC1 AC2/);
 });
+
+test('the message about missing criteria says nothing of web forms or services: it is shown after any kind of task', () => {
+  const { acceptanceReviewPreflight } = require('../out/acceptance.js');
+  const message = acceptanceReviewPreflight(undefined, 'Fix removeItem in the cart module', true);
+  assert.match(message, /^No acceptance criteria were registered for the original request\./);
+  assert.doesNotMatch(message, /input|form|service|raw user/i);
+});

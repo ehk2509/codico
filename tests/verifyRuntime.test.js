@@ -37,7 +37,7 @@ test('Codico\'s own preflight asks once for missing criteria and leaves the revi
   // The request check comes first, as before
   assert.match(await runtime.guidanceBeforeEnd(reviewer, true, signal), /show that the request itself is met/);
   // No criteria: Codico asks for them itself, without a paid review call, once
-  assert.match(await runtime.guidanceBeforeEnd(reviewer, true, signal), /^\[System Acceptance\] Codico cannot review this work yet: No acceptance criteria registered/);
+  assert.match(await runtime.guidanceBeforeEnd(reviewer, true, signal), /^\[System Acceptance\] Codico cannot review this work yet: No acceptance criteria were registered/);
   assert.equal(await runtime.guidanceBeforeEnd(reviewer, true, signal), undefined, 'asked once, not again');
   assert.equal(calls.length, 0, 'no reviewer call while the evidence is missing');
   // The agent states and verifies a criterion: now the reviewer is called, and its dispute reaches the agent

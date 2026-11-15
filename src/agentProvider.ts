@@ -4,6 +4,7 @@ import * as nodeCrypto from 'crypto';
 import { ChatMessage, MessageContentPart } from './openRouterClient';
 import { directSingleCompletion, parseDirectModelId, directSecretKey } from './directProviderClient';
 import { ToolCall } from './toolParser';
+import { isReadOnlyTool } from './nativeTools';
 import { FileManager } from './fileManager';
 import { parseAgentMention, buildAgentContext } from './agentRouter';
 import { expandSkillCommand, parseUserAgentMention, skillsPromptSection, userAgentPrefix, userExtensionsMessage } from './userExtensions';
@@ -764,6 +765,8 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         await this._handleUserMessage(text);
     }
 
+    public runPlan(goal: string): Promise<void> { return this._onWebviewMessage({ type: 'startPlan', goal }); } // Plan mode without the panel's /plan: only looks, ends with a plan
+
     /**
      * Test-only entrypoint used by the frozen coding-task benchmark.
      * Production activation never enables evaluation mode.
@@ -1214,14 +1217,11 @@ export class AgentProvider implements vscode.WebviewViewProvider {
             this._external.setAllowPrivateNetwork(allowPrivate);
         }
 
-        // In chat (Ask) mode, block any tool that modifies the workspace or runs commands
-        if (this._readOnly) {
-            const writeTools = new Set(['write_file', 'edit_file', 'run_terminal', 'browser_navigate', 'browser_click', 'browser_type', 'browser_close', 'mcp_call', 'debug']);
-            if (writeTools.has(tool.type)) {
-                this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: tool.type, success: false, error: 'Not available in Ask mode' });
-                this._lastInlineResult = `[${tool.type}] Not available in Ask mode — switch to Agent mode to use this tool.`;
-                return;
-            }
+        if (this._readOnly && !isReadOnlyTool(tool.type)) { // Ask and Plan mode: only tools that look, whatever a tool is called
+            const refusal = `Not available in ${this._planGoal !== null ? 'Plan' : 'Ask'} mode`;
+            this._post({ type: 'toolResult', id: msgId, tool: tool.type, label: tool.type, success: false, error: refusal });
+            this._lastInlineResult = `[${tool.type}] ${refusal} — switch to Agent mode to use this tool.`;
+            return;
         }
 
         // The project's own rules first: a "before" hook that fails refuses the call

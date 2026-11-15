@@ -28,7 +28,15 @@ const vscodeStub = {
     showInputBox: async (options) => answer('input', { options }),
     showQuickPick: async (items, options) => answer('pick', { items, options }),
     showWarningMessage: async (message, options, ...buttons) => { ui.notices.push(message); return options && options.modal ? answer('modal', { message, detail: options.detail, buttons }) : undefined; },
-    showInformationMessage: async (message, ...buttons) => { ui.notices.push(message); return buttons.length ? answer('info', { message, buttons }) : undefined; },
+    showInformationMessage: async (message, ...buttons) => {
+      ui.notices.push(message);
+      if (!buttons.length) { return undefined; }
+      // A task announcement comes from the manager's timer, at any moment: it must not take the answer queued for the prompt
+      // the test is in the middle of. It takes an answer only when the next one is a button of its own.
+      const announcement = buttons.includes('Review Changes') || buttons.includes('Open Its Window') || buttons.includes('Show It');
+      if (announcement && !(typeof ui.answers[0] === 'string' && buttons.includes(ui.answers[0]))) { return undefined; }
+      return answer('info', { message, buttons });
+    },
     showErrorMessage: async (message) => { ui.notices.push('ERROR ' + message); },
     showTextDocument: async () => undefined,
   },

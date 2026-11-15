@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -357,6 +357,12 @@
           "type": "string",
           "default": "http://localhost:11434",
           "description": "Base URL for the local Ollama server. Change this if Ollama is running on a non-default port or remote host."
+        },
+        "codico.ollamaContextLength": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "description": "Context window (tokens) to load Ollama models with. 0 leaves the server's own setting, which is often only 4096 to 8192 tokens: Ollama then silently drops the start of a long agent conversation. Set 16384 or more for agent work. A value above 0 sends requests to Ollama's native /api/chat; you can instead set OLLAMA_CONTEXT_LENGTH on the server and leave this at 0."
         },
         "codico.systemPrompt": {
           "type": "string",

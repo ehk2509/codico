@@ -84,3 +84,18 @@ test('in the extension: the task file and the events', () => {
   delete process.env.CODICO_HEADLESS;
   assert.equal(isHeadless({ extensionMode: 3 }), false);
 });
+
+test('--plan is a task option that changes nothing about what is allowed, and is in the help', () => {
+  const plan = parseArgs(['run', 'Add a function', '--plan', '--allow-edits']);
+  assert.equal(plan.plan, true);
+  assert.equal(plan.prompt, 'Add a function');
+  assert.equal(parseArgs(['run', 'x']).plan, undefined);
+  assert.match(HELP, /--plan\s+Plan only: the agent reads and searches, changes nothing/);
+});
+
+test('--ollama-context sets the context window for the run, and refuses a value that cannot be one', () => {
+  assert.equal(parseArgs(['run', 'x', '--ollama-context', '16384']).ollamaContext, 16384);
+  assert.equal(parseArgs(['run', 'x']).ollamaContext, undefined);
+  for (const bad of ['0', '100', 'big', '12.5']) { assert.throws(() => parseArgs(['run', 'x', '--ollama-context', bad]), /--ollama-context needs a number of tokens/, bad); }
+  assert.match(HELP, /--ollama-context <n>/);
+});

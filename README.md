@@ -56,6 +56,8 @@ Access hundreds of models through a single API key — including free-tier model
 ### Local Models (Ollama)
 Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.5-coder:7b`. No API key required.
 
+**Give the model a large enough context window.** Ollama loads a model with a small context (often 4096 to 8192 tokens) unless told otherwise, and an agent's conversation is longer than that: Ollama then silently drops the start of it, and the model forgets the task, repeats itself or stops using its tools. Either set `OLLAMA_CONTEXT_LENGTH=16384` (or more) on the Ollama server, or set `codico.ollamaContextLength` here, which loads the model with that window by sending requests to Ollama's native `/api/chat`. Leave it at 0 for other OpenAI-compatible servers (LM Studio, llama.cpp).
+
 ### ACCO context optimization (optional)
 
 Codico can send its **provider-facing request copy** through a local
@@ -426,6 +428,8 @@ With nobody to approve anything, what the task may do is decided on the command 
 | `--allow-commands` | terminal commands (and edits) |
 | `--allow-web` | fetching pages and web search |
 | `--allow-hooks` | the project's hooks in `.codico/hooks.json` |
+
+`--plan` makes the task a plan: the agent can only read and search, changes nothing whatever else is allowed, and its reply is a numbered step-by-step plan (a task starting with `/plan` does the same). `--ollama-context <tokens>` loads an Ollama model with that context window for the run.
 
 Other options: `--cwd <dir>`, `--model <id>`, `--max-steps <n>`, `--timeout <seconds>` (default 1800), `--json` (one JSON object per line: text, steps, results, what was declined, the end). The agent's reply goes to standard output; steps and the summary go to standard error.
 
@@ -942,6 +946,7 @@ Or click the Codico icon in the Activity Bar.
 |---|---|---|---|
 | `codico.model` | `string` | `deepseek/deepseek-v4-flash` | Model ID: OpenRouter ID, `direct:provider/model`, or `ollama/model` |
 | `codico.ollamaBaseUrl` | `string` | `http://localhost:11434` | Ollama server URL |
+| `codico.ollamaContextLength` | `number` | `0` | Context window (tokens) to load Ollama models with; 0 leaves the server's own setting. Above 0, requests use Ollama's native `/api/chat` |
 | `codico.systemPrompt` | `string` | `""` | Optional prefix prepended to the system prompt |
 | `codico.autoInjectContext` | `boolean` | `true` | Auto-include active file path as context |
 | `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |

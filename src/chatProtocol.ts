@@ -207,6 +207,8 @@ export type ExtensionMessage =
     | { type: 'writePermissionRequest'; id: string; permId: string; filepath: string; preview: string; diff?: string; editableContent?: string; /** Asked by a team worker: shown in its place in the Agents view. */ worker?: string }
     | { type: 'terminalPermissionRequest'; id: string; permId: string; command: string; /** Rules the user can choose to always allow (the command itself, and for known tools with any arguments). */ rules?: string[]; /** Set when the request must be shown even under Allow All. */ note?: string ; worker?: string }
     | { type: 'terminalChunk'; id: string; text: string }
+    /** Questions that were answered "no" without the user (Stop, a run with nobody to ask): their cards are closed. */
+    | { type: 'permissionsCancelled'; permIds: string[] }
     | { type: 'stepProgress'; id: string; step: number }
     | { type: 'activity'; text: string | null }
     | { type: 'checkpoint'; id: string; steps: number; /** Overrides the default "N steps so far" prompt. */ reason?: string; worker?: string }

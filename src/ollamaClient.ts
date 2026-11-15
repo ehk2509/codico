@@ -2,7 +2,7 @@ import * as http from 'http';
 import * as https from 'https';
 import { SYSTEM_PROMPT, StreamChunk, ChatMessage } from './openRouterClient';
 import { StreamCompletionGuard, ThinkTagSplitter, watchStreamStall } from './streamCompletion';
-import { flattenChatHistory } from './providerConversation';
+import { flattenChatHistory, PlainChatMessage } from './providerConversation';
 
 /**
  * Parse a base URL string into host, port, and path prefix.
@@ -28,12 +28,18 @@ export function streamOllama(
     model: string,
     customSystemPromptPrefix?: string,
     signal?: AbortSignal,
-    overrideSystemPrompt?: string
+    overrideSystemPrompt?: string,
+    options?: OllamaOptions
 ): AsyncIterable<StreamChunk> {
     const basePrompt = overrideSystemPrompt ?? SYSTEM_PROMPT;
     const effectiveSystemPrompt = customSystemPromptPrefix
         ? `${basePrompt}\n\n${customSystemPromptPrefix}`
         : basePrompt;
+
+    // A context size was asked for: only the native endpoint can carry it
+    if (options?.numCtx && options.numCtx > 0) {
+        return streamOllamaNative(baseUrl, flattenChatHistory([{ role: 'system', content: effectiveSystemPrompt }, ...history]), model, Math.floor(options.numCtx), signal);
+    }
 
     return {
         [Symbol.asyncIterator]() {
@@ -285,6 +291,127 @@ export function streamOllama(
             };
         },
     };
+}
+
+/** Options of an Ollama request that the OpenAI-compatible endpoint has no way to carry. */
+export interface OllamaOptions {
+    /**
+     * The context window (tokens) to load the model with. Unset or 0 leaves the server's own setting, which on a
+     * default install is 4096 to 8192 tokens, far less than an agent's conversation: Ollama then silently drops the
+     * start of it. When set, the request goes to Ollama's native /api/chat, the only endpoint that accepts this.
+     */
+    numCtx?: number;
+}
+
+/** An AsyncIterable of chunks fed by `start`, which pushes chunks, then null at the end or an Error to throw. */
+function chunkStream(start: (push: (item: StreamChunk | null | Error) => void) => void): AsyncIterable<StreamChunk> {
+    return {
+        [Symbol.asyncIterator]() {
+            const queue: Array<StreamChunk | null | Error> = [];
+            let resolver: (() => void) | null = null;
+            const push = (item: StreamChunk | null | Error): void => {
+                queue.push(item);
+                const wake = resolver;
+                resolver = null;
+                wake?.();
+            };
+            start(push);
+            return {
+                async next(): Promise<IteratorResult<StreamChunk>> {
+                    while (queue.length === 0) { await new Promise<void>(r => { resolver = r; }); }
+                    const item = queue.shift()!;
+                    if (item === null) { return { value: undefined as unknown as StreamChunk, done: true }; }
+                    if (item instanceof Error) { throw item; }
+                    return { value: item, done: false };
+                },
+            };
+        },
+    };
+}
+
+/**
+ * A streamed chat through Ollama's native /api/chat (newline-delimited JSON), with the context window the
+ * caller asked for. The reply, its thinking, token counts and end reason map to the same chunks as the
+ * OpenAI-compatible path.
+ */
+export function streamOllamaNative(baseUrl: string, messages: PlainChatMessage[], model: string, numCtx: number, signal?: AbortSignal): AsyncIterable<StreamChunk> {
+    return chunkStream(push => {
+        if (signal?.aborted) { push(null); return; }
+        signal?.addEventListener('abort', () => { push(null); }, { once: true });
+        const think = new ThinkTagSplitter((type, text) => push({ type, text }));
+        const body = JSON.stringify({ model, messages, stream: true, options: { num_ctx: numCtx } });
+        const { protocol, hostname, port, pathPrefix } = parseBaseUrl(baseUrl);
+        const transport = protocol === 'https' ? https : http;
+        const completion = new StreamCompletionGuard();
+        let ended = false;
+        const end = (): void => { if (!ended) { ended = true; think.flush(); push(null); } };
+
+        /** One line of the response. Returns true when the stream is finished. */
+        const handleLine = (line: string): boolean => {
+            const trimmed = line.trim();
+            if (!trimmed) { return false; }
+            let json: { error?: string; message?: { content?: string; thinking?: string }; done?: boolean; done_reason?: string; prompt_eval_count?: number; eval_count?: number };
+            try { json = JSON.parse(trimmed); } catch { return false; }
+            if (json.error) {
+                completion.markTerminal();
+                push({ type: 'stream_error', message: String(json.error) });
+                end();
+                return true;
+            }
+            if (typeof json.message?.thinking === 'string' && json.message.thinking) { push({ type: 'thinking', text: json.message.thinking }); }
+            if (typeof json.message?.content === 'string' && json.message.content) { think.push(json.message.content); }
+            if (json.done) {
+                completion.markTerminal();
+                if (json.done_reason && json.done_reason !== 'stop') { push({ type: 'finish', reason: json.done_reason }); }
+                const prompt = json.prompt_eval_count ?? 0;
+                const completionTokens = json.eval_count ?? 0;
+                if (prompt || completionTokens) { push({ type: 'usage', promptTokens: prompt, completionTokens, totalTokens: prompt + completionTokens }); }
+                end();
+                return true;
+            }
+            return false;
+        };
+
+        const req = transport.request(
+            { hostname, port, path: `${pathPrefix}/api/chat`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, signal: signal as AbortSignal },
+            (res) => {
+                if (res.statusCode && res.statusCode >= 400) {
+                    let errBody = '';
+                    res.setEncoding('utf8');
+                    res.on('data', (d: string) => { errBody += d; });
+                    res.on('end', () => { push(new Error(`Ollama HTTP ${res.statusCode}: ${errBody.slice(0, 300)}`)); });
+                    return;
+                }
+                let buffer = '';
+                res.setEncoding('utf8');
+                res.on('data', (data: string) => {
+                    buffer += data;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() ?? '';
+                    for (const line of lines) { if (handleLine(line)) { return; } }
+                });
+                res.on('end', () => {
+                    if (buffer) { handleLine(buffer); }
+                    if (!signal?.aborted) {
+                        const interrupted = completion.unexpectedEofMessage('Ollama');
+                        if (interrupted) { push({ type: 'stream_error', message: interrupted }); }
+                    }
+                    end();
+                });
+                res.on('error', (err: Error) => {
+                    if ((err as NodeJS.ErrnoException).code !== 'ABORT_ERR' && !signal?.aborted) { push({ type: 'stream_error', message: `Ollama stream transport error: ${err.message}` }); }
+                    end();
+                });
+            }
+        );
+        req.on('error', (err: Error) => {
+            if ((err as NodeJS.ErrnoException).code !== 'ABORT_ERR' && !signal?.aborted) { push({ type: 'stream_error', message: `Ollama stream transport error: ${err.message}` }); }
+            push(null);
+        });
+        watchStreamStall(req);
+        req.write(body);
+        req.end();
+    });
 }
 
 /**

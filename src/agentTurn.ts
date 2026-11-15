@@ -115,6 +115,7 @@ export class AgentTurn {
         // model, since there is no iteration limit while a change awaits verification
         const MAX_BLOCKED_ONLY_ITERATIONS = 3;
         let blockedOnlyIterations = 0;
+        const MAX_LOOP_STRIKES = 3; let loopStrikes = 0; // responses where the loop guard fired: a model told so this often is not going to stop
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
         const nativeTools = !isOllama && !isCli && nativeToolCalling
             ? getNativeToolDefinitions(this._host.readOnly, this._host.team).filter(tool => !this._host.allowedTools || this._host.allowedTools.has(tool.name))
@@ -142,7 +143,7 @@ export class AgentTurn {
                 : isCli
                 ? streamCliModel(model, history, prefix, signal, this._host.thinkingEffort, override)
                 : isOllama
-                ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override)
+                ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override, { numCtx: config.get<number>('ollamaContextLength', 0) })
                 : isDirect && directParsed
                     ? streamDirect(directApiKey, history, directParsed.providerId, directParsed.modelId, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
                     : streamOpenRouter(apiKey, history, model, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer);
@@ -224,7 +225,7 @@ export class AgentTurn {
                     }
                     const { count: callCount, loop } = loopGuard.check(tool);
                     if (loop) {
-                        loopDetected = true;
+                        loopDetected = true; loopStrikes++;
                         const nudge = `[System] The tool call \`${tool.type}\` with the same arguments has been issued ${callCount} times. You are in a loop. Stop repeating this call. Either the information you need does not exist, or you should try a completely different approach.`;
                         inlineToolResults.push(nudge);
                         this._host.post({ type: 'appendContent', id: msgId, text: `\n⚠️ Loop detected — same tool call issued ${callCount} times. Stopping repetition.\n` });
@@ -640,6 +641,7 @@ export class AgentTurn {
                     this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⚠️ Stopped: ${MAX_STEPS_WITHOUT_PROGRESS} steps in a row without a code change or a new check result. The work is left as it is; see the change report for what is verified.` });
                     break;
                 }
+                if (loopStrikes >= MAX_LOOP_STRIKES) { this._host.post({ type: 'appendContent', id: msgId, text: `\n\n> ⚠️ Stopped: the model kept repeating the same tool call after being told ${MAX_LOOP_STRIKES} times to stop. The work is left as it is; see the change report for what is verified.` }); break; }
                 if (blockedOnlyIterations >= MAX_BLOCKED_ONLY_ITERATIONS) {
                     this._host.post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }

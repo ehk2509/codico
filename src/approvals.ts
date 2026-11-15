@@ -53,15 +53,21 @@ export class Approvals {
 
     /** The panel's answer to a file-change card. `allowAll` also allows every later change of the task. */
     answerWrite(permId: string, answer: WriteAnswer, allowAll = false): void {
-        if (allowAll) { this.allowAllWrites = true; }
         const resolve = this._writes.get(permId);
-        if (resolve) { this._writes.delete(permId); resolve(answer); }
+        // "Allow all" only counts on a question that is still open: a card for a request that was already
+        // declined or stopped (a headless run, Stop) must not switch approvals off for the rest of the task
+        if (!resolve) { return; }
+        if (allowAll) { this.allowAllWrites = true; }
+        this._writes.delete(permId);
+        resolve(answer);
     }
 
     answerCommand(permId: string, granted: boolean, allowAll = false): void {
-        if (allowAll) { this.allowAllCommands = true; }
         const resolve = this._commands.get(permId);
-        if (resolve) { this._commands.delete(permId); resolve(granted); }
+        if (!resolve) { return; }
+        if (allowAll) { this.allowAllCommands = true; }
+        this._commands.delete(permId);
+        resolve(granted);
     }
 
     /** Whether a question with this id is waiting here: a team's workers each have their own. */
@@ -74,11 +80,14 @@ export class Approvals {
 
     /** Every open question answered with no, so that a stopped turn can end. */
     cancelAll(): void {
+        const cancelled = this.pending;
         for (const resolve of this._writes.values()) { resolve({ granted: false }); }
         this._writes.clear();
         for (const resolve of this._commands.values()) { resolve(false); }
         this._commands.clear();
         this.answerCheckpoint(false);
+        // The cards of these questions stay on screen: the panel closes them, so a late click cannot do anything
+        if (cancelled.length > 0) { this._post({ type: 'permissionsCancelled', permIds: cancelled }); }
     }
 
     /** The ids of the questions waiting for an answer (tests). */
