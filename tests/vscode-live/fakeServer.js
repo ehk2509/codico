@@ -18,6 +18,10 @@ const SCRIPTS = (port) => ({
   background: ['Starting it.\n\n' + tool('run_terminal', 'command: sleep 45.321 & echo started'), 'It is running.'],
   clarify: ['<clarify>\nquestion: Which database should I use?\ntype: single\noptions:\n- Postgres\n- SQLite\nfree_input: false\n</clarify>'],
   announce: ["I'll read the config file.", tool('read_file', 'filepath: fixtures/config.txt'), 'The config sets the port.'],
+  // Qwen's own XML call, which Codico does not run: sent back once, then the fenced call runs
+  pseudo_call: ['<tool_call>\n<function=read_file>\n<parameter=filepath>\nfixtures/config.txt\n</parameter>\n</function>\n</tool_call>', tool('read_file', 'filepath: fixtures/config.txt'), 'The config sets the port.'],
+  // Reads, then ends saying the answer comes next: asked once for it
+  wrap_up: [tool('read_file', 'filepath: fixtures/config.txt'), 'The port is set there. I have what I need for the review.', 'Review: the config sets port 80.'],
   cutoff: [{ text: 'Here is a long explanation that gets cut', finish: 'length' }, ' off here. Done.'],
   unclosed: [F + 'write_file\nfilepath: live/unclosed.txt\ncontent:\nhello\nworld', 'Done.'],
   edit_ok: [tool('edit_file', 'filepath: fixtures/config.txt\nold_str:\nport=80\nnew_str:\nport=8080'), 'Port updated.'],

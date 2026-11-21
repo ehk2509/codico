@@ -8,7 +8,7 @@ import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 import { Approvals } from './approvals';
 import { Compaction } from './compaction';
 import { STOPPED_NOTE, addSteer, steerNote } from './steering';
-import { endsWithOfferOrQuestion, isRecoverableStreamInterruption, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
+import { containsPseudoToolCall, endsBeforeTheAnswer, endsWithOfferOrQuestion, isRecoverableStreamInterruption, NO_ANSWER_REMINDER, PSEUDO_TOOL_CALL_CORRECTION, WRAP_UP_REMINDER, isUnfulfilledActionAnnouncement, normalizeFinishReason, repeatedPrefixLength, RESUME_OVERLAP_WINDOW } from './streamCompletion';
 import { getNativeToolDefinitions, nativeToolCallToToolCall, nativeClarifyBlock, invalidNativeCallResult, NativeToolCall, NativeToolDefinition } from './nativeTools';
 import { SubagentHost } from './subagent';
 import { appendAssistantIteration, NativeToolExecution } from './agentHistory';
@@ -106,7 +106,7 @@ export class AgentTurn {
         // so any restarted sentence is dropped and the seam stays invisible.
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
-        const MAX_ACTION_NUDGES = 2; let actionNudges = 0;
+        const MAX_ACTION_NUDGES = 2; let actionNudges = 0; let pseudoCallCorrections = 0; // replies with a tool call Codico cannot run, sent back (twice per turn at most)
         // Reminders answered without any tool call before the turn stops instead of
         // re-sending them (each reminder is another paid model request).
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
@@ -582,6 +582,7 @@ export class AgentTurn {
                 if (inlineToolResults.length === 0) {
                     // A clarifying question ends the turn: wait for the user's answer
                     if (/<clarify>[\s\S]*?<\/clarify>/.test(fullContent)) { break; }
+                    if (containsPseudoToolCall(fullContent) && pseudoCallCorrections++ < 2) { sendBack('pseudo-tool-call', PSEUDO_TOOL_CALL_CORRECTION); continue; } // e.g. Qwen's `<tool_call><function=…>`: nothing ran, so it is no answer
                     const verificationGuidance = exploration.completionGuidance();
                     if (verificationGuidance) {
                         if (verificationNudges >= MAX_STALLED_VERIFICATION_NUDGES) {
@@ -620,12 +621,9 @@ export class AgentTurn {
                             'Issue that tool call now as one complete tool fence. If no action is needed, give your final answer instead.');
                         continue;
                     }
-                    // Work was done but the reply ends without a word: the user would get no account of it
-                    if (!fullContent.trim() && turnRanTools && !askedForAnswer) {
-                        askedForAnswer = true;
-                        sendBack('no-answer', '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.');
-                        continue;
-                    }
+                    // Work was done but the reply ends without a word, or says the answer comes next ("I have what I need.") and stops: asked once for it
+                    const unanswered = askedForAnswer ? '' : !fullContent.trim() && turnRanTools ? 'no-answer' : endsBeforeTheAnswer(fullContent) ? 'wrap-up' : '';
+                    if (unanswered) { askedForAnswer = true; sendBack(unanswered, unanswered === 'wrap-up' ? WRAP_UP_REMINDER : NO_ANSWER_REMINDER); continue; }
                     break;
                 }
 

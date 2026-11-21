@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import { appendAssistantIteration } from './agentHistory';
 import { NativeToolCall, NativeToolDefinition, nativeToolCallToToolCall, getNativeToolDefinitions, invalidNativeCallResult } from './nativeTools';
 import { ChatMessage, CHAT_SYSTEM_PROMPT, StreamChunk } from './openRouterClient';
+import { containsPseudoToolCall, PSEUDO_TOOL_CALL_CORRECTION } from './streamCompletion';
 import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 
 /**
@@ -60,9 +61,6 @@ export interface SubagentResult {
     toolCalls: number;
     outcome: 'done' | 'step-limit' | 'stopped' | 'failed';
 }
-
-/** A tool call in a syntax other than Codico's fenced blocks. */
-const PSEUDO_TOOL_CALL_RE = /<invoke\b|<function_calls>|<tool_call>|<tool_use>/;
 
 function refusal(type: string): string {
     return `[${type}] Not available to a subagent: it can only read and search (${[...SUBAGENT_TOOLS].join(', ')}). Report what you found instead.`;
@@ -136,10 +134,10 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
             if (fenced.length === 0) {
                 // A tool call written in a syntax Codico does not read (seen with models used to XML calls),
                 // often followed by results the model made up: not a report. Say so and let it try again.
-                if (PSEUDO_TOOL_CALL_RE.test(content) && corrections < 2) {
+                if (containsPseudoToolCall(content) && corrections < 2) {
                     corrections++;
                     appendAssistantIteration(history, content, [], '', reasoning);
-                    history.push({ role: 'user', content: '[System] That was not a tool call Codico can run, so nothing was executed and any results you wrote are not real. Call tools only with the fenced code block formats from the instructions (for example a block opened with ```read_file), then wait for the real results.' });
+                    history.push({ role: 'user', content: PSEUDO_TOOL_CALL_CORRECTION });
                     continue;
                 }
                 return finish('done', content || 'The subagent finished without writing a report.');
