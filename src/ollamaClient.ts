@@ -75,11 +75,14 @@ export function streamOllama(
                 ...history,
             ]);
 
-            const body = JSON.stringify({
+            // The thinking effort, when it is not the model's default; dropped if the server refuses it
+            let effortField = effortBody(options?.effort);
+            const requestBody = (): string => JSON.stringify({
                 model,
                 messages,
                 stream: true,
                 stream_options: { include_usage: true },
+                ...effortField,
             });
 
             const { protocol, hostname, port, pathPrefix } = parseBaseUrl(baseUrl);
@@ -87,6 +90,7 @@ export function streamOllama(
 
             function doRequest(): void {
                 if (signal?.aborted) { push(null); return; }
+                const body = requestBody();
 
                 const req = transport.request(
                     {
@@ -106,6 +110,12 @@ export function streamOllama(
                             res.setEncoding('utf8'); // keeps characters split across chunks intact
                             res.on('data', (d: string) => { errBody += d.toString(); });
                             res.on('end', () => {
+                                // A model or server that takes no thinking effort: once more without it
+                                if (res.statusCode === 400 && Object.keys(effortField).length > 0 && REFUSED_EFFORT_RE.test(errBody) && !signal?.aborted) {
+                                    effortField = {};
+                                    doRequest();
+                                    return;
+                                }
                                 push(new Error(`Ollama HTTP ${res.statusCode}: ${errBody.slice(0, 300)}`));
                             });
                             return;
@@ -147,9 +157,12 @@ export function streamOllama(
                                         }
 
                                         const delta = json.choices?.[0]?.delta as
-                                            | { content?: string }
+                                            | { content?: string; reasoning_content?: string; reasoning?: string }
                                             | undefined;
 
+                                        // Thinking in its own field: reasoning_content (llama.cpp, vLLM, LM Studio) or reasoning (Ollama)
+                                        const reasoning = delta?.reasoning_content || delta?.reasoning;
+                                        if (typeof reasoning === 'string' && reasoning) { push({ type: 'thinking', text: reasoning }); }
                                         if (typeof delta?.content === 'string') {
                                             think.push(delta.content);
                                         }
@@ -205,9 +218,12 @@ export function streamOllama(
                                         }
 
                                         const delta = json.choices?.[0]?.delta as
-                                            | { content?: string }
+                                            | { content?: string; reasoning_content?: string; reasoning?: string }
                                             | undefined;
 
+                                        // Thinking in its own field: reasoning_content (llama.cpp, vLLM, LM Studio) or reasoning (Ollama)
+                                        const reasoning = delta?.reasoning_content || delta?.reasoning;
+                                        if (typeof reasoning === 'string' && reasoning) { push({ type: 'thinking', text: reasoning }); }
                                         if (typeof delta?.content === 'string') {
                                             think.push(delta.content);
                                         }
@@ -301,6 +317,8 @@ export interface OllamaOptions {
      * start of it. When set, the request goes to Ollama's native /api/chat, the only endpoint that accepts this.
      */
     numCtx?: number;
+    /** Thinking effort; 'medium' (the default) sends nothing, so the model thinks as it normally does. */
+    effort?: 'high' | 'medium' | 'low';
 }
 
 /** An AsyncIterable of chunks fed by `start`, which pushes chunks, then null at the end or an Error to throw. */
@@ -414,57 +432,79 @@ export function streamOllamaNative(baseUrl: string, messages: PlainChatMessage[]
     });
 }
 
+/** A thinking effort other than the model's default, as the OpenAI-compatible request field. */
+function effortBody(effort: 'high' | 'medium' | 'low' | undefined): Record<string, unknown> {
+    return effort && effort !== 'medium' ? { reasoning_effort: effort } : {};
+}
+
+/** An error saying the model or server takes no thinking option (the request is then sent without it). */
+const REFUSED_EFFORT_RE = /reasoning_effort|chat_template_kwargs|does not support thinking|think/i;
+
 /**
- * Non-streaming single-shot completion via Ollama's OpenAI-compatible endpoint.
- * Used for follow-up suggestions and other one-shot requests.
+ * Turns thinking off for a short job: reasoning_effort "none" (Ollama, OpenAI-style servers) and
+ * enable_thinking false in the chat template (llama.cpp, vLLM: Qwen3 and similar models).
  */
-export function ollamaChatCompletion(
+const NO_THINKING = { reasoning_effort: 'none', chat_template_kwargs: { enable_thinking: false } };
+
+/** The outcome of one non-streamed request. */
+interface OneShotResult { content: string; finish?: string; status: number; error?: string }
+
+function oneShot(baseUrl: string, payload: Record<string, unknown>, signal: AbortSignal | undefined, timeoutMs: number): Promise<OneShotResult> {
+    const { protocol, hostname, port, pathPrefix } = parseBaseUrl(baseUrl);
+    const transport = protocol === 'https' ? https : http;
+    const body = JSON.stringify(payload);
+    return new Promise(resolve => {
+        if (signal?.aborted) { resolve({ content: '', status: 0 }); return; }
+        const req = transport.request(
+            { hostname, port, path: `${pathPrefix}/v1/chat/completions`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+            (res) => {
+                let data = '';
+                res.setEncoding('utf8'); // keeps characters split across chunks intact
+                res.on('data', (c: string) => { data += c; });
+                res.on('end', () => {
+                    const status = res.statusCode ?? 0;
+                    if (status >= 400) { resolve({ content: '', status, error: `HTTP ${status}: ${data.slice(0, 300)}` }); return; }
+                    try {
+                        const choice = JSON.parse(data)?.choices?.[0];
+                        resolve({ content: choice?.message?.content ?? '', finish: choice?.finish_reason ?? undefined, status });
+                    } catch { resolve({ content: '', status, error: `unreadable reply: ${data.slice(0, 200)}` }); }
+                });
+                res.on('error', (err: Error) => resolve({ content: '', status: 0, error: err.message }));
+            }
+        );
+        req.setTimeout(timeoutMs, () => req.destroy(new Error(`no answer within ${Math.round(timeoutMs / 1000)} s`)));
+        signal?.addEventListener('abort', () => req.destroy(), { once: true });
+        req.on('error', (err: Error) => resolve({ content: '', status: 0, error: signal?.aborted ? undefined : err.message }));
+        req.write(body);
+        req.end();
+    });
+}
+
+/**
+ * Non-streaming single-shot completion via the OpenAI-compatible endpoint, for short jobs
+ * (follow-up suggestions, commit messages, summaries). Thinking is turned off, so a reasoning
+ * model does not spend the whole budget thinking and answer nothing; a server that refuses that
+ * option is asked again without it, and an answer cut off before any text is asked for again with
+ * more room. Resolves '' when stopped; throws when the server fails or does not answer in time.
+ */
+export async function ollamaChatCompletion(
     baseUrl: string,
     messages: ChatMessage[],
     model: string,
     maxTokens: number,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    timeoutMs = 120_000
 ): Promise<string> {
-    const { protocol, hostname, port, pathPrefix } = parseBaseUrl(baseUrl);
-    const transport = protocol === 'https' ? https : http;
-
-    const body = JSON.stringify({
-        model,
-        messages: flattenChatHistory(messages),
-        max_tokens: maxTokens,
-        stream: false,
-    });
-
-    return new Promise((resolve) => {
-        if (signal?.aborted) { resolve(''); return; }
-
-        const req = transport.request(
-            {
-                hostname,
-                port,
-                path: `${pathPrefix}/v1/chat/completions`,
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Content-Length': Buffer.byteLength(body),
-                },
-            },
-            (res) => {
-                let data = '';
-                res.setEncoding('utf8'); // keeps characters split across chunks intact
-                res.on('data', (c: string) => { data += c.toString(); });
-                res.on('end', () => {
-                    try {
-                        resolve(JSON.parse(data)?.choices?.[0]?.message?.content ?? '');
-                    } catch { resolve(''); }
-                });
-                res.on('error', () => resolve(''));
-            }
-        );
-
-        signal?.addEventListener('abort', () => { req.destroy(); resolve(''); }, { once: true });
-        req.on('error', () => resolve(''));
-        req.write(body);
-        req.end();
-    });
+    const base = { model, messages: flattenChatHistory(messages), max_tokens: maxTokens, stream: false };
+    let result = await oneShot(baseUrl, { ...base, ...NO_THINKING }, signal, timeoutMs);
+    if (result.status === 400 && REFUSED_EFFORT_RE.test(result.error ?? '')) {
+        result = await oneShot(baseUrl, base, signal, timeoutMs);
+    }
+    // Still thought through the whole budget (thinking could not be turned off): more room, once
+    if (!result.error && !result.content.trim() && result.finish === 'length' && !signal?.aborted) {
+        result = await oneShot(baseUrl, { ...base, max_tokens: Math.max(maxTokens * 8, 2000) }, signal, timeoutMs);
+    }
+    if (signal?.aborted) { return ''; }
+    if (result.error) { throw new Error(`Local model request failed: ${result.error}`); }
+    return result.content;
 }

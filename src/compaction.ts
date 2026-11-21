@@ -7,6 +7,7 @@ import { directSingleCompletion } from './directProviderClient';
 import { ExtensionMessage } from './chatProtocol';
 import { planCompaction, summarizerPrompt, summaryProblem, buildCompactedHistory } from './historyCompaction';
 import { cliModelCompletion, isCliModel } from './cliProviders';
+import { compactionBudgets, compactThreshold } from './localServer';
 
 /** What compaction needs from the conversation. */
 export interface CompactionHost {
@@ -26,26 +27,34 @@ export interface CompactionHost {
  * model, keeping the user's requests and the newest messages as they are.
  */
 export class Compaction {
+    /** The model's context window (tokens), when known (local models): sizes what is kept and summarised. */
+    contextLength: number | undefined;
+
     constructor(private readonly _host: CompactionHost) {}
+
+    /** The prompt size at which to compact: the configured one, capped by a known context window. */
+    threshold(configured: number): number { return compactThreshold(configured, this.contextLength); }
 
     async run(apiKey: string, model: string, isOllama: boolean, ollamaBaseUrl: string, ollamaModel: string, isDirect = false, directKey = '', directProviderId = '', directModelId = '', signal: AbortSignal = this._host.sessionSignal()): Promise<void> {
         if (signal.aborted) { this._host.post({ type: 'compactCancelled' }); return; }
-        const plan = planCompaction(this._host.history);
+        const budgets = compactionBudgets(this.contextLength);
+        const plan = planCompaction(this._host.history, { maxTailChars: budgets.maxTailChars });
         if (!plan) {
             this._host.post({ type: 'compactDone', messageCount: 0 });
             return;
         }
 
         this._host.post({ type: 'compactStart' });
-        const prompt = summarizerPrompt(plan);
+        const prompt = summarizerPrompt(plan, budgets.transcriptChars);
         // Room for the summary even when a reasoning model spends part of the budget thinking
-        const SUMMARY_MAX_TOKENS = 4000;
+        const SUMMARY_MAX_TOKENS = budgets.summaryTokens;
 
         const ask = async (): Promise<string> => {
             if (isCliModel(model)) {
                 return cliModelCompletion(model, prompt, signal);
             } else if (isOllama) {
-                return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal);
+                // A local model can take minutes to read a long transcript
+                return ollamaChatCompletion(ollamaBaseUrl, [{ role: 'user', content: prompt }], ollamaModel, SUMMARY_MAX_TOKENS, signal, 600_000);
             } else if (isDirect) {
                 return directSingleCompletion(directKey, directProviderId, directModelId, prompt, SUMMARY_MAX_TOKENS, signal);
             } else {

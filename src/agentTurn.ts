@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as nodeCrypto from 'crypto';
 import { streamOpenRouter, testOpenRouterEndpoint, ChatMessage, StreamChunk } from './openRouterClient';
-import { streamOllama } from './ollamaClient';
+import { isContextOverflow, overflowAsChunk } from './localServer';
+import { prepareLocalTurn } from './localTurn';
 import { streamDirect, parseDirectModelId } from './directProviderClient';
 import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
 import { Approvals } from './approvals';
@@ -106,7 +107,7 @@ export class AgentTurn {
         // so any restarted sentence is dropped and the seam stays invisible.
         let resumeTail: string | null = null;
         let recoveryStatusShown = false;
-        const MAX_ACTION_NUDGES = 2; let actionNudges = 0; let pseudoCallCorrections = 0; // replies with a tool call Codico cannot run, sent back (twice per turn at most)
+        const MAX_ACTION_NUDGES = 2; let actionNudges = 0; let pseudoCallCorrections = 0; let overflowRetryAt = 0; // replies with a tool call Codico cannot run, sent back (twice per turn at most)
         // Reminders answered without any tool call before the turn stops instead of
         // re-sending them (each reminder is another paid model request).
         const MAX_STALLED_VERIFICATION_NUDGES = 3;
@@ -117,7 +118,8 @@ export class AgentTurn {
         let blockedOnlyIterations = 0;
         const MAX_LOOP_STRIKES = 3; let loopStrikes = 0; // responses where the loop guard fired: a model told so this often is not going to stop
         let currentPhaseNote: string | undefined = ''; // undefined: compaction may have dropped the note
-        const nativeTools = !isOllama && !isCli && nativeToolCalling
+        const local = await prepareLocalTurn(isOllama, config, ollamaBaseUrl, ollamaModel, this._host.compaction); // a local server: its context window, tools and warnings
+        const nativeTools = (!isOllama || local?.nativeTools) && !isCli && nativeToolCalling
             ? getNativeToolDefinitions(this._host.readOnly, this._host.team).filter(tool => !this._host.allowedTools || this._host.allowedTools.has(tool.name))
             : [];
 
@@ -131,6 +133,7 @@ export class AgentTurn {
             // A stronger model the turn is handed to when the reviewer disputes the request or the turn stops progressing
             // (codico.escalationModel, an OpenRouter model; off when empty). Once per turn.
             let escalatedTo: string | undefined;
+            const compactNow = (): Promise<void> => this._host.compaction.run(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
             const escalate = (why: string): boolean => {
                 const target = (config.get<string>('escalationModel', '') ?? '').trim();
                 if (escalatedTo || !target || !apiKey || target === model) { return false; }
@@ -142,8 +145,8 @@ export class AgentTurn {
                 ? streamOpenRouter(apiKey, history, escalatedTo, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer)
                 : isCli
                 ? streamCliModel(model, history, prefix, signal, this._host.thinkingEffort, override)
-                : isOllama
-                ? streamOllama(ollamaBaseUrl, history, ollamaModel, prefix, signal, override, { numCtx: config.get<number>('ollamaContextLength', 0) })
+                : isOllama && local
+                ? local.stream(history, prefix, override, tools, this._host.thinkingEffort, signal)
                 : isDirect && directParsed
                     ? streamDirect(directApiKey, history, directParsed.providerId, directParsed.modelId, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_DIRECT_URL) : undefined, accoOptimizer)
                     : streamOpenRouter(apiKey, history, model, prefix, signal, this._host.thinkingEffort, override, tools, this._host.evaluationMode ? testOpenRouterEndpoint(process.env.CODICO_TEST_OPENROUTER_URL) : undefined, accoOptimizer);
@@ -191,7 +194,7 @@ export class AgentTurn {
                 const fencedToolResults: string[] = [];
                 const nativeToolExecutions: NativeToolExecution[] = [];
                 let recoverableStreamInterruption: string | null = null;
-                let recoverableFinishReason: string | null = null;
+                let recoverableFinishReason: string | null = null; let contextOverflow: string | null = null;
 
                 let resumeBuffer = '';
                 let iterationReasoning = ''; // the reply's reasoning, when the provider needs it back (DeepSeek)
@@ -380,7 +383,7 @@ export class AgentTurn {
                 if (this._host.evaluationMode) {
                     this._host.evalProjectedCharsOmitted += projectedHistory.omittedChars;
                 }
-                for await (const chunk of requestModel(requestHistory, effectivePrefix, systemPromptOverride, nativeTools)) {
+                for await (const chunk of overflowAsChunk(requestModel(requestHistory, effectivePrefix, systemPromptOverride, nativeTools))) {
                     if (signal.aborted) { break; }
                     if (recoveryStatusShown) {
                         recoveryStatusShown = false;
@@ -442,10 +445,16 @@ export class AgentTurn {
                     } else if (chunk.type === 'stream_error') {
                         if (isRecoverableStreamInterruption(chunk.message)) {
                             recoverableStreamInterruption = chunk.message;
-                        } else {
+                        } else if (isContextOverflow(chunk.message)) { contextOverflow = chunk.message; } else {
                             this._host.post({ type: 'streamError', id: msgId, message: chunk.message });
                         }
                     }
+                }
+                if (contextOverflow !== null) { // did not fit the context window: compact and send again (once until the history grows), or say why it stops
+                    const before = this._host.history.length;
+                    if (this._host.autoCompact && before >= overflowRetryAt && !signal.aborted) { await compactNow(); overflowRetryAt = this._host.history.length + 1; }
+                    if (this._host.history.length < before) { taskUsage.markCompaction(); currentPhaseNote = undefined; continue; }
+                    this._host.post({ type: 'streamError', id: msgId, message: `${contextOverflow} Compacting the conversation did not make it fit: start a new thread, or run the model with a larger context window.` }); break;
                 }
 
                 if (draftReported) { this._host.post({ type: 'activity', text: null }); }
@@ -612,9 +621,7 @@ export class AgentTurn {
                         if (dispute) { escalate('the independent reviewer disputes that the request is met.'); }
                         sendBack(dispute ? 'review-dispute' : acceptanceGuidance.includes('show that the request itself is met') ? 'request-check' : 'acceptance', acceptanceGuidance); continue;
                     }
-                    // Some models announce an action ("I'll locate the file.") and end the
-                    // turn without emitting the tool fence. Ask them to issue it rather than
-                    // treating the announcement as the final answer. Bounded per request.
+                    // An announced action ("I'll locate the file.") with no tool call: asked to issue it, not taken as the answer (bounded per request)
                     if (isUnfulfilledActionAnnouncement(fullContent) && actionNudges < MAX_ACTION_NUDGES) {
                         actionNudges++;
                         sendBack('announced-action', '[System] Your previous response announced an action but contained no tool call, so nothing was executed. ' +
@@ -644,15 +651,10 @@ export class AgentTurn {
                     this._host.post({ type: 'appendContent', id: msgId, text: '\n\n> ⚠️ Stopped: none of the model\'s tool calls could run (repeated or blocked) in several attempts in a row.' }); break;
                 }
 
-                // ── Mid-stream auto-compact ────────────────────────────────────────
-                // Compact between iterations while the agent loop is still running so
-                // the stream never terminates due to context overflow. The compact runs
-                // silently between the current and next iteration; the UI stays in the
-                // streaming state and continues as soon as compaction finishes.
-                const autoCompactThresholdMid = config.get<number>('autoCompactThreshold', 60_000);
-                if (this._host.autoCompact && this._host.lastPromptTokens > autoCompactThresholdMid && this._host.history.length >= this._host.compactRetryAt) {
+                // Mid-turn auto-compact, between steps, before the next request outgrows the context window (a local model's caps the threshold)
+                if (this._host.autoCompact && this._host.lastPromptTokens > this._host.compaction.threshold(config.get<number>('autoCompactThreshold', 60_000)) && this._host.history.length >= this._host.compactRetryAt) {
                     const sizeBefore = this._host.history.length;
-                    await this._host.compaction.run(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
+                    await compactNow();
                     if (this._host.history.length < sizeBefore) { taskUsage.markCompaction(); }
                     currentPhaseNote = undefined; // a phase note may be in the summarised part: re-add it
                 }

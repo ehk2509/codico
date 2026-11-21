@@ -90,6 +90,14 @@ async function run() {
   await scenario('stuck_loop', ({ reqs, error, text }) => ({ ok: !error && reqs.length <= 10, why: `${reqs.length} requests (must stop, not loop); loop warning sent: ${/You are in a loop/.test(text)}` }), 60000);
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
 
+  // A request refused for not fitting the context window: the conversation is compacted and the request sent again
+  await scenario('overflow', ({ reqs, error, text }) => {
+    const refused = reqs.filter(r => !r.hasSummary && r.step >= 6).length;
+    const after = reqs.filter(r => r.hasSummary);
+    const reported = /exceeds the context window/.test(text);
+    return { ok: !error && refused === 1 && after.length > 0 && after.every(r => r.hasRequest), why: `refused requests: ${refused} (one expected); requests after compaction: ${after.length}, request kept: ${after.every(r => r.hasRequest)}; error: ${error || 'none'}${reported ? ' (overflow text reached the model)' : ''}` };
+  }, 90000);
+
   // Auto-compaction mid-task must keep the request and leave no orphaned tool results
   await set('autoCompactThreshold', 10000);
   await scenario('compaction', ({ reqs }) => {
@@ -387,6 +395,15 @@ async function run() {
     const corrective = !!result && /no tool named "ask_user"/.test(result.lastText);
     return { ok: nativeOnly(reqs) && corrective, why: `corrective tool result for unknown tool: ${corrective}` };
   });
+  // The same, with a local model (codico.ollamaNativeTools): tools in the request, no output limit, results as role=tool
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  await set('ollamaNativeTools', true);
+  await scenario('local_native', ({ reqs }) => {
+    const result = reqs.find(r => r.lastRole === 'tool');
+    const noLimit = reqs.every(r => r.maxTokens === undefined);
+    return { ok: nativeOnly(reqs) && noLimit && !!result && /NOTES-MARKER/.test(result.lastText), why: `native tools sent: ${nativeOnly(reqs)}; no output limit: ${noLimit}; tool result returned as role=tool: ${!!result}` };
+  });
+  await set('ollamaNativeTools', false);
 
   // ── Direct DeepSeek through its adapter; the fake server enforces DeepSeek's reasoning rule ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'direct:deepseek/deepseek-flash', maxIterations: 12, directApiKeys: { deepseek: 'ds-test-key' } });
