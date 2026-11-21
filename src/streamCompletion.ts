@@ -82,6 +82,51 @@ export function isUnfulfilledActionAnnouncement(content: string): boolean {
     return ACTION_ANNOUNCEMENT_RE.test(lastParagraph) && !OFFER_OR_DONE_RE.test(lastParagraph);
 }
 
+/**
+ * A tool call in a syntax other than Codico's fenced blocks, seen with models trained on XML calls
+ * (`<invoke>`, `<tool_call>`, Qwen's `<function=read_file><parameter=...>`). Nothing runs for it.
+ */
+const PSEUDO_TOOL_CALL_RE = /<invoke\b|<function_calls>|<tool_call>|<tool_use>|<function=[\w.-]+>/;
+
+/** True when the reply holds a tool call Codico cannot run (see PSEUDO_TOOL_CALL_RE). */
+export function containsPseudoToolCall(content: string): boolean {
+    return PSEUDO_TOOL_CALL_RE.test(content);
+}
+
+/** Sent back after a pseudo tool call: nothing ran, and any results the model wrote are made up. */
+export const PSEUDO_TOOL_CALL_CORRECTION = '[System] That was not a tool call Codico can run, so nothing was executed and any results you wrote are not real. ' +
+    'Call tools only with the fenced code block formats from the instructions (for example a block opened with ```read_file), then wait for the real results.';
+
+/** "I have what I need for the review.", "Here is my review:" — the answer is said to come next. */
+// Anchored to the end of the sentence: "I have what I need, so here is the fix: …" is an answer.
+const READY_TO_ANSWER_RE = new RegExp('(?:' + [
+    String.raw`\bI (?:now )?have (?:what|everything|all|enough)\b[^.!?,;:]*\bneed(?:ed)?\b(?:\s+(?:for|to)\b[^.!?,;:]*)?`,
+    String.raw`\b(?:that['’]s|that is|this is) (?:all|everything|enough) I need(?:ed)?\b(?:\s+(?:for|to)\b[^.!?,;:]*)?`,
+    String.raw`\bI['’]m (?:now )?ready to (?:write|give|present|summari[sz]e|report|answer)\b[^.!?,;:]*`,
+    String.raw`\bnow I can (?:write|give|present|summari[sz]e|report|answer)\b[^.!?,;:]*`,
+    String.raw`^here(?:['’]s| is| are) (?:the|my) (?:review|summary|answer|report|findings)\b[^.!?:]*:`,
+].join('|') + String.raw`)\s*[.!]?\s*$`, 'i');
+
+/**
+ * True when a reply with no tool call ends by saying the answer comes next ("I have what I need
+ * for the review.") and stops there: the model ended its turn before writing the answer. Only the
+ * last sentence counts, and a long reply is taken to be the answer.
+ */
+export function endsBeforeTheAnswer(content: string): boolean {
+    const text = content.trim();
+    if (!text || text.length > 1500 || text.includes('<clarify>')) { return false; }
+    const lastParagraph = (text.split(/\n\s*\n/).pop() ?? '').trim();
+    const lastSentence = (lastParagraph.split(/(?<=[.!])\s+/).pop() ?? '').trim();
+    return READY_TO_ANSWER_RE.test(lastSentence);
+}
+
+/** Sent back once when a turn that ran tools ends without any text. */
+export const NO_ANSWER_REMINDER = '[System] Your reply ended without any text. Give your final answer now: what you changed, how you checked it, and anything not done.';
+
+/** Sent back once when a reply ends before its answer (endsBeforeTheAnswer). */
+export const WRAP_UP_REMINDER = '[System] Your reply says you are ready to answer but ends before the answer, so the user has none. ' +
+    'Write your complete final answer now, from what you have already found. Do not repeat the reads you already made.';
+
 /** How much of the pre-cutoff text is compared against the start of a resumed response. */
 export const RESUME_OVERLAP_WINDOW = 400;
 

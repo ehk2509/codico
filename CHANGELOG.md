@@ -2,6 +2,20 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.9.0 - 2026-11-21
+
+### Fixed
+- A reply holding a tool call in a syntax Codico does not run (Qwen's `<tool_call><function=read_file>…`) ended the turn as if it were the answer; the main agent loop now says nothing ran and asks for the call again, as subagents already did.
+- A reply that ends saying the answer comes next ("I have what I need for the review.") and stops there is asked once for the answer, instead of being taken as it.
+- Local models: auto-compact started at 60,000 prompt tokens whatever the model's context window, so a server with a 32k window refused every request once the conversation passed it, and the task ended. Codico now reads the window from the server (or `codico.ollamaContextLength`), compacts at 60% of it at the latest, keeps and summarises less for a small window, and compacts and retries a request refused for its size.
+- Local models: thinking sent in `reasoning_content` (llama.cpp, vLLM, LM Studio) or `reasoning` (Ollama) was dropped, so a thinking model showed nothing for minutes. It is shown as thinking.
+- Local models: short jobs asked a thinking model for 100 to 300 tokens, which it spent thinking: commit messages and follow-up suggestions came back empty. Thinking is turned off for them, with one retry with more room; a server error or no answer in time is now reported instead of read as an empty answer.
+- Local models: the thinking effort setting was never sent; it is sent as `reasoning_effort` when it is not the default.
+- Local models: a warning, once, for a setup that does not do what the settings say (a model the server does not have or replaces, `codico.ollamaContextLength` on a server that is not Ollama, an Ollama window under 16,384 tokens); `codico.ollamaContextLength` is ignored for servers that are not Ollama instead of sending every request to an endpoint they lack.
+
+### Added
+- `codico.ollamaNativeTools`: native tool calling for local models.
+
 ## 0.8.0 - 2026-11-15
 
 ### Fixed

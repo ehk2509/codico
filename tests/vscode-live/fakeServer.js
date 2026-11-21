@@ -18,7 +18,15 @@ const SCRIPTS = (port) => ({
   background: ['Starting it.\n\n' + tool('run_terminal', 'command: sleep 45.321 & echo started'), 'It is running.'],
   clarify: ['<clarify>\nquestion: Which database should I use?\ntype: single\noptions:\n- Postgres\n- SQLite\nfree_input: false\n</clarify>'],
   announce: ["I'll read the config file.", tool('read_file', 'filepath: fixtures/config.txt'), 'The config sets the port.'],
+  // Qwen's own XML call, which Codico does not run: sent back once, then the fenced call runs
+  pseudo_call: ['<tool_call>\n<function=read_file>\n<parameter=filepath>\nfixtures/config.txt\n</parameter>\n</function>\n</tool_call>', tool('read_file', 'filepath: fixtures/config.txt'), 'The config sets the port.'],
+  // Reads, then ends saying the answer comes next: asked once for it
+  wrap_up: [tool('read_file', 'filepath: fixtures/config.txt'), 'The port is set there. I have what I need for the review.', 'Review: the config sets port 80.'],
   cutoff: [{ text: 'Here is a long explanation that gets cut', finish: 'length' }, ' off here. Done.'],
+  // Six reads, then the next request is too big for the context window until the conversation is compacted
+  overflow: COMPACTION_STEPS,
+  // A local model with native tools (codico.ollamaNativeTools)
+  local_native: [{ toolCalls: [{ name: 'read_file', args: { filepath: 'fixtures/notes.txt' } }] }, 'Read it.'],
   unclosed: [F + 'write_file\nfilepath: live/unclosed.txt\ncontent:\nhello\nworld', 'Done.'],
   edit_ok: [tool('edit_file', 'filepath: fixtures/config.txt\nold_str:\nport=80\nnew_str:\nport=8080'), 'Port updated.'],
   edit_missing: [tool('edit_file', 'filepath: fixtures/config.txt\nold_str:\nthis text does not exist\nnew_str:\nx'), 'The text was not found.'],
@@ -334,6 +342,11 @@ function start(port0) {
       if (openai && json.model === 'gpt-5.4-mini' && json.reasoning_effort !== undefined) {
         res.writeHead(400, { 'content-type': 'application/json' });
         return res.end(JSON.stringify({ error: { message: "Unsupported parameter: 'reasoning_effort' is not supported with this model." } }));
+      }
+      // What a llama.cpp-style server answers to a prompt bigger than its window: it never truncates
+      if (scenario === 'overflow' && json.stream !== false && step >= 6 && !rec.hasSummary) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        return res.end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'request exceeds the context window: prompt (36056 tokens) leaves no room to answer in the context (32768); requests are never truncated' } }));
       }
       if (json.stream === false) {
         res.setHeader('content-type', 'application/json');

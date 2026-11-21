@@ -99,3 +99,93 @@ test('native path: an HTTP error throws, a stream that stops early is reported, 
     assert.equal(stopped.some(c => c.type === 'stream_error'), false, 'stopping is not an error');
   } finally { ollama.close(); }
 });
+
+test('OpenAI-compatible path: thinking sent in reasoning_content (llama.cpp) or reasoning (Ollama) is shown as thinking', async () => {
+  const ollama = await fakeOllama((url, res) => {
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write(': keep-alive\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { role: 'assistant', content: '' }, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: 'User says ' }, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { reasoning: 'hi.' }, finish_reason: null }] }) + '\n\n');
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'Hello' }, finish_reason: 'stop' }] }) + '\n\n');
+    res.end('data: [DONE]\n\n');
+  });
+  try {
+    const chunks = await collect(streamOllama(ollama.url, history, 'qwen3:30b-a3b'));
+    assert.deepEqual(chunks.filter(c => c.type === 'thinking').map(c => c.text), ['User says ', 'hi.']);
+    assert.equal(text(chunks), 'Hello', 'the thinking is not part of the reply');
+  } finally { ollama.close(); }
+});
+
+test('OpenAI-compatible path: a thinking effort other than the default is sent, and dropped when the model refuses it', async () => {
+  let calls = 0;
+  const ollama = await fakeOllama((url, res) => {
+    calls++;
+    if (calls === 2) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ error: { message: '"llama3.1" does not support thinking' } })); }
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'ok' }, finish_reason: 'stop' }] }) + '\n\n');
+    res.end('data: [DONE]\n\n');
+  });
+  try {
+    await collect(streamOllama(ollama.url, history, 'm', undefined, undefined, undefined, { effort: 'medium' }));
+    assert.equal('reasoning_effort' in ollama.requests[0].body, false, 'the default effort sends nothing');
+    const chunks = await collect(streamOllama(ollama.url, history, 'm', undefined, undefined, undefined, { effort: 'low' }));
+    assert.equal(ollama.requests[1].body.reasoning_effort, 'low');
+    assert.equal('reasoning_effort' in ollama.requests[2].body, false, 'asked again without it');
+    assert.equal(text(chunks), 'ok');
+  } finally { ollama.close(); }
+});
+
+test('one-shot requests: thinking off, so a short budget still gets an answer', async () => {
+  const { ollamaChatCompletion } = require('../out/ollamaClient.js');
+  const ollama = await fakeOllama((url, res) => {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'fix(orbits): guard a missing satellite' }, finish_reason: 'stop' }] }));
+  });
+  try {
+    assert.equal(await ollamaChatCompletion(ollama.url, [{ role: 'user', content: 'diff' }], 'qwen3', 100), 'fix(orbits): guard a missing satellite');
+    const [request] = ollama.requests;
+    assert.equal(request.body.stream, false);
+    assert.equal(request.body.max_tokens, 100);
+    assert.equal(request.body.reasoning_effort, 'none');
+    assert.deepEqual(request.body.chat_template_kwargs, { enable_thinking: false });
+  } finally { ollama.close(); }
+});
+
+test('one-shot requests: a refused thinking option is dropped, and a budget spent thinking is given more room once', async () => {
+  const { ollamaChatCompletion } = require('../out/ollamaClient.js');
+  const replies = [
+    [400, { error: { message: "Unrecognized request argument supplied: chat_template_kwargs" } }],
+    // What the real server did with 100 tokens: thought through all of them and answered nothing
+    [200, { choices: [{ message: { role: 'assistant', content: '', reasoning_content: 'We need answer user…' }, finish_reason: 'length' }] }],
+    [200, { choices: [{ message: { role: 'assistant', content: 'fix(orbits): use the injected clock' }, finish_reason: 'stop' }] }],
+  ];
+  const ollama = await fakeOllama((url, res) => {
+    const [status, body] = replies.shift();
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(body));
+  });
+  try {
+    assert.equal(await ollamaChatCompletion(ollama.url, [{ role: 'user', content: 'diff' }], 'qwen3', 100), 'fix(orbits): use the injected clock');
+    assert.equal(ollama.requests.length, 3);
+    assert.equal('chat_template_kwargs' in ollama.requests[1].body, false, 'sent again without the refused option');
+    assert.ok(ollama.requests[2].body.max_tokens >= 800, `more room the second time: ${ollama.requests[2].body.max_tokens}`);
+  } finally { ollama.close(); }
+});
+
+test('one-shot requests: a server error or no answer in time is an error, not an empty answer; stopping is quiet', async () => {
+  const { ollamaChatCompletion } = require('../out/ollamaClient.js');
+  const failing = await fakeOllama((url, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'request exceeds the context window: prompt (36056 tokens) leaves no room to answer in the context (32768)' } }));
+  });
+  const silent = await fakeOllama(() => { /* never answers */ });
+  try {
+    await assert.rejects(ollamaChatCompletion(failing.url, [{ role: 'user', content: 'x' }], 'm', 100), /HTTP 400: .*exceeds the context window/);
+    await assert.rejects(ollamaChatCompletion(silent.url, [{ role: 'user', content: 'x' }], 'm', 100, undefined, 300), /no answer within/);
+    const stop = new AbortController();
+    const pending = ollamaChatCompletion(silent.url, [{ role: 'user', content: 'x' }], 'm', 100, stop.signal);
+    setTimeout(() => stop.abort(), 50);
+    assert.equal(await pending, '');
+  } finally { failing.close(); silent.close(); }
+});

@@ -37,6 +37,8 @@ async function run() {
   await scenario('background', ({ ms, text }) => ({ ok: ms < 20000 && /started/.test(text), why: `${ms} ms; output reached model: ${/started/.test(text)}` }));
   await scenario('clarify', ({ reqs }) => ({ ok: reqs.length === 1, why: `${reqs.length} request(s)` }));
   await scenario('announce', ({ text }) => ({ ok: has(text, /announced an action/) && has(text, /port=80/), why: `nudge: ${has(text, /announced an action/)}; file content reached model: ${has(text, /port=80/)}` }));
+  await scenario('pseudo_call', ({ reqs, text }) => ({ ok: has(text, /not a tool call Codico can run/) && has(text, /port=80/) && reqs.length === 3, why: `correction: ${has(text, /not a tool call Codico can run/)}; file content reached model: ${has(text, /port=80/)}; ${reqs.length} req` }));
+  await scenario('wrap_up', ({ reqs, text }) => ({ ok: has(text, /ends before the answer/) && reqs.length === 3, why: `asked for the answer: ${has(text, /ends before the answer/)}; ${reqs.length} req` }));
   await scenario('cutoff', ({ reqs, text }) => ({ ok: has(text, /\[System Recovery\]/) && reqs.length === 2, why: `recovery: ${has(text, /\[System Recovery\]/)}; ${reqs.length} req` }));
   await scenario('unclosed', ({ read, reqs }) => { const g = read('live/unclosed.txt'); return { ok: g !== null && g.trimEnd() === 'hello\nworld' && reqs.length < 10, why: `${g === null ? 'not written' : JSON.stringify(g)}; ${reqs.length} req` }; });
   await scenario('edit_missing', ({ read, text }) => { const g = read('fixtures/config.txt'); const err = /not found|no match|did not match|0 occurrences|could not find|not present/i.test(text); return { ok: err && g === 'host=localhost\nport=80\n', why: `error reported: ${err}; file unchanged: ${g === 'host=localhost\nport=80\n'}` }; });
@@ -87,6 +89,14 @@ async function run() {
   });
   await scenario('stuck_loop', ({ reqs, error, text }) => ({ ok: !error && reqs.length <= 10, why: `${reqs.length} requests (must stop, not loop); loop warning sent: ${/You are in a loop/.test(text)}` }), 60000);
   await scenario('stuck_verify', ({ reqs, error }) => ({ ok: !error && reqs.length <= 6, why: `${reqs.length} requests; turn ended on its own: ${!error} (model never verifies)` }), 30000);
+
+  // A request refused for not fitting the context window: the conversation is compacted and the request sent again
+  await scenario('overflow', ({ reqs, error, text }) => {
+    const refused = reqs.filter(r => !r.hasSummary && r.step >= 6).length;
+    const after = reqs.filter(r => r.hasSummary);
+    const reported = /exceeds the context window/.test(text);
+    return { ok: !error && refused === 1 && after.length > 0 && after.every(r => r.hasRequest), why: `refused requests: ${refused} (one expected); requests after compaction: ${after.length}, request kept: ${after.every(r => r.hasRequest)}; error: ${error || 'none'}${reported ? ' (overflow text reached the model)' : ''}` };
+  }, 90000);
 
   // Auto-compaction mid-task must keep the request and leave no orphaned tool results
   await set('autoCompactThreshold', 10000);
@@ -385,6 +395,15 @@ async function run() {
     const corrective = !!result && /no tool named "ask_user"/.test(result.lastText);
     return { ok: nativeOnly(reqs) && corrective, why: `corrective tool result for unknown tool: ${corrective}` };
   });
+  // The same, with a local model (codico.ollamaNativeTools): tools in the request, no output limit, results as role=tool
+  await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'ollama/fake-model', maxIterations: 12 });
+  await set('ollamaNativeTools', true);
+  await scenario('local_native', ({ reqs }) => {
+    const result = reqs.find(r => r.lastRole === 'tool');
+    const noLimit = reqs.every(r => r.maxTokens === undefined);
+    return { ok: nativeOnly(reqs) && noLimit && !!result && /NOTES-MARKER/.test(result.lastText), why: `native tools sent: ${nativeOnly(reqs)}; no output limit: ${noLimit}; tool result returned as role=tool: ${!!result}` };
+  });
+  await set('ollamaNativeTools', false);
 
   // ── Direct DeepSeek through its adapter; the fake server enforces DeepSeek's reasoning rule ──
   await vscode.commands.executeCommand('codico.__evalConfigure', { openRouterApiKey: 'test-key', model: 'direct:deepseek/deepseek-flash', maxIterations: 12, directApiKeys: { deepseek: 'ds-test-key' } });

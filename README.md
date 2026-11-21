@@ -56,7 +56,13 @@ Access hundreds of models through a single API key — including free-tier model
 ### Local Models (Ollama)
 Run entirely offline. Prefix any model ID with `ollama/` — e.g. `ollama/qwen2.5-coder:7b`. No API key required.
 
-**Give the model a large enough context window.** Ollama loads a model with a small context (often 4096 to 8192 tokens) unless told otherwise, and an agent's conversation is longer than that: Ollama then silently drops the start of it, and the model forgets the task, repeats itself or stops using its tools. Either set `OLLAMA_CONTEXT_LENGTH=16384` (or more) on the Ollama server, or set `codico.ollamaContextLength` here, which loads the model with that window by sending requests to Ollama's native `/api/chat`. Leave it at 0 for other OpenAI-compatible servers (LM Studio, llama.cpp).
+**Give the model a large enough context window.** Ollama loads a model with a small context (often 4096 to 8192 tokens) unless told otherwise, and an agent's conversation is longer than that: Ollama then silently drops the start of it, and the model forgets the task, repeats itself or stops using its tools. Either set `OLLAMA_CONTEXT_LENGTH=16384` (or more) on the Ollama server, or set `codico.ollamaContextLength` here, which loads the model with that window by sending requests to Ollama's native `/api/chat`. Leave it at 0 for other OpenAI-compatible servers (LM Studio, llama.cpp, vLLM): they set their own window, and Codico ignores the setting for them.
+
+**What Codico checks on the server.** Before a turn, Codico asks the server what it is (`/api/tags` for Ollama, `/v1/models` otherwise), which models it has and the context window it runs the model with. Auto-compact then starts at 60% of that window at the latest, whatever `codico.autoCompactThreshold` says, and keeps and summarises less for a small window. A request the server still refuses for its size (llama.cpp and similar servers never truncate) is compacted and sent again instead of ending the task. You get a warning, once, when the setup does not do what the settings say: a model the server does not have, a server that answers with another model than the one named, `codico.ollamaContextLength` set for a server that is not Ollama, or Ollama running the model with a window under 16,384 tokens.
+
+**Thinking models (Qwen3, DeepSeek-R1, gpt-oss).** Their thinking is shown as thinking, whether the server sends it in `<think>` tags, `reasoning_content` (llama.cpp, vLLM, LM Studio) or `reasoning` (Ollama). The thinking effort setting is sent as `reasoning_effort` when it is not the default (and dropped for a model that refuses it). Short jobs (commit messages, follow-up suggestions, summaries) turn thinking off, so a small token budget is not spent thinking with no answer left.
+
+**Native tool calling.** Local models get tools as text formats by default. Models trained for tool calling (Qwen3, Llama 3.1+, Mistral) do better with them sent natively: set `codico.ollamaNativeTools`. It needs a server with tool support (Ollama, llama.cpp started with `--jinja`, vLLM with tool parsing); a server that refuses tools is asked again in the text format.
 
 ### ACCO context optimization (optional)
 
@@ -946,7 +952,8 @@ Or click the Codico icon in the Activity Bar.
 |---|---|---|---|
 | `codico.model` | `string` | `deepseek/deepseek-v4-flash` | Model ID: OpenRouter ID, `direct:provider/model`, or `ollama/model` |
 | `codico.ollamaBaseUrl` | `string` | `http://localhost:11434` | Ollama server URL |
-| `codico.ollamaContextLength` | `number` | `0` | Context window (tokens) to load Ollama models with; 0 leaves the server's own setting. Above 0, requests use Ollama's native `/api/chat` |
+| `codico.ollamaContextLength` | `number` | `0` | Context window (tokens) to load Ollama models with; 0 leaves the server's own setting. Above 0, requests use Ollama's native `/api/chat`. Ignored for servers that are not Ollama |
+| `codico.ollamaNativeTools` | `boolean` | `false` | Offer tools to local models natively (the OpenAI-compatible `tools` field) instead of as text formats |
 | `codico.systemPrompt` | `string` | `""` | Optional prefix prepended to the system prompt |
 | `codico.autoInjectContext` | `boolean` | `true` | Auto-include active file path as context |
 | `codico.maxIterations` | `number` | `0` | Max agentic loop iterations per message (`0` = no limit) |

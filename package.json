@@ -2,7 +2,7 @@
   "name": "codico",
   "displayName": "Codico",
   "description": "Reliability-first autonomous VS Code coding agent with native tools, resilient streaming, multi-provider support, optional ACCO optimization, browser/MCP automation, and local Ollama.",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "publisher": "codico",
   "license": "MIT",
   "engines": {
@@ -362,7 +362,12 @@
           "type": "number",
           "default": 0,
           "minimum": 0,
-          "description": "Context window (tokens) to load Ollama models with. 0 leaves the server's own setting, which is often only 4096 to 8192 tokens: Ollama then silently drops the start of a long agent conversation. Set 16384 or more for agent work. A value above 0 sends requests to Ollama's native /api/chat; you can instead set OLLAMA_CONTEXT_LENGTH on the server and leave this at 0."
+          "description": "Context window (tokens) to load Ollama models with. 0 leaves the server's own setting, which is often only 4096 to 8192 tokens: Ollama then silently drops the start of a long agent conversation. Set 16384 or more for agent work. A value above 0 sends requests to Ollama's native /api/chat; you can instead set OLLAMA_CONTEXT_LENGTH on the server and leave this at 0. Ignored for a server that is not Ollama (llama.cpp, vLLM, LM Studio): it sets its own context window, which Codico reads from it. Either way, auto-compact starts before the conversation outgrows the window."
+        },
+        "codico.ollamaNativeTools": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer tools to local models natively (the OpenAI-compatible `tools` field) instead of as text formats. Models trained for tool calling (Qwen3, Llama 3.1+, Mistral) then call tools reliably instead of writing their own call syntax. Needs a server with tool support (Ollama, llama.cpp started with --jinja, vLLM with tool parsing); a server that refuses tools is asked again in the text format. Not used while codico.ollamaContextLength is set, since that endpoint takes no tools."
         },
         "codico.systemPrompt": {
           "type": "string",
@@ -718,7 +723,7 @@
           "type": "number",
           "default": 60000,
           "minimum": 10000,
-          "description": "Prompt token count above which auto-compact triggers (when Auto Compact is enabled in the chat UI)"
+          "description": "Prompt token count above which auto-compact triggers (when Auto Compact is enabled in the chat UI). For a local model whose context window Codico knows, it triggers at 60% of that window at the latest."
         },
         "codico.mcpServers": {
           "type": "array",

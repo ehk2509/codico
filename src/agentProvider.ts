@@ -1146,7 +1146,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
         }
 
         // ── Auto-compact: summarize history when prompt tokens exceed threshold ──
-        const autoCompactThreshold = config.get<number>('autoCompactThreshold', 60_000);
+        const autoCompactThreshold = this._compaction.threshold(config.get<number>('autoCompactThreshold', 60_000)); if (isOllama) { this._postUiSettings(); } // the panel shows the threshold a local model's window caps
         if (!signal.aborted && this._autoCompact && this._lastPromptTokens > autoCompactThreshold && this._history.length >= this._compactRetryAt) {
             await this._compaction.run(apiKey, model, isOllama, ollamaBaseUrl, ollamaModel, isDirect, directApiKey, directParsed?.providerId ?? '', directParsed?.modelId ?? '', signal);
         }
@@ -1441,7 +1441,7 @@ export class AgentProvider implements vscode.WebviewViewProvider {
     private _postUiSettings(): void {
         const cfg = vscode.workspace.getConfiguration('codico');
         this._post({ type: 'uiSettings', density: cfg.get<'comfortable' | 'compact'>('chatDensity', 'comfortable'), showReasoning: cfg.get<boolean>('showReasoning', true),
-            compactAt: cfg.get<number>('autoCompactThreshold', 60_000) });
+            compactAt: this._compaction.threshold(cfg.get<number>('autoCompactThreshold', 60_000)) });
     }
 
 

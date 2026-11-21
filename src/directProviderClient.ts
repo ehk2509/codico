@@ -190,7 +190,8 @@ function _streamOpenAICompat(
         model: adapter?.modelId(modelId) ?? modelId,
         messages,
         stream: true,
-        [adapter?.maxTokensField ?? 'max_tokens']: adapter?.maxTokens(modelId) ?? 8192,
+        // A limit of 0 sends none: a local server then lets the reply use what its context window leaves
+        ...((adapter?.maxTokens(modelId) ?? 8192) > 0 ? { [adapter?.maxTokensField ?? 'max_tokens']: adapter?.maxTokens(modelId) ?? 8192 } : {}),
         stream_options: { include_usage: true },
         ...(plain ? {} : adapter?.body(modelId, effort)),
         ...(nativeTools.length > 0 ? {
@@ -219,7 +220,7 @@ function _streamOpenAICompat(
                     res.on('end', () => {
                         // An option this model does not take (e.g. an effort level): once more without the extras
                         const extras = plain || !adapter ? [] : Object.keys(adapter.body(modelId, effort));
-                        if (res.statusCode === 400 && extras.some(field => e.includes(field)) && !signal?.aborted) {
+                        if (res.statusCode === 400 && (extras.some(field => e.includes(field)) || (extras.length > 0 && /does not support thinking/i.test(e))) && !signal?.aborted) {
                             _streamOpenAICompat(apiKey, apiBase, modelId, history, system, signal, push, nativeTools, adapter, effort, endpoint, true, optimizer);
                             return;
                         }
@@ -646,12 +647,14 @@ export function streamDirect(
     thinkingEffort?: 'high' | 'medium' | 'low',
     overrideSystemPrompt?: string,
     nativeTools: NativeToolDefinition[] = [],
-    /** Automated tests only (evaluation mode); OpenAI-compatible providers. */
+    /** Where to send OpenAI-compatible requests instead of the provider's API: a local server, or a test server (evaluation mode). */
     endpoint?: OpenRouterEndpoint,
     /** Optional local optimizer (ACCO) the request body passes through before it is sent. */
-    requestOptimizer?: ProviderRequestOptimizer
+    requestOptimizer?: ProviderRequestOptimizer,
+    /** A provider that is not in DIRECT_PROVIDERS (a local server). */
+    providerOverride?: DirectProvider
 ): AsyncIterable<StreamChunk> {
-    const provider = getDirectProvider(providerId);
+    const provider = providerOverride ?? getDirectProvider(providerId);
     if (!provider) {
         return {
             [Symbol.asyncIterator]() {
@@ -691,6 +694,52 @@ export function streamDirect(
     }
 
     return iterable;
+}
+
+// ── Local OpenAI-compatible servers with native tools ─────────────────────────
+
+/**
+ * A local server (Ollama, llama.cpp, vLLM, LM Studio): the model name as given, no output limit (the
+ * server leaves the reply what its context window has room for), thinking in reasoning_content
+ * (llama.cpp, vLLM) or reasoning (Ollama), and a thinking effort only when it is not the default.
+ */
+export const LOCAL_SERVER_ADAPTER: OpenAICompatAdapter = {
+    modelId: id => id,
+    body: (_modelId, effort) => (effort === 'medium' ? {} : { reasoning_effort: effort }),
+    quickBody: () => ({}),
+    maxTokens: () => 0,
+    reasoningField: 'reasoning_content',
+    replayReasoning: false,
+    cachedTokens: () => undefined,
+};
+
+/**
+ * Streams from a local OpenAI-compatible server with native tool calling: the tools go in the
+ * request's `tools` field and come back as tool calls, not as text the model has to format.
+ * A server or model without tool support is retried in the text tool format.
+ */
+export function streamLocalOpenAICompat(
+    baseUrl: string,
+    history: ChatMessage[],
+    model: string,
+    systemPromptPrefix: string | undefined,
+    signal: AbortSignal | undefined,
+    thinkingEffort: 'high' | 'medium' | 'low' | undefined,
+    overrideSystemPrompt: string | undefined,
+    nativeTools: NativeToolDefinition[]
+): AsyncIterable<StreamChunk> {
+    let url: URL;
+    try { url = new URL(baseUrl); } catch {
+        return { [Symbol.asyncIterator]() { return { async next() { throw new Error(`Invalid local server URL: "${baseUrl}"`); } }; } };
+    }
+    const endpoint: OpenRouterEndpoint = {
+        protocol: url.protocol === 'https:' ? 'https:' : 'http:',
+        hostname: url.hostname,
+        port: url.port ? Number(url.port) : undefined,
+        path: `${url.pathname.replace(/\/$/, '')}/v1/chat/completions`,
+    };
+    const provider: DirectProvider = { id: 'local', name: 'Local server', apiBase: url.host, format: 'openai', models: [], adapter: LOCAL_SERVER_ADAPTER };
+    return streamDirect('local', history, 'local', model, systemPromptPrefix, signal, thinkingEffort, overrideSystemPrompt, nativeTools, endpoint, undefined, provider);
 }
 
 // ── Non-streaming single completion (follow-ups, compact, commit) ─────────────
