@@ -2,7 +2,7 @@
 
 All notable changes to Codico will be documented in this file.
 
-## Unreleased
+## 0.9.0 - 2026-11-21
 
 ### Fixed
 - A reply holding a tool call in a syntax Codico does not run (Qwen's `<tool_call><function=read_file>…`) ended the turn as if it were the answer; the main agent loop now says nothing ran and asks for the call again, as subagents already did.
