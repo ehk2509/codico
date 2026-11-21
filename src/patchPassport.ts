@@ -53,6 +53,12 @@ const CHECK_PATTERNS: Array<[CheckKind, RegExp]> = [
     ['build', /\b(?:(?:npm|pnpm|yarn|bun)\s+run\s+[\w:.-]*(?:build|compile)[\w:.-]*|cargo\s+build|go\s+build|mvn\s+(?:\S+\s+)*(?:compile|package)|gradlew?\s+(?:\S+\s+)*(?:build|assemble)|dotnet\s+build|make(?:\s+(?:all|build))?\s*$|webpack|vite\s+build|esbuild)\b/],
 ];
 
+/**
+ * A test file run by its interpreter, without a runner: `python test_calc.py`, `node tests/api.js`,
+ * `npx tsx src/parser.test.ts`. Its exit code is its result. A script of another name is not a check.
+ */
+const TEST_SCRIPT = /^(?:(?:npx|bunx)\s+)?(?:python3?|py|node|bun|deno\s+(?:run|test)|tsx|ts-node|ruby|php)\s+(?:-\S+\s+)*(?:\S*[\\/])?(?:tests?[\\/]\S+|test_[\w.-]+|[\w.-]+_test|[\w.-]+[._-](?:test|spec))\.(?:py|[cm]?[jt]sx?|rb|php)(?:\s|$)/;
+
 /** The command with what only changes how its output is shown taken off: `cd x &&`, `timeout 30`, `2>&1 | tail -5`. */
 export function checkKey(command: string): string {
     return command
@@ -73,6 +79,7 @@ export function classifyCheck(command: string): CheckKind | null {
     // A search for the word "test" is not a test run
     if (/^(?:grep|rg|find|ls|cat|echo|git|sed|awk|head|tail|wc|which|pwd)\b/.test(key)) { return null; }
     for (const [kind, pattern] of CHECK_PATTERNS) { if (pattern.test(key)) { return kind; } }
+    if (TEST_SCRIPT.test(key)) { return 'test'; }
     return null;
 }
 

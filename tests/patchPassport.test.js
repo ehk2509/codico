@@ -16,6 +16,12 @@ test('which commands count as checks', () => {
     Array(9).fill(null));
 });
 
+test('a test file run by its interpreter is a test run', () => {
+  assert.deepEqual(['python test_calc.py', 'python3 tests/test_api.py', 'node tests/parser.js', 'node src/a.test.js', 'npx tsx src/parser.spec.ts', 'python calc_test.py -v', 'cd app && python test_x.py 2>&1']
+    .map(classifyCheck), Array(7).fill('test'));
+  assert.deepEqual(['python calc.py', 'node tmp/qa-verify.js', 'python setup.py test_upload', 'node scripts/attest.js', 'python latest.py'].map(classifyCheck), Array(5).fill(null));
+});
+
 test('what only changes the output is ignored when comparing commands', () => {
   assert.equal(checkKey('cd /home/me/project && timeout 400 npm test 2>&1 | tail -20'), 'npm test');
   assert.equal(checkKey('CI=1 FORCE_COLOR=0 npm run test:ui 2>&1 | grep -E "^# (pass|fail)"'), 'npm run test:ui');

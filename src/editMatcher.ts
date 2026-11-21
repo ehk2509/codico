@@ -98,8 +98,73 @@ export function resolveEditMatch(source: string, requestedOldText: string): Edit
     return { error: 'not_found', candidates: 0 };
 }
 
-export function applyEditMatch(source: string, match: EditMatch, replacement: string): string {
-    return source.slice(0, match.start) + replacement + source.slice(match.end);
+export function applyEditMatch(source: string, match: EditMatch, replacement: string, requestedOldText?: string): string {
+    const text = match.mode === 'exact' || requestedOldText === undefined
+        ? replacement
+        : fitReplacement(source, match, requestedOldText, replacement);
+    return source.slice(0, match.start) + text + source.slice(match.end);
+}
+
+const leadingSpace = (line: string): string => /^[ \t]*/.exec(line)![0];
+
+/**
+ * The new text of an edit that matched only after whitespace was relaxed, made to fit the file. The match
+ * leaves out the old text's outer whitespace, so the same outer whitespace of the new text is not inserted
+ * either (or the line would keep the file's indentation and gain the model's: `    \treturn`). Its lines
+ * take the file's indentation where the old text's lines had another one (tabs for spaces, 2 for 4 spaces).
+ */
+function fitReplacement(source: string, match: EditMatch, requested: string, replacement: string): string {
+    const lead = /^\s*/.exec(requested)![0];
+    const trail = /\s*$/.exec(requested)![0];
+    let body = replacement;
+    const leadDropped = lead !== '' && body.startsWith(lead);
+    if (leadDropped) { body = body.slice(lead.length); }
+    if (trail && body.length >= trail.length && body.endsWith(trail)) { body = body.slice(0, body.length - trail.length); }
+
+    // The indentation of the matched first line is in the file already, before the match
+    const lineStart = source.lastIndexOf('\n', match.start - 1) + 1;
+    const fileFirst = source.slice(lineStart, match.start);
+    if (!/^[ \t]*$/.test(fileFirst)) { return body; }
+    const modelFirst = /[ \t]*$/.exec(lead)![0];
+
+    // Pair each line of the old text with the file's line it matched: the model's indentation → the file's
+    const asked = requested.trim().split('\n');
+    const found = match.matchedText.split('\n');
+    const indent = new Map<string, string | null>([[modelFirst, fileFirst]]);
+    if (asked.length === found.length) {
+        for (let i = 1; i < asked.length; i++) {
+            const from = leadingSpace(asked[i]);
+            const to = leadingSpace(found[i]);
+            const known = indent.get(from);
+            indent.set(from, known === undefined || known === to ? to : null); // one indentation read two ways: unknown
+        }
+    }
+    // Tabs for spaces (or spaces for tabs): the width of one level, from a pair that shows it
+    let tabWidth = 0;
+    let fileUsesTabs: boolean | undefined;
+    for (const [from, to] of indent) {
+        if (!to || !from) { continue; }
+        if (/^\t+$/.test(from) && /^ +$/.test(to) && to.length % from.length === 0) { tabWidth = to.length / from.length; fileUsesTabs = false; break; }
+        if (/^ +$/.test(from) && /^\t+$/.test(to) && from.length % to.length === 0) { tabWidth = from.length / to.length; fileUsesTabs = true; break; }
+    }
+    const restyle = (space: string): string => {
+        const mapped = indent.get(space);
+        if (mapped) { return mapped; }
+        if (mapped === null || !tabWidth) { return space; }
+        return fileUsesTabs
+            ? space.replace(new RegExp(` {${tabWidth}}`, 'g'), '\t')
+            : space.replace(/\t/g, ' '.repeat(tabWidth));
+    };
+
+    const lines = body.split('\n');
+    return lines.map((line, i) => {
+        if (i === 0) {
+            // The first line starts after the file's own indentation
+            return leadDropped || !line.startsWith(modelFirst) ? line : line.slice(modelFirst.length);
+        }
+        const space = leadingSpace(line);
+        return line.trim() === '' ? line : restyle(space) + line.slice(space.length);
+    }).join('\n');
 }
 
 
