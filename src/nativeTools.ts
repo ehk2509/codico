@@ -845,6 +845,11 @@ export function nativeClarifyBlock(call: NativeToolCall): string | null {
  * Tool result returned to the model for a native call that names an unknown tool
  * or has unusable arguments, so it can correct the call instead of the turn ending.
  */
+/** The input schema of a tool, by name (undefined for a name that is no tool). */
+export function nativeToolSchema(name: string): JsonSchema | undefined {
+    return ALL_TOOLS.find(tool => tool.name === name)?.inputSchema;
+}
+
 export function invalidNativeCallResult(call: NativeToolCall): string {
     const known = ALL_TOOLS.find(tool => tool.name === call.name);
     if (!known) {

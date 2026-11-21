@@ -70,3 +70,27 @@ function committed(root: string, file: string): string | null {
     const shown = git(root, ['show', `HEAD:./${file.replace(/\\/g, '/')}`]);
     return shown.status === 0 ? shown.stdout : null;
 }
+
+/**
+ * The files a command sends its own output to (`> build.log`, `2>> err.txt`, `&> out`, `| tee test.log`),
+ * as normalised relative paths. They hold what the command printed: not changes of the project.
+ */
+export function outputFiles(command: string): Set<string> {
+    const files = new Set<string>();
+    // A quoted string stands as one word: a `>` inside it (node -e "a > b") is no redirection
+    const quoted: string[] = [];
+    const unquoted = command.replace(/'([^']*)'|"([^"]*)"/g, (_m, a: string | undefined, b: string | undefined) => `\u0000${quoted.push(a ?? b ?? '') - 1}\u0000`);
+    const add = (target: string) => {
+        const file = target.replace(/\u0000(\d+)\u0000/g, (_m, i: string) => quoted[Number(i)]).replace(/\\/g, '/').replace(/^\.\//, '');
+        if (file && !/^&?\d$/.test(file) && file !== '/dev/null' && !/^nul$/i.test(file)) { files.add(file); }
+    };
+    for (const m of unquoted.matchAll(/(?:^|[^<>&\d])(?:\d|&)?>>?\s*(?!&)([^\s;&|<>]+)/g)) { add(m[1]); }
+    for (const m of unquoted.matchAll(/\|\s*tee\s+(?:-\S+\s+)*([^\s;&|<>]+(?:\s+[^\s;&|<>-][^\s;&|<>]*)*)/g)) { m[1].split(/\s+/).forEach(add); }
+    return files;
+}
+
+/** The changes a command made, without the files it wrote its own output to (see outputFiles). */
+export function withoutOutputFiles<T extends { path: string }>(changes: T[], command: string): T[] {
+    const outputs = outputFiles(command);
+    return changes.filter(change => !outputs.has(change.path.replace(/\\/g, '/').replace(/^\.\//, '')));
+}

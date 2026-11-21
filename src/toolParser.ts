@@ -685,3 +685,11 @@ function parseMcpCallBlock(body: string): McpCallTool | null {
     if (!server || !tool) { return null; }
     return { type: 'mcp_call', server, tool, args };
 }
+
+/**
+ * Said back for a tool block that could not be read (a required field missing, such as write_file without
+ * `filepath:`). Dropping it silently left the model believing it had run, or guessing at what went wrong.
+ */
+export function unreadableFenceResult(type: string): string {
+    return `[${type}] Not run: this block could not be read. A required field is missing or empty (for example \`filepath:\` for write_file and edit_file, \`command:\` for run_terminal). Write the block again, complete, in the format from the instructions.`;
+}

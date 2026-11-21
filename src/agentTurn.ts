@@ -6,6 +6,7 @@ import { isContextOverflow, overflowAsChunk } from './localServer';
 import { prepareLocalTurn } from './localTurn';
 import { streamDirect, parseDirectModelId } from './directProviderClient';
 import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
+import { scanXmlToolCalls, writtenToolCalls, xmlDisplayLimit } from './xmlToolCalls';
 import { Approvals } from './approvals';
 import { Compaction } from './compaction';
 import { STOPPED_NOTE, addSteer, steerNote } from './steering';
@@ -179,7 +180,7 @@ export class AgentTurn {
                     this._host.post({
                         type: 'appendContent',
                         id: msgId,
-                        text: `\n\n⚠ Evaluation token budget reached (${this._host.evaluationTokenBudget.toLocaleString()} cumulative tokens).\n`,
+                        text: `\n\n⚠ Evaluation token budget reached (${this._host.evaluationTokenBudget.toLocaleString('en-US')} cumulative tokens).\n`,
                     });
                     break;
                 }
@@ -305,9 +306,9 @@ export class AgentTurn {
                 };
 
                 // Dispatch every newly complete tool fence, sending the text before each first.
-                // `final` accepts a closing line that is the last thing in the stream.
+                // `final` accepts a closing line that is the last thing in the stream. Qwen's XML calls are dispatched in the same pass.
                 const dispatchFences = async (final: boolean): Promise<void> => {
-                    for (const fence of scanToolFences(fullContent, dispatchedUpTo, final).fences) {
+                    for (const fence of writtenToolCalls(fullContent, dispatchedUpTo, final)) {
                         const fenceStart = fence.start;
                         const fenceEnd = fence.end;
 
@@ -318,15 +319,13 @@ export class AgentTurn {
                         lastSentPos = fenceEnd;
                         dispatchedUpTo = fenceEnd;
 
-                        // Dispatch tool — toolStart is posted inside _dispatchTool,
-                        // which causes the webview to finalize the current text segment
-                        // and create a new one after the pill
-                        const tools = parseToolBody(fence.type, fence.body);
-                        if (tools.length > 0) {
-                            const dispatched = await dispatchToolCall(tools[0]);
-                            fencedToolResults.push(dispatched.result);
-                            if (!dispatched.keepGoing) { return; }
-                        }
+                        // Dispatch tool — toolStart is posted inside _dispatchTool, which makes the webview
+                        // finalize the current text segment and create a new one after the pill
+                        const tool = fence.tool;
+                        if (typeof tool === 'string') { inlineToolResults.push(tool); fencedToolResults.push(tool); continue; } // unreadable: said back, so it can be fixed
+                        const dispatched = await dispatchToolCall(tool);
+                        fencedToolResults.push(dispatched.result);
+                        if (!dispatched.keepGoing) { return; }
                     }
                 };
 
@@ -360,6 +359,7 @@ export class AgentTurn {
                     }
                     // Never display the body of a tool fence that is still open: it is either
                     // dispatched once complete or dropped if the stream is cut off.
+                    safeEnd = Math.min(safeEnd, xmlDisplayLimit(fullContent, dispatchedUpTo)); // nor an open XML call, or a line that may become one
                     const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
                     if (openFence !== -1) {
                         safeEnd = Math.min(safeEnd, openFence);
@@ -473,8 +473,9 @@ export class AgentTurn {
                 let droppedToolCall = false;
                 if (isCutoff) {
                     const openFence = scanToolFences(fullContent, dispatchedUpTo, false).unclosedStart;
-                    if (openFence !== -1) {
-                        fullContent = fullContent.slice(0, Math.max(openFence, lastSentPos));
+                    const open = [openFence, scanXmlToolCalls(fullContent, dispatchedUpTo, false).unclosedStart].filter(at => at !== -1);
+                    if (open.length) {
+                        fullContent = fullContent.slice(0, Math.max(Math.min(...open), lastSentPos));
                         droppedToolCall = true;
                     }
                 }
