@@ -39,6 +39,30 @@ test('indentation and whitespace-run drift can resolve a unique edit', () => {
   assert.doesNotMatch(updated, /finish\(\)/);
 });
 
+test('an edit matched without its indentation takes the file\'s, not both', () => {
+  const source = 'def add(a, b):\n    return a - b\n';
+  // Tab-indented old and new text, in a file indented with spaces (seen with qwen3 on Ollama)
+  const one = resolveEditMatch(source, '\treturn a - b');
+  assert.equal(one.match.mode, 'trimmed-boundary');
+  assert.equal(applyEditMatch(source, one.match, '\treturn a + b', '\treturn a - b'), 'def add(a, b):\n    return a + b\n');
+  // Outer newlines of the new text are not added a second time
+  const two = resolveEditMatch(source, '\n    return a - b\n');
+  assert.equal(applyEditMatch(source, two.match, '\n    return a + b\n', '\n    return a - b\n'), source.replace('-', '+'));
+  // Several lines: the tab of each line becomes the file's four spaces, also on a line the edit adds
+  const many = resolveEditMatch(source, 'def add(a, b):\n\treturn a - b');
+  assert.equal(many.match.mode, 'whitespace-tolerant');
+  assert.equal(applyEditMatch(source, many.match, 'def add(a, b):\n\tif a is None:\n\t\treturn b\n\treturn a + b', 'def add(a, b):\n\treturn a - b'),
+    'def add(a, b):\n    if a is None:\n        return b\n    return a + b\n');
+});
+
+test('a file indented with tabs keeps its tabs', () => {
+  const source = 'function f() {\n\tif (x) {\n\t\tgo();\n\t}\n}';
+  const requested = 'if (x) {\n    go();\n}';
+  const result = resolveEditMatch(source, requested);
+  assert.equal(applyEditMatch(source, result.match, 'if (x) {\n    stop();\n    go();\n}', requested),
+    'function f() {\n\tif (x) {\n\t\tstop();\n\t\tgo();\n\t}\n}');
+});
+
 test('ambiguous exact edits are rejected', () => {
   const source = 'const x = 1;\nconst x = 1;';
   assert.deepEqual(resolveEditMatch(source, 'const x = 1;'), { error: 'ambiguous', candidates: 2 });

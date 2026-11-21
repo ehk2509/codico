@@ -120,7 +120,13 @@ export class AcceptanceRecorder {
         }
         const known = new Set(this._evidence.map(e => e.id));
         const unknown = evidence.filter(e => !known.has(e.toUpperCase()));
-        if (unknown.length) { return { ok: false, text: `ERROR: no evidence ${unknown.join(', ')}. Evidence ids come from browser_expect results and from test, build and type-check commands (E1, E2…).` }; }
+        if (unknown.length) {
+            // Say what there is: a model that guessed an id otherwise guesses again, and loops
+            const have = this._evidence.length
+                ? `The evidence recorded so far is ${this._evidence.slice(-8).map(e => `${e.id} (${e.description}, ${e.unknown ? 'result unknown' : e.passed ? 'passed' : 'failed'})`).join('; ')}.`
+                : 'No evidence is recorded yet: a command that is not a test, build, type-check or lint run records none. Record the criterion with no evidence ids, as claimed.';
+            return { ok: false, text: `ERROR: no evidence ${unknown.join(', ')}. Evidence ids come from browser_expect results and from test, build and type-check commands (E1, E2…). ${have}` };
+        }
         criterion.claims.push({ at: this._tick(), result, how: how.trim().slice(0, 1000), evidence: evidence.map(e => e.toUpperCase()) });
         return { ok: true, text: `${criterion.id} recorded as ${result === 'pass' ? 'met' : 'not met'}${evidence.length ? ` on ${evidence.map(e => e.toUpperCase()).join(', ')}` : ', with no evidence Codico observed: it will count as claimed, not verified'}.` };
     }

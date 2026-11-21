@@ -2,6 +2,13 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.9.1 - 2026-11-21
+
+### Fixed
+- Local models: an edit whose old text matched only after relaxing whitespace (tabs written for a file indented with spaces) kept the file's indentation and added the model's (`    	return a + b`), or wrote tabs into a file indented with spaces. The new text now takes the file's indentation, and its outer whitespace is not inserted twice.
+- A test file run by its interpreter (`python test_calc.py`, `node tests/api.js`, `npx tsx src/a.spec.ts`) is a test run: it records evidence. Before, it recorded none, the agent cited evidence that did not exist, looped on acceptance until stopped, and the turn ended "Not accepted" though the test passed.
+- An acceptance claim citing evidence that does not exist is told which evidence does, so the model can correct it instead of guessing again.
+
 ## 0.9.0 - 2026-11-21
 
 ### Fixed

@@ -356,7 +356,7 @@ export class WorkspaceTools {
             let editMatch = resolved.match;
 
             const applyEdit = (replacement: string): string => {
-                const replaced = applyEditMatch(content, editMatch, replacement);
+                const replaced = applyEditMatch(content, editMatch, replacement, tool.oldStr);
                 // Use a negative lookbehind so existing \r\n pairs in replacement are not
                 // double-converted to \r\r\n when restoring the file's original line endings.
                 return hasCRLF ? replaced.replace(/(?<!\r)\n/g, '\r\n') : replaced;
@@ -370,7 +370,7 @@ export class WorkspaceTools {
             }
 
             // Full-file diff gives the reviewer complete context (before → proposed file)
-            const proposedLF = applyEditMatch(content, editMatch, tool.newStr);
+            const proposedLF = applyEditMatch(content, editMatch, tool.newStr, tool.oldStr);
             const editDiff = this._computeLineDiff(content, proposedLF);
 
             const editResult = await this._host.approvals.askWrite({ id: msgId, filepath: tool.filepath, diff: editDiff, editableContent: tool.newStr });
@@ -397,7 +397,7 @@ export class WorkspaceTools {
             }
 
             const effectiveNewStr = editResult.editedContent ?? tool.newStr;
-            const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr);
+            const newContentLF = applyEditMatch(content, editMatch, effectiveNewStr, tool.oldStr);
             // Recomputed when the user edited the replacement or the file changed during approval
             const finalEditDiff = this._computeLineDiff(content, newContentLF);
             const newContent = hasCRLF ? newContentLF.replace(/(?<!\r)\n/g, '\r\n') : newContentLF;
