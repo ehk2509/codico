@@ -340,7 +340,7 @@ test('read-only mode never permits persistent memory writes, even when approval 
     stream:async function* (history) {
       if(++n===1) yield {type:'native_tool',call:{id:'mem',name:'remember',arguments:{note:'a durable note'}}};
       else {
-        assert.match(history[history.length-1].content,/Denied: project memory writes/);
+        assert.match(history[history.length-1].content,/unavailable|Denied: project memory writes/);
         yield {type:'content',text:'Denied as required'};
       }
     }
@@ -448,4 +448,41 @@ test('delegated read-only agents do not inherit network or mutating capabilities
   });
   assert.match(await agent.run('Delegate inspection'), /Delegate completed/);
   assert.equal(helperSawWeb,false);
+});
+
+test('model receives only tools allowed by the active permission tier', async t => {
+  const cwd=fixture(t);
+  const cases=[
+    {permissions:'read', allowed:['read_file','delegate'], forbidden:['write_file','edit_file','remember','run_terminal','get_diagnostics']},
+    {permissions:'edits', allowed:['read_file','write_file','edit_file','remember'], forbidden:['run_terminal','get_diagnostics']},
+    {permissions:'all', allowed:['read_file','write_file','run_terminal','get_diagnostics'], forbidden:[]}
+  ];
+  for(const c of cases){
+    const agent=new StandaloneAgent({
+      cwd,model:'mock',permissions:c.permissions,
+      stream:async function* (_messages, definitions) {
+        const names=definitions.map(d=>d.name);
+        for(const tool of c.allowed) assert.ok(names.includes(tool),c.permissions+' should include '+tool);
+        for(const tool of c.forbidden) assert.ok(!names.includes(tool),c.permissions+' should exclude '+tool);
+        yield {type:'content',text:'ok'};
+      }
+    });
+    assert.equal(await agent.run('Inspect the workspace'),'ok');
+  }
+});
+
+test('a failed diagnostics command has unsuccessful SDK toolResult status', async t => {
+  const cwd=fixture(t);
+  const events=[];
+  let step=0;
+  const agent=new StandaloneAgent({
+    cwd,model:'mock',permissions:'all',onEvent:event=>events.push(event),
+    stream:async function* () {
+      if(++step===1) yield {type:'native_tool',call:{id:'diag1',name:'get_diagnostics',arguments:{}}};
+      else yield {type:'content',text:'Diagnostics failed as expected'};
+    }
+  });
+  agent.workspace.execute=async ()=>'Exit code: 7\nFound errors';
+  await agent.run('Run diagnostics');
+  assert.ok(events.some(e=>e.type==='toolResult'&&e.tool==='get_diagnostics'&&e.ok===false));
 });

@@ -151,6 +151,15 @@ export class StandaloneAgent {
 
     private available(): Set<string> {
         const tools = new Set(CORE_TOOLS);
+        // Do not advertise tools the current permission tier cannot execute.
+        // Tool availability is still checked again before dispatching native calls.
+        const permission = this.config.permissions ?? 'read';
+        if (permission === 'read') {
+            tools.delete('write_file'); tools.delete('edit_file'); tools.delete('remember');
+        }
+        if (permission !== 'all') {
+            tools.delete('run_terminal'); tools.delete('get_diagnostics');
+        }
         if (this.config.allowDelegation === false) { tools.delete('delegate'); }
         if (this.config.web) { tools.add('fetch_url'); tools.add('web_search'); }
         if (this.config.mcp?.tools.length) { tools.add('mcp_call'); }
@@ -167,7 +176,9 @@ export class StandaloneAgent {
         // Refresh project memory after a remember tool call, even within one turn.
         const project = this.config.project ? new ProjectContext(this.workspace.cwd).preamble : '';
         const mcp = this.config.mcp?.prompt ?? '';
-        return [CLI_SYSTEM_PROMPT, project, mcp].filter(Boolean).join('\n\n');
+        const enabled = [...this.available()].join(', ');
+        return [CLI_SYSTEM_PROMPT, 'Enabled tools for this session: ' + enabled, project, mcp]
+            .filter(Boolean).join('\n\n');
     }
 
     private provider(history: ChatMessage[], signal: AbortSignal, tools: NativeToolDefinition[]): AsyncIterable<StreamChunk> {
