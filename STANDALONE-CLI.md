@@ -34,7 +34,7 @@ In the interactive terminal, `/help`, `/model <id>`, `/clear`, and `/exit` are a
 
 Codico can read files by default. `--allow-edits` permits proposed writes and `--allow-commands` permits writes and shell commands, but **each action still requires an interactive confirmation**. In CI/non-interactive environments, modifications are denied unless you explicitly combine one of these permission flags with `--yes`.
 
-The standalone host prevents workspace path traversal, denies access to `.git`, `.env*`, and other protected locations, rejects symlink traversal, and truncates tool output. Shell commands still have the operating-system rights of the user running Codico, and are **not** fully sandboxed: only enable commands when you trust the task and review requests carefully. `--yes` bypasses per-action prompts and should be used only in isolated environments.
+The standalone host prevents workspace path traversal, denies access to `.git`, `.env*`, and other protected locations, honors `.codicoignore` and `.copilotignore` (loaded at session startup), rejects symlink traversal, and truncates tool output. Shell commands still have the operating-system rights of the user running Codico, and are **not** fully sandboxed: only enable commands when you trust the task and review requests carefully. `--yes` bypasses per-action prompts and should be used only in isolated environments.
 
 ## Cross-platform tests
 

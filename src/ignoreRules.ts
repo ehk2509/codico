@@ -9,44 +9,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { extraRuleFolders, toolFolders } from './toolRoot';
-
-interface CompiledRule {
-    negate: boolean;
-    anchored: boolean;
-    re: RegExp;
-}
-
-export function globToRegex(glob: string): RegExp { return _globToRegex(glob); }
-
-function _globToRegex(glob: string): RegExp {
-    let s = glob.replace(/[.+^$\{\}()|[\]\\]/g, '\\$&');
-    s = s.replace(/\*\*/g, '\x00');
-    s = s.replace(/\*/g, '[^/]*');
-    s = s.replace(/\?/g, '[^/]');
-    s = s.replace(/\x00\//g, '(?:.+/)?').replace(/\x00/g, '.*');
-    return new RegExp('^' + s + '$', 'i');
-}
-
-function _compile(raw: string): CompiledRule | null {
-    let line = raw.trim();
-    if (!line || line.startsWith('#')) { return null; }
-
-    const negate = line.startsWith('!');
-    if (negate) { line = line.slice(1); }
-    if (line.endsWith('/')) { line = line.slice(0, -1); }
-
-    const anchored = line.startsWith('/');
-    if (anchored) { line = line.slice(1); }
-
-    let re: RegExp;
-    if (anchored) {
-        const base = _globToRegex(line);
-        re = new RegExp(base.source.replace(/\$$/, '(?:\\/.*)?$'), 'i');
-    } else {
-        re = _globToRegex('**/' + line);
-    }
-    return { negate, anchored, re };
-}
+import { CompiledRule, compileIgnoreRules, ignoredByRules } from './ignorePattern';
+export { globToRegex } from './ignorePattern';
 
 export class IgnoreRules {
     private readonly _rulesByFolder = new Map<string, CompiledRule[]>();
@@ -59,10 +23,7 @@ export class IgnoreRules {
     private async _readRules(folder: vscode.WorkspaceFolder, filename: string): Promise<CompiledRule[]> {
         try {
             const bytes = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(folder.uri, filename));
-            return new TextDecoder().decode(bytes)
-                .split(/\r?\n/)
-                .map(_compile)
-                .filter((rule): rule is CompiledRule => rule !== null);
+            return compileIgnoreRules(new TextDecoder().decode(bytes));
         } catch {
             return [];
         }
@@ -92,13 +53,7 @@ export class IgnoreRules {
         if (!current) { return false; }
         const rules = this._rulesByFolder.get(this._key(current)) ?? [];
         const rel = relativePath.split(path.sep).join('/').replace(/^\.\//, '');
-        let ignored = false;
-        for (const rule of rules) {
-            if (rule.re.test(rel)) {
-                ignored = !rule.negate;
-            }
-        }
-        return ignored;
+        return ignoredByRules(rules, rel);
     }
 
     isLoadedFor(folder: vscode.WorkspaceFolder): boolean {

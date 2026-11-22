@@ -203,3 +203,21 @@ test('approved writes are atomic and preserve executable bits on POSIX', async t
   assert.match(await w.execute({ type: 'write_file', filepath: 'program', content: 'x'.repeat(2 * 1024 * 1024 + 1) }, signal), /2 MB/);
   assert.equal(fs.readFileSync(target, 'utf8'), 'new');
 });
+
+
+test('standalone honors .codicoignore and .copilotignore', async t => {
+  const cwd = fixture(t);
+  fs.writeFileSync(path.join(cwd, '.copilotignore'), 'hello.txt\n');
+  fs.writeFileSync(path.join(cwd, '.codicoignore'), '!hello.txt\nsecret.txt\nprivate/\n');
+  fs.writeFileSync(path.join(cwd, 'secret.txt'), 'sensitive-secret');
+  fs.mkdirSync(path.join(cwd, 'private'));
+  fs.writeFileSync(path.join(cwd, 'private', 'another.txt'), 'sensitive-secret');
+  const w = new NodeWorkspace(cwd);
+  const signal = new AbortController().signal;
+  assert.match(await w.execute({type:'read_file', filepath:'hello.txt'}, signal), /hello world/);
+  assert.throws(() => w.resolve('secret.txt'), /Ignored workspace path/);
+  assert.throws(() => w.resolve('private/another.txt'), /Ignored workspace path/);
+  assert.doesNotMatch(await w.execute({type:'list_directory',dirpath:'.'},signal), /secret.txt|private/);
+  assert.doesNotMatch(await w.execute({type:'search_files',pattern:'sensitive-secret',isRegex:false},signal), /secret.txt|private/);
+  assert.doesNotMatch(await w.execute({type:'find_files',pattern:'*.txt'},signal), /secret.txt|another.txt/);
+});

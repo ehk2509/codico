@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { buildTerminalEnvironment, clipTerminalOutput, runTerminalProcess } from '../terminalProcess';
 import type { ToolCall } from '../toolParser';
 import { computeLineDiff } from '../lineDiff';
+import { CompiledRule, compileIgnoreRules, ignoredByRules } from '../ignorePattern';
 
 export type CliPermission = 'read' | 'edits' | 'all';
 export type CliApproval = (kind: 'write' | 'command', description: string) => Promise<boolean>;
@@ -36,12 +37,32 @@ export class NodeWorkspace {
     readonly cwd: string;
     readonly permissions: CliPermission;
     private readonly approve: CliApproval;
+    private readonly ignoreRules: CompiledRule[];
 
     constructor(cwd: string, permissions: CliPermission = 'read', approve: CliApproval = async () => false) {
         this.cwd = fs.realpathSync(cwd);
         if (!fs.statSync(this.cwd).isDirectory()) { throw new Error('Workspace must be a directory'); }
         this.permissions = permissions;
         this.approve = approve;
+        const load = (name: string): CompiledRule[] => {
+            const filename = path.join(this.cwd, name);
+            try {
+                if (!fs.lstatSync(filename).isFile()) { throw new Error(name + ' must be a regular file'); }
+                return compileIgnoreRules(fs.readFileSync(filename, 'utf8'));
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return []; }
+                throw error;
+            }
+        };
+        this.ignoreRules = [...load('.copilotignore'), ...load('.codicoignore')];
+    }
+
+    private ignored(relative: string): boolean {
+        const parts = relative.split(path.sep).filter(Boolean);
+        for (let i = 1; i <= parts.length; i++) {
+            if (ignoredByRules(this.ignoreRules, parts.slice(0, i).join('/'))) { return true; }
+        }
+        return false;
     }
 
     /**
@@ -83,6 +104,7 @@ export class NodeWorkspace {
         if (rel === '..' || rel.startsWith('..' + path.sep) || path.isAbsolute(rel)) { throw new Error('Path escapes the workspace'); }
         const segments = rel.split(path.sep).filter(Boolean);
         if (segments.some(segment => PROTECTED.has(segment.toLowerCase()) || /^\.env\./i.test(segment))) { throw new Error('Protected path'); }
+        if (this.ignored(rel)) { throw new Error('Ignored workspace path'); }
         let current = this.cwd;
         for (const segment of segments) {
             current = path.join(current, segment);
@@ -107,10 +129,11 @@ export class NodeWorkspace {
                 if (visited++ >= 10_000) { break; }
                 if (item.isSymbolicLink()) { continue; }
                 const absolute = path.join(current, item.name);
+                const relative = path.relative(this.cwd, absolute).split(path.sep).join('/');
+                if (this.ignored(path.relative(this.cwd, absolute))) { continue; }
                 if (item.isDirectory()) {
                     if (!SKIP_DIRS.has(item.name) && !PROTECTED.has(item.name.toLowerCase()) && !item.name.startsWith('.env')) { pending.push(absolute); }
                 } else if (item.isFile() && !PROTECTED.has(item.name.toLowerCase()) && !item.name.startsWith('.env')) {
-                    const relative = path.relative(this.cwd, absolute).split(path.sep).join('/');
                     if (await collect(relative, absolute)) { return; }
                 }
             }
@@ -134,7 +157,7 @@ export class NodeWorkspace {
             case 'list_directory': {
                 const absolute = this.resolve(tool.dirpath || '.');
                 const names = await fs.promises.readdir(absolute, { withFileTypes: true });
-                return names.filter(e => !SKIP_DIRS.has(e.name) && !PROTECTED.has(e.name.toLowerCase()) && !e.name.startsWith('.env') && !e.isSymbolicLink())
+                return names.filter(e => !SKIP_DIRS.has(e.name) && !PROTECTED.has(e.name.toLowerCase()) && !e.name.startsWith('.env') && !e.isSymbolicLink() && !this.ignored(path.relative(this.cwd, path.join(absolute, e.name))))
                     .slice(0, 200).map(e => `${e.isDirectory() ? 'dir ' : 'file'} ${e.name}`).join('\n');
             }
             case 'search_files': {
