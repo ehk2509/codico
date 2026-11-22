@@ -1,84 +1,120 @@
 # Codico standalone CLI (Windows / macOS / Linux)
 
-Codico's new native CLI runs directly in **Node.js 20+**; it does **not** start VS Code, Electron, or a Linux display server. The original `codico run` and `codico automate` commands still use the existing editor-backed headless system and are not changed by this first migration.
+Codico's native CLI runs directly in **Node.js 20+**; it does **not** start VS Code, Electron, or a Linux display server. The original `codico run` and `codico automate` commands still use the editor-backed headless system and are unchanged.
 
-## Develop locally
+## Install and start
 
 ```sh
 npm ci
 npm run compile
-node bin/codico.js chat --model ollama/qwen2.5-coder:7b
+npm link          # makes the `codico` command available
+codico            # opens the interactive terminal in the current folder
 ```
 
-Or link the repository's command locally:
+On Windows PowerShell with script execution disabled (the default), `codico` may fail with "running scripts is disabled": delete `%APPDATA%\npm\codico.ps1` so PowerShell uses `codico.cmd` instead, or run `node bin/codico.js` directly.
+
+`codico doctor` checks Node, the selected model, provider keys, git and browser support, and says how to fix what is missing.
+
+## Models
+
+| Model ID | Where it runs | Needs |
+| --- | --- | --- |
+| `ollama/<name>` | Ollama at `http://localhost:11434` | the model pulled (`ollama pull <name>`) |
+| `ollama/<name>` + `--ollama-url <url>` | any local OpenAI-compatible server (llama.cpp, LM Studio, vLLM, Strata…) | the server running; Codico calls `<url>/v1/chat/completions` and lists models from `/v1/models` |
+| `direct:<provider>/<model>` | Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, xAI, Cerebras | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `XAI_API_KEY` or `CEREBRAS_API_KEY` |
+| OpenRouter ID (e.g. `anthropic/claude-sonnet-4.5`) | OpenRouter | `OPENROUTER_API_KEY` |
+| `claude-code/<sonnet\|opus\|haiku>`, `chatgpt/<model>` | your Claude Code or Codex login | the `claude` or `codex` command installed |
+
+Save a default so a plain `codico` uses it:
 
 ```sh
-npm link
-codico
+codico config set model ollama/qwen3:14b
+codico config set ollamaUrl http://127.0.0.1:8092   # only for a non-default local server
 ```
 
-Select an installed Ollama model with `--model ollama/<model-name>`; Ollama defaults to `http://localhost:11434`. Direct providers use `--model direct:provider/model` plus an environment key such as `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, or `ANTHROPIC_API_KEY`. OpenRouter uses an OpenRouter model ID plus `OPENROUTER_API_KEY`.
+Precedence: `--model` / `--ollama-url` flags, then `CODICO_MODEL`, then `~/.codico/config.json`. The config file is user-level only on purpose: a file in a repository could otherwise send your code to a model or endpoint of the repository's choosing.
 
-Examples:
+If the selected model cannot be used when a chat starts (not pulled, server not running, key missing), Codico says why in plain words, lists the models this computer can use and saves your pick. If a turn later fails because of the model, it offers another model and retries the request.
 
-```sh
-codico                         # interactive, read-only by default
-codico chat --model ollama/qwen2.5-coder:7b
-codico agent "Review package.json" --model direct:deepseek/deepseek-flash
-codico agent "Fix tests" --allow-commands --model ollama/qwen2.5-coder:7b
-```
+## Modes
 
-### The interactive terminal
-
-**Modes.** Before each session Codico asks how it should work in the folder (the last choice is pre-selected);
-Shift+Tab cycles the modes at the prompt and `/mode` opens the menu.
+Before each chat session Codico asks how it should work in the folder; the folder's last choice is pre-selected, so Enter keeps it. Shift+Tab cycles the modes at the prompt (**Ask → Plan → Agent → Auto**), `/mode` opens the menu, and the current mode is shown before the prompt (`agent ❯`).
 
 | Mode | What Codico does |
 | --- | --- |
-| Ask (`--ask`) | Reads and searches, answers questions. Cannot change files or run commands. |
-| Plan (`--plan`) | Read-only (enforced, whatever mode you came from). Writes a numbered plan with the files affected, then asks "Carry out this plan?": Enter runs it with Agent, Auto runs it without approvals, Esc keeps planning and your next message revises the plan. `/plan <task>` does the same from any mode. |
-| Agent | Edits files and runs commands; asks before each one (Enter approves, Esc denies). |
-| Auto (`--auto`) | Agent without approvals. Use only in folders you trust. |
+| **Ask** (`--ask`) | Reads and searches your code and answers questions. Cannot change files or run commands. |
+| **Plan** (`--plan`) | Read-only, enforced whatever mode you came from. Writes a numbered plan naming the files affected, then asks **"Carry out this plan?"**: *Yes, with Agent*, *Yes, with Auto*, or *keep planning*, in which case your next message revises the plan. `/plan <task>` does the same from any mode. |
+| **Agent** | Edits files and runs commands, asking before each one. |
+| **Auto** (`--auto`) | Agent without approvals. A warning is shown when it is turned on; use it only in folders you trust. |
 
-`--allow-edits` (edit files, no commands) remains available for scripts.
+Flags skip the startup question. `--allow-edits` (edit files, no commands) and `--allow-commands` remain available, mainly for scripts. Folder choices are kept in `~/.codico/workspaces.json`.
 
-The first chat in a folder checks the selected model. If it cannot be used (not pulled, Ollama not running, key missing),
-Codico lists the models this computer can use and saves your pick as the default. It then asks once what Codico may do in
-the folder (read only, edit files, or edit files and run commands; each action still needs approval) and remembers it in
-`~/.codico/workspaces.json`. `--allow-edits`/`--allow-commands` skip that question. Shift+Tab cycles the mode at the
-prompt, `/model` and `/mode` open pickers, and `/` alone opens a command menu. When a turn fails because of the model,
-the error is explained in plain words and Codico offers another model and retries the request.
+## Using the terminal
 
-Answers stream live with Markdown rendering; each tool call is one line (`● Update(src/a.ts)`) with a short result
-(`⎿ Exited with code 1` plus the last output lines). Approvals show a colored diff and take a single keypress:
-Enter (or `y`) approves, Esc (or `n`) denies, `a` approves that kind of action for the rest of the session. Keys typed while the agent works
-are kept for your next prompt and can never answer an approval.
+Answers stream live with Markdown rendering. Each tool call is one line with a short result:
+
+```
+● Write(index.html)
+  ⎿  Wrote index.html (6265 bytes)
+● Bash(npm test)
+  ⎿  Exited with code 1
+     ✖ todos survive a restart
+✓ Done · 18.4s · 7 tools · 10.8k in · 1.3k out
+```
+
+**Approvals** show the change as a colored diff and take one key: **Enter** (or `y`) approves, **Esc** (or `n`) denies, `a` approves that kind of action for the rest of the session. Only keys pressed after the approval appears count, so text typed while Codico works can never approve anything.
 
 | Input | Effect |
 | --- | --- |
-| `@path/file.ts`, `@path/file.ts:10-40` | Attach a file (read through the same workspace guard as tools) |
+| plain text | Ask for what you want: "add tests for utils.ts", "why does the build fail?" |
+| `@path/file.ts`, `@path/file.ts:10-40` | Attach a file (read through the same workspace guard as the tools) |
 | `!git status` | Run a command yourself; its output is shared with your next message |
+| `/` | Open the command menu |
 | line ending in `\` | Continue the prompt on the next line |
 | Tab | Complete `/commands`, project skills, `@agents` and file paths |
-| Ctrl+C | Interrupt the turn; at an empty prompt, twice to quit |
+| Shift+Tab | Switch mode |
+| Ctrl+C | Interrupt the turn; at an empty prompt, press twice to quit (`exit` also quits) |
 
-Commands: `/help`, `/status`, `/model [id]` (keeps the conversation), `/mode read|edits|all`, `/cost`, `/diff`,
-`/compact` (summarise the conversation into a new session), `/init` (write `AGENTS.md`), `/sessions`,
-`/resume [id-prefix|last]`, `/new`, `/clear`, `/skills`, `/mcp`, `/verbose`, `/plan <task>`, `/review <task>`, `/exit`.
+When a task needs more than its step budget (50 model requests per turn by default; `--max-steps`, or `codico config set maxSteps`), Codico asks **"Keep going?"**: Enter continues where it stopped, Esc stops.
 
-Other commands: `codico doctor` checks Node, the selected model (Ollama reachability and whether it is pulled, provider
-keys, Claude Code / Codex CLIs), git and browser support. `codico config list|get|set|unset` manages
-`~/.codico/config.json` (`model`, `ollamaUrl`, `maxSteps`, `verbose`). Precedence: flags, then `CODICO_MODEL`, then the
-config file. The config is user-level only on purpose: a project file could otherwise send your code to a model or
-endpoint of the repository's choosing. `codico -c` continues the latest session; `--verbose` shows full tool output;
-colors follow `NO_COLOR`/`FORCE_COLOR`/`--no-color`. When stdout is not a terminal, `codico agent` prints plain text as
-before, and `--json` output is unchanged (no `delta` events).
+On Windows, commands run in `cmd.exe`; the model is told so, and output in the console's code page (accented messages from `cmd.exe` and `dir`) is decoded correctly.
+
+### Commands
+
+| Command | Does |
+| --- | --- |
+| `/model [id]` | Choose the model from a list (or set it by ID); keeps the conversation and saves it as the default |
+| `/mode [ask\|plan\|agent\|auto]` | Switch mode |
+| `/plan <task>` | Plan read-only, then approve the plan to carry it out |
+| `/review <task>` | Review code for bugs and risks |
+| `/diff` | Show uncommitted changes and untracked files (git) |
+| `/init` | Write an `AGENTS.md` that explains the project to agents (needs Agent) |
+| `/new`, `/clear` | Start a new conversation |
+| `/sessions`, `/resume [id-prefix\|last]` | List or reopen saved conversations (`codico -c` continues the latest) |
+| `/compact` | Summarise the conversation into a new session to free up context |
+| `/status`, `/cost` | Model, mode, session and token use |
+| `/skills`, `/mcp` | Project agents and skills; connected MCP tools |
+| `/verbose` | Show or hide full tool output (also `--verbose`) |
+| `/help`, `/exit` | Short help; quit |
+
+### One-shot runs and scripts
+
+```sh
+codico agent "Review package.json"
+codico agent "Fix the failing tests" --auto
+codico agent "Plan the migration to ESM" --plan
+codico agent "Summarise src/" --json          # JSONL events
+```
+
+When stdout is not a terminal, `codico agent` prints plain text, and `--json` output has no streaming `delta` events. Colors follow `NO_COLOR`, `FORCE_COLOR` and `--no-color`.
+
+`codico config list|get|set|unset` manages `~/.codico/config.json` (`model`, `ollamaUrl`, `maxSteps`, `verbose`); `codico --version` prints the version.
 
 ## Permissions and security
 
-Codico can read files by default. `--allow-edits` permits proposed writes and `--allow-commands` permits writes and shell commands, but **each action still requires an interactive confirmation**. In CI/non-interactive environments, modifications are denied unless you explicitly combine one of these permission flags with `--yes`.
+In Ask and Plan the model is not given any tool that changes files or runs commands. In Agent, every edit and command needs your approval. In Auto and with `--yes`, approvals are skipped. In CI and other non-interactive runs, modifications are denied unless you combine a permission flag (`--allow-edits`, `--allow-commands`) with `--yes`, or use `--auto`.
 
-The standalone host prevents workspace path traversal, denies access to `.git`, `.env*`, and other protected locations, honors `.codicoignore` and `.copilotignore` (loaded at session startup), rejects symlink traversal, and truncates tool output. Shell commands still have the operating-system rights of the user running Codico, and are **not** fully sandboxed: only enable commands when you trust the task and review requests carefully. `--yes` bypasses per-action prompts and should be used only in isolated environments.
+In every mode, the standalone host prevents workspace path traversal, denies access to `.git`, `.env*` and other protected locations, honors `.codicoignore` and `.copilotignore` (loaded at session startup), rejects symlink traversal, and truncates tool output. Shell commands still have the operating-system rights of the user running Codico and are **not** fully sandboxed: use Auto and `--yes` only in folders and environments you trust.
 
 ## Cross-platform tests
 
