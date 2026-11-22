@@ -124,7 +124,8 @@ export class StandaloneAgent {
     }
 
     private systemPrompt(): string {
-        const project = this.config.project?.preamble ?? '';
+        // Refresh project memory after a remember tool call, even within one turn.
+        const project = this.config.project ? new ProjectContext(this.workspace.cwd).preamble : '';
         const mcp = this.config.mcp?.prompt ?? '';
         return [CLI_SYSTEM_PROMPT, project, mcp].filter(Boolean).join('\n\n');
     }

@@ -40,6 +40,25 @@ The standalone host prevents workspace path traversal, denies access to `.git`, 
 
 CI already runs the main Node.js suite on `ubuntu-latest`, `windows-latest` and `macos-latest`; the standalone tests are added to that suite. No platform-specific shell scripts are needed for installation or invocation. Terminal commands are launched with Codico's existing `terminalProcess` implementation, which uses the appropriate Windows or POSIX shell.
 
-## Current scope
+## Additional standalone capabilities
 
-The initial standalone agent reuses Codico's existing provider clients, native tool schemas, parser, conversation-history protocol and command runner. It supports reading, listing, searching, editing, writing and executing approved commands. VS Code-only tools (LSP, debugger, browser, background agent teams), persisted threads, richer UI diff approvals, and MCP integration have not yet been ported. This is an incremental runtime extraction, not yet an npm-published standalone package or a complete replacement for the VS Code extension.
+The current implementation includes workspace-scoped persistent sessions (`--resume last`, `/sessions`, `/resume`, `/new`),
+project instructions (`AGENTS.md`, `.codico/instructions.md`), project agents and skills,
+approval-gated MCP servers (`--allow-mcp`), approval-gated external web fetch and search (`--allow-web`),
+Playwright browser tools (`--allow-browser`), project memory (`remember`), read-only delegated subagents,
+lexical symbol search, local TypeScript diagnostics, and authenticated Claude Code / Codex provider modes.
+
+The npm-packaged `@codico/cli` under `packages/cli` provides an independent `codico` executable and Node.js SDK.
+Build a local tarball with `npm run package:cli`; publishing to the npm registry requires a separate release.
+The packaged CLI also accepts `codico run` as a standalone one-shot alias; the repository's original
+`codico run` and `codico automate` remain editor-backed for backward compatibility.
+
+CLI sessions persist to `~/.codico/sessions` in workspace-specific private directories. Use `--no-session`
+to opt out. External tools and MCP subprocesses execute with the current user's operating-system rights.
+All potentially mutating actions require an explicit opt-in and approval, except that `--yes` bypasses
+individual approvals for enabled tools; do not use it on untrusted workspaces or hosts.
+
+**Remaining gaps:** The standalone CLI does not replicate VS Code's interactive debugger, full LSP
+references/hover, visual screenshot interpretation, parallel Git worktree teams, or the existing
+editor-backed automation watcher. The CLI's `lsp_symbol` uses lexical fallback rather than a language
+server. Therefore, this is not complete VS Code feature parity.

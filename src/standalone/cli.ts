@@ -18,6 +18,7 @@ export const HELP = [
 '  codico                            Start an interactive terminal session',
 '  codico chat [options]             Interactive agent',
 '  codico agent "<task>" [options]   One-shot agent task for CI/scripts',
+'  codico run "<task>" [options]     One-shot alias in the npm CLI',
 '',
 'Options:',
 '  --cwd <directory>                 Workspace (default: current directory)',
@@ -72,8 +73,8 @@ export interface CliOptions {
 
 export function parseCliArgs(argv:string[]):CliOptions {
     const args=[...argv];
-    const mode=args[0]==='agent'?'agent':'chat';
-    if(args[0]==='agent'||args[0]==='chat'){args.shift();}
+    const mode=args[0]==='agent'||args[0]==='run'?'agent':'chat';
+    if(args[0]==='agent'||args[0]==='chat'||args[0]==='run'){args.shift();}
     const opts:CliOptions={
         mode,prompt:'',cwd:process.cwd(),model:process.env.CODICO_MODEL||'ollama/qwen2.5-coder:7b',
         modelExplicit:false,permissions:'read',yes:false,maxSteps:20,ollamaUrl:'http://localhost:11434',
