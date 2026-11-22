@@ -32,7 +32,7 @@ test('CLI parser is portable and read-only by default', () => {
 test('workspace tools cannot escape root or traverse symlinks', async t => {
   const cwd = fixture(t);
   const w = new NodeWorkspace(cwd);
-  assert.equal(w.resolve('hello.txt'), path.join(cwd, 'hello.txt'));
+  assert.equal(w.resolve('hello.txt'), path.join(w.cwd, 'hello.txt'));
   assert.throws(() => w.resolve('../secret.txt'), /escapes the workspace/);
   assert.throws(() => w.resolve('C:\\windows\\system.ini'), /Absolute paths/);
   assert.throws(() => w.resolve('.git/config'), /Protected path/);
