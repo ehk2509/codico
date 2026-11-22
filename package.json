@@ -783,7 +783,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && npm run bundle",
+    "compile": "tsc -p ./ && npm run bundle && node scripts/prepare-cli-package.js",
     "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --external:playwright-core --sourcemap --outfile=dist/extension.js && esbuild src/packageTools.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/package-tools.js && esbuild src/standalone/index.ts --bundle --platform=node --target=node20 --format=cjs --external:playwright-core --outfile=dist/standalone.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",

@@ -12,6 +12,12 @@ const MAX_SOURCE = 24_000;
 function regularFile(root: string, relative: string): string | undefined {
     const file = path.join(root, relative);
     try {
+        // Reject every symlink component, not just the final file.
+        let current = root;
+        for (const segment of relative.split('/').filter(Boolean)) {
+            current = path.join(current, segment);
+            if (fs.lstatSync(current).isSymbolicLink()) { return undefined; }
+        }
         const stat = fs.lstatSync(file);
         if (!stat.isFile() || stat.size > MAX_SOURCE) { return undefined; }
         return fs.readFileSync(file, 'utf8');

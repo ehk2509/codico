@@ -32,7 +32,8 @@ export function streamAuthenticatedCli(
     }
     if (model.startsWith('chatgpt/')) {
         const cli=locate('codex','CODICO_CODEX_PATH','@openai/codex','bin/codex.js');
-        return streamChatGPT(cli,history,model.slice('chatgpt/'.length),undefined,signal,'medium',prompt);
+        return streamChatGPT(cli,history,model.slice('chatgpt/'.length),undefined,signal,'medium',
+            prompt + '\nNever call Codex built-in apply_patch or request_user_input; those tools are not provided by Codico.');
     }
     throw new Error('Unsupported CLI provider: '+model);
 }

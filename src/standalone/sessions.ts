@@ -29,6 +29,11 @@ export class SessionStore {
     }
 
     private ensureDir(): void {
+        // A symlink in the private session hierarchy could redirect the files elsewhere.
+        const parent = path.dirname(this.root);
+        if (fs.existsSync(parent) && fs.lstatSync(parent).isSymbolicLink()) {
+            throw new Error('Session parent cannot be a symlink');
+        }
         fs.mkdirSync(this.root, { recursive: true, mode: 0o700 });
         if (!fs.lstatSync(this.root).isDirectory()) { throw new Error('Session directory must not be a symlink'); }
         if (process.platform !== 'win32') { fs.chmodSync(this.root, 0o700); }
