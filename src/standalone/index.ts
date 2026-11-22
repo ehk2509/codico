@@ -1,4 +1,10 @@
-/** Public Node.js entry point for the standalone CLI and future SDK. */
 export { main, parseCliArgs, HELP } from './cli';
 export { StandaloneAgent, CLI_SYSTEM_PROMPT } from './agent';
 export { NodeWorkspace } from './nodeWorkspace';
+export { SessionStore } from './sessions';
+export { ProjectContext } from './projectContext';
+export { StdioMcp, loadMcpConfig } from './mcp';
+export { CliBrowser } from './browser';
+export type { StandaloneConfig, StandaloneEvent } from './agent';
+export type { CliOptions } from './cli';
+export type { SavedSession } from './sessions';

@@ -784,7 +784,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./ && npm run bundle",
-    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --external:playwright-core --sourcemap --outfile=dist/extension.js && esbuild src/packageTools.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/package-tools.js && esbuild src/standalone/index.ts --bundle --platform=node --target=node20 --format=cjs --outfile=dist/standalone.js",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --format=cjs --external:vscode --external:playwright-core --sourcemap --outfile=dist/extension.js && esbuild src/packageTools.ts --bundle --platform=node --target=node18 --format=cjs --outfile=dist/package-tools.js && esbuild src/standalone/index.ts --bundle --platform=node --target=node20 --format=cjs --external:playwright-core --outfile=dist/standalone.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test --test-timeout=120000",
@@ -793,7 +793,9 @@
     "test:ui": "node --test tests/webview-ui/panel.ui.js",
     "check": "npm test",
     "eval:coding": "node scripts/eval/run.js",
-    "test:cli": "node --test tests/standalone.test.js"
+    "test:cli": "node --test tests/standalone.test.js",
+    "package:cli": "npm run compile && node scripts/prepare-cli-package.js && npm pack ./packages/cli",
+    "package:cli:check": "node scripts/prepare-cli-package.js && node packages/cli/bin/codico.js --help && npm pack ./packages/cli --dry-run"
   },
   "devDependencies": {
     "@types/node": "^18.19.0",
