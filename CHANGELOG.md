@@ -2,6 +2,27 @@
 
 All notable changes to Codico will be documented in this file.
 
+## Unreleased
+
+### Added
+- Standalone CLI: a modern terminal interface. Answers stream live with Markdown rendering (headings, lists, quotes, highlighted code blocks); tool calls the model writes as text are hidden while streaming. Each tool call is one line with a short result, a spinner shows elapsed time and tokens, and each turn ends with its time, tool count and token use.
+- Standalone CLI: approvals show a colored diff and take a single keypress (Enter or `y` approves, Esc or `n` denies, `a` approves for the rest of the session); keys typed during a turn are kept as type-ahead and cannot answer an approval.
+- Standalone CLI: `@file` attachments (with line ranges), Tab completion for commands, skills, agents and paths, persistent prompt history, `!command` shell passthrough, multi-line prompts with a trailing `\`.
+- Standalone CLI: `/status`, `/mode`, `/cost`, `/diff`, `/compact`, `/init`, `/verbose`; `/model` keeps the conversation; `/resume` accepts an ID prefix.
+- Standalone CLI: `codico doctor`, `codico config`, `codico --version`, `-c`/`--continue`, `--verbose`, `--no-color`; user defaults in `~/.codico/config.json`.
+- Standalone CLI, easier to use: the first chat in a folder checks that the model works and, if it does not, offers the models this computer can use (pulled Ollama models, Claude Code / Codex logins, providers with an API key) and saves the choice; it then asks once what Codico may do in the folder (read only / edit files / edit and run commands, every action still approved) and remembers it. Shift+Tab changes it; `/model` and `/mode` open arrow-key pickers; `/` opens a command menu; `/help` is a short chat guide; `exit` and `quit` quit.
+- Standalone CLI: four chat modes, chosen in the menu before each session, with Shift+Tab or `/mode`: **Ask** (answers questions, changes nothing), **Plan** (read-only, enforced; writes a step-by-step plan, then "Carry out this plan?" runs it with Agent or Auto, or the next message revises it), **Agent** (edits files and runs commands, asking before each one) and **Auto**. `/plan <task>` plans read-only from any mode. `--ask` and `--plan` start in those modes; folders saved as read-only or edit-and-run before become Ask and Agent.
+- Standalone CLI: Auto mode (`--auto`, `/mode auto`, Shift+Tab, or the menu before each session) edits files and runs commands without asking; a warning is shown when it is turned on. The mode menu now opens before every chat session with the folder's last choice pre-selected; `--auto` and `--allow-*` skip it.
+- Standalone CLI: failures are explained in plain words with a next step ("The model "x" isn't installed in Ollama. Choose another with /model, or install it: ollama pull x"); when the model is the problem, Codico offers a working model and retries the request.
+- SDK: `delta` events stream reply text; `TranscriptRenderer`, `MarkdownStream` and the config/doctor helpers are exported.
+
+### Fixed
+- Windows: command output in the console's code page (cmd.exe messages, `dir`) was decoded as UTF-8, so French and other accented text showed as "ex�cutable"; output that is not UTF-8 is now read in the OEM code page (850, 437, …). Shared with the VS Code extension's terminal runner.
+- Standalone CLI: the model was not told its commands run in cmd.exe on Windows and used `pwd`, `ls` and `2>/dev/null`; the system prompt now states the OS, shell and command syntax to use.
+- Standalone CLI: the default budget of 20 model requests per turn stopped app-sized tasks halfway; it is now 50, and when it runs out in a chat, Enter keeps going (Esc stops) instead of an error.
+- Standalone CLI: Ctrl+C during a turn did not interrupt it (readline consumed the key); it now stops the turn.
+- Standalone agent: a reply interrupted by an abort was returned as a finished (empty) answer when the provider ended the stream quietly; the run now rejects with "Agent stopped". The interrupted request is closed in the history, so the next prompt is not read as its continuation.
+
 ## 0.9.2 - 2026-11-22
 
 ### Fixed
