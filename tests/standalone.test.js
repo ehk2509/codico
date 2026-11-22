@@ -135,7 +135,7 @@ test('unsupported text-format tool calls are returned as errors to the model', a
     cwd, model: 'mock',
     stream: async function* (history) {
       if (++turn === 1) {
-        yield { type: 'content', text: '```web_search\\nquery: cat\\n```' };
+        yield { type: 'content', text: '```web_search\nquery: cat\n```' };
       } else {
         assert.match(history[history.length - 1].content, /web_search.*unavailable/);
         yield { type: 'content', text: 'Web searching is unavailable in the CLI.' };
