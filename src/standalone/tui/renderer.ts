@@ -60,7 +60,7 @@ export function toolLabel(tool: string): string {
 }
 
 /** One-line human summary of a tool result. */
-export function summarizeResult(tool: string, text: string, ok: boolean): { summary: string; preview: string[] } {
+export function summarizeResult(tool: string, text: string, ok: boolean): { summary: string; preview: string[]; quiet?: boolean } {
     const clean = sanitize(text);
     const lines = clean.split('\n');
     if (!ok) {
@@ -69,7 +69,11 @@ export function summarizeResult(tool: string, text: string, ok: boolean): { summ
             const body = lines.filter(l => l.trim() && !/^Exit code:/.test(l));
             return { summary: code ? `Exited with code ${code}` : lines[0], preview: body.slice(-6) };
         }
-        return { summary: lines[0].slice(0, 300), preview: [] };
+        // Looking for a file that is not there is ordinary exploring, not a failure: say it plainly.
+        if (/ENOENT|no such file or directory|cannot find the (?:file|path)/i.test(clean)) { return { summary: 'Not found', preview: [], quiet: true }; }
+        if (/Ignored workspace path/.test(clean)) { return { summary: 'Skipped: excluded by .codicoignore', preview: [], quiet: true }; }
+        if (/Protected path/.test(clean)) { return { summary: 'Skipped: protected file (.git, .env…)', preview: [], quiet: true }; }
+        return { summary: lines[0].replace(/^Tool error:\s*/, '').slice(0, 300), preview: [] };
     }
     switch (tool) {
         case 'read_file': {
@@ -116,6 +120,8 @@ export class TranscriptRenderer {
     readonly spinner: Spinner;
     private markdown: MarkdownStream | undefined;
     private streamed = false;
+    /** Argument of the running tool call, to name the file in a short result. */
+    private toolArg = '';
     turn: TurnStats = { tools: 0, failed: 0, promptTokens: 0, completionTokens: 0, started: Date.now() };
     readonly totals = { promptTokens: 0, completionTokens: 0, turns: 0 };
 
@@ -185,6 +191,7 @@ export class TranscriptRenderer {
                 this.streamed = false;
                 this.turn.tools++;
                 const arg = sanitize(event.text ?? '').replace(/\s+/g, ' ').trim();
+                this.toolArg = arg;
                 const label = p.bold(toolLabel(event.tool ?? 'tool'));
                 const width = terminalWidth(this.err);
                 this.err.write(`${p.accent(SYMBOLS.dot)} ${label}${arg ? p.gray('(') + truncate(arg, width - 20) + p.gray(')') : ''}\n`);
@@ -194,11 +201,13 @@ export class TranscriptRenderer {
             case 'toolResult': {
                 this.spinner.stop();
                 const ok = event.ok !== false;
-                if (!ok) { this.turn.failed++; }
-                const { summary, preview } = summarizeResult(event.tool ?? '', event.text ?? '', ok);
+                const { summary, preview, quiet } = summarizeResult(event.tool ?? '', event.text ?? '', ok);
+                // A missing or skipped file is part of exploring: shown calmly and not counted as a failure.
+                if (!ok && !quiet) { this.turn.failed++; }
                 const denied = /^Denied:/.test(event.text ?? '');
-                const color = ok ? p.gray : denied ? p.yellow : p.red;
-                this.err.write(`  ${p.gray(SYMBOLS.branch)}  ${color(truncate(summary, terminalWidth(this.err) - 8))}\n`);
+                const color = ok || quiet ? p.gray : denied ? p.yellow : p.red;
+                const shown = summary === 'Not found' && this.toolArg ? `Not found: ${this.toolArg}` : summary;
+                this.err.write(`  ${p.gray(SYMBOLS.branch)}  ${color(truncate(shown, terminalWidth(this.err) - 8))}\n`);
                 const extra = this.verbose ? sanitize(event.text ?? '').split('\n').slice(0, 40) : preview;
                 for (const line of extra) { this.err.write('     ' + p.gray(truncate(line, terminalWidth(this.err) - 8)) + '\n'); }
                 this.spinner.start('Thinking');

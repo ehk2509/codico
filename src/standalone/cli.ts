@@ -17,6 +17,7 @@ import { PLAN_PROMPT, REVIEW_PROMPT } from '../agentPrompts';
 import { CONFIG_KEYS, configFile, loadUserConfig, setUserConfig, workspaceMode, rememberWorkspaceMode } from './config';
 import { CUSTOM_MODEL, friendlyError, modelChoices, modelProblem } from './models';
 import { select, SelectOptions } from './tui/select';
+import { isUserRequest, userRequestText } from '../historyCompaction';
 import { cliVersion, formatDoctor, runDoctor } from './doctor';
 import { detectColor, painter, Paint, sanitize, SYMBOLS, displayWidth, terminalWidth, truncate } from './tui/ansi';
 import { TranscriptRenderer, colorDiff, formatTokens } from './tui/renderer';
@@ -624,6 +625,30 @@ export async function main(argv:string[]):Promise<number> {
             stdout.write(p.gray('  Press shift+tab or type /mode to change it at any time.')+'\n\n');
         }else if(opts.auto){
             stdout.write(pe.yellow(`  ! Auto mode: Codico will edit files and run commands without asking. Commands run with your account's full rights.`)+'\n');
+        }
+        // A recent conversation in this folder: offer to pick it up instead of starting from nothing.
+        if(!resumed&&store){
+            const last=store.latest();
+            // What the user typed: not tool results (old or new format), summaries or Codico's own prompts.
+            const requests=last?last.history.filter(m=>isUserRequest(m)&&
+                !/^(\[|You are a task planner|The user approved the plan|Continue the task from where)/.test(userRequestText(m,200).trimStart())):[];
+            const age=last?Date.now()-Date.parse(last.updatedAt):Infinity;
+            if(last&&requests.length&&age<3*24*3600_000){
+                const ago=age<3600_000?`${Math.max(1,Math.round(age/60_000))} min ago`:age<86400_000?`${Math.round(age/3600_000)} h ago`:`${Math.round(age/86400_000)} d ago`;
+                const lastAsked=userRequestText(requests[requests.length-1],70).replace(/\s+/g,' ').trim();
+                const choice=await pick<'continue'|'new'>({
+                    title:`Continue your last conversation here? (${ago}: "${lastAsked}")`,
+                    choices:[{value:'continue',label:'Continue it'},{value:'new',label:'Start a new conversation'}],
+                    footer:'enter to continue · esc for a new one · codico -c skips this',
+                });
+                if(choice==='continue'){
+                    session=last;
+                    agent=makeAgent(last.history);
+                    if(session.model!==opts.model){session.model=opts.model;}
+                    resumed=true;
+                }
+                stdout.write('\n');
+            }
         }
         stdout.write(banner(p,version,opts.model,modeOf(opts),opts.cwd,session?.id,resumed));
         if(resumed&&session){stdout.write(p.gray(`  ${session.history.filter(m=>m.role==='user').length} earlier messages restored`)+'\n\n');}
