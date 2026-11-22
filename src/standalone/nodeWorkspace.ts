@@ -1,6 +1,7 @@
 /** Portable Node.js workspace tools used by Codico outside the VS Code extension host. */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { buildTerminalEnvironment, clipTerminalOutput, runTerminalProcess } from '../terminalProcess';
 import type { ToolCall } from '../toolParser';
 import { computeLineDiff } from '../lineDiff';
@@ -41,6 +42,36 @@ export class NodeWorkspace {
         if (!fs.statSync(this.cwd).isDirectory()) { throw new Error('Workspace must be a directory'); }
         this.permissions = permissions;
         this.approve = approve;
+    }
+
+    /**
+     * Publish a complete file in a single rename, rather than truncating the destination.
+     * Renaming replaces a final symlink instead of following it, protecting against a
+     * symlink introduced after approval. Preserve POSIX executable mode on replacements.
+     */
+    private async replaceAtomic(target: string, content: string): Promise<void> {
+        const relative = path.relative(this.cwd, target);
+        this.resolve(relative);
+        const parent = path.dirname(target);
+        await fs.promises.mkdir(parent, { recursive: true });
+        this.resolve(relative);
+        const temp = path.join(parent, `.codico-write-${randomUUID()}.tmp`);
+        try {
+            const previous = await fs.promises.stat(target).catch((error: NodeJS.ErrnoException) => {
+                if (error.code === 'ENOENT') { return undefined; }
+                throw error;
+            });
+            await fs.promises.writeFile(temp, content, {
+                encoding: 'utf8', flag: 'wx', mode: previous?.mode ?? 0o666,
+            });
+            if (previous && process.platform !== 'win32') {
+                await fs.promises.chmod(temp, previous.mode);
+            }
+            this.resolve(relative);
+            await fs.promises.rename(temp, target);
+        } finally {
+            await fs.promises.rm(temp, { force: true }).catch(() => {});
+        }
     }
 
     /** Reject escapes and symlink traversal, including a symlink inside an otherwise allowed path. */
@@ -142,6 +173,7 @@ export class NodeWorkspace {
                 let original: string | undefined;
                 try { original = await fs.promises.readFile(target, 'utf8'); }
                 catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
+                if (Buffer.byteLength(tool.content, 'utf8') > FILE_LIMIT) { return 'Edit rejected: proposed file exceeds 2 MB limit'; }
                 if (original === tool.content) { return `Unchanged ${tool.filepath}`; }
                 const diff = computeLineDiff(original ?? '', tool.content, 80);
                 if (!await this.approve('write', `Write ${tool.filepath}\n${diff}`)) { return 'Denied: user did not approve file write'; }
@@ -150,11 +182,7 @@ export class NodeWorkspace {
                     throw error;
                 });
                 if (current !== original) { return 'Edit rejected: file changed while awaiting approval'; }
-                // Recheck after approval, so symlinks installed during the prompt are rejected.
-                this.resolve(tool.filepath);
-                await fs.promises.mkdir(path.dirname(target), { recursive: true });
-                this.resolve(tool.filepath);
-                await fs.promises.writeFile(target, tool.content, { encoding: 'utf8', flag: 'w' });
+                await this.replaceAtomic(target, tool.content);
                 return `Wrote ${tool.filepath} (${Buffer.byteLength(tool.content, 'utf8')} bytes)`;
             }
             case 'edit_file': {
@@ -163,12 +191,13 @@ export class NodeWorkspace {
                 const original = await fs.promises.readFile(target, 'utf8');
                 if (!tool.oldStr || original.split(tool.oldStr).length !== 2) { return 'Edit rejected: old_str must match exactly once'; }
                 const proposed = original.replace(tool.oldStr, tool.newStr);
+                if (Buffer.byteLength(proposed, 'utf8') > FILE_LIMIT) { return 'Edit rejected: proposed file exceeds 2 MB limit'; }
                 const diff = computeLineDiff(original, proposed, 80);
                 if (!await this.approve('write', `Edit ${tool.filepath}\n${diff}`)) { return 'Denied: user did not approve edit'; }
                 this.resolve(tool.filepath);
                 const latest = await fs.promises.readFile(target, 'utf8');
                 if (latest !== original) { return 'Edit rejected: file changed while awaiting approval'; }
-                await fs.promises.writeFile(target, latest.replace(tool.oldStr, tool.newStr), 'utf8');
+                await this.replaceAtomic(target, proposed);
                 return `Edited ${tool.filepath}`;
             }
             case 'run_terminal': {

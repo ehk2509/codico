@@ -114,6 +114,7 @@ export class StandaloneAgent {
             let response = '';
             let reasoning = '';
             const nativeCalls: NativeToolCall[] = [];
+            let prematureFinish: string | undefined;
             const transport = this.config.stream?.(this.history, DEFINITIONS, signal) ?? this.provider(this.history, signal);
             for await (const chunk of transport) {
                 if (signal.aborted) { throw new Error('Agent stopped'); }
@@ -122,14 +123,17 @@ export class StandaloneAgent {
                 else if (chunk.type === 'native_tool') { nativeCalls.push(chunk.call); }
                 else if (chunk.type === 'usage') { this.emit({ type: 'usage', promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens }); }
                 else if (chunk.type === 'stream_error') { throw new Error(chunk.message); }
+                else if (chunk.type === 'finish' && ['length', 'max_tokens', 'content_filter'].includes(chunk.reason)) { prematureFinish = chunk.reason; }
                 else if (chunk.type === 'thinking') { this.emit({ type: 'thinking', text: chunk.text }); }
             }
+            if (prematureFinish) { throw new Error(`Model response ended prematurely (${prematureFinish}); task may be incomplete`); }
             const written = writtenToolCalls(response, 0, true);
             const visibleText = written.reduceRight((value, item) => value.slice(0, item.start) + value.slice(item.end), response).trim();
             if (visibleText) { this.emit({ type: 'text', text: visibleText }); lastAnswer = visibleText; }
             // Share the editor agent's parser: fenced calls and Qwen XML calls are both supported.
             const textTools = nativeCalls.length === 0 ? written.filter(item => typeof item.tool !== 'string' && TOOLS.has(item.tool.type)).map(item => item.tool as ToolCall) : [];
-            const malformed = nativeCalls.length === 0 ? written.filter(item => typeof item.tool === 'string').map(item => item.tool as string) : [];
+            const malformed = nativeCalls.length === 0 ? written.filter(item => typeof item.tool === 'string' || !TOOLS.has(item.tool.type))
+                .map(item => typeof item.tool === 'string' ? item.tool : `Tool '${item.tool.type}' is unavailable in the standalone CLI`) : [];
             if (nativeCalls.length === 0 && textTools.length === 0 && malformed.length === 0) {
                 this.history.push({ role: 'assistant', content: response });
                 return lastAnswer || response;
@@ -155,7 +159,7 @@ export class StandaloneAgent {
         }
         const note = `Stopped after ${maxSteps} model requests. The task may be incomplete.`;
         this.emit({ type: 'text', text: note });
-        return lastAnswer ? `${lastAnswer}\n${note}` : note;
+        throw new Error(note);
     }
 
     private async executeTool(tool: ToolCall, signal: AbortSignal): Promise<string> {
@@ -163,7 +167,9 @@ export class StandaloneAgent {
         let result: string;
         try { result = await this.workspace.execute(tool, signal); }
         catch (error) { result = `Tool error: ${error instanceof Error ? error.message : String(error)}`; }
-        this.emit({ type: 'toolResult', tool: tool.type, text: result.slice(0, 12000), ok: !/^(Denied:|Tool error:|Edit rejected:|Tool ')/.test(result) });
+        const ok = !/^(Denied:|Tool error:|Edit rejected:|Tool ')/.test(result) &&
+            (tool.type !== 'run_terminal' || /^Exit code: 0(?:\s|$)/.test(result) && !/\((?:timed out|stopped)\)/.test(result));
+        this.emit({ type: 'toolResult', tool: tool.type, text: result.slice(0, 12000), ok });
         return result;
     }
 }

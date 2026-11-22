@@ -126,3 +126,80 @@ test('Qwen XML tool calls share the existing Codico parser', async t => {
   assert.equal(await agent.run('read'), 'Read hello.txt successfully.');
   assert.equal(turn, 2);
 });
+
+
+test('unsupported text-format tool calls are returned as errors to the model', async t => {
+  const cwd = fixture(t);
+  let turn = 0;
+  const agent = new StandaloneAgent({
+    cwd, model: 'mock',
+    stream: async function* (history) {
+      if (++turn === 1) {
+        yield { type: 'content', text: '```web_search\\nquery: cat\\n```' };
+      } else {
+        assert.match(history[history.length - 1].content, /web_search.*unavailable/);
+        yield { type: 'content', text: 'Web searching is unavailable in the CLI.' };
+      }
+    },
+  });
+  assert.match(await agent.run('search'), /unavailable/);
+  assert.equal(turn, 2);
+});
+
+test('exhausting the model step budget fails rather than claiming completion', async t => {
+  const cwd = fixture(t);
+  const agent = new StandaloneAgent({
+    cwd, model: 'mock', maxSteps: 1,
+    stream: async function* () {
+      yield { type: 'native_tool', call: { id: 'call1', name: 'read_file', arguments: { filepath: 'hello.txt' } } };
+    },
+  });
+  await assert.rejects(agent.run('read then finish'), /Stopped after 1 model requests/);
+});
+
+test('truncated model streams cannot claim an agent task completed', async t => {
+  const cwd = fixture(t);
+  const agent = new StandaloneAgent({
+    cwd, model: 'mock',
+    stream: async function* () {
+      yield { type: 'content', text: 'I am about to complete' };
+      yield { type: 'finish', reason: 'length' };
+    },
+  });
+  await assert.rejects(agent.run('fix the bug'), /ended prematurely/);
+});
+
+test('failed shell commands are reported as unsuccessful tool events', async t => {
+  const cwd = fixture(t);
+  const events = [];
+  let turn = 0;
+  const agent = new StandaloneAgent({
+    cwd, model: 'mock', permissions: 'all', approve: async () => true,
+    onEvent: e => events.push(e),
+    stream: async function* () {
+      if (++turn === 1) {
+        yield { type: 'native_tool', call: {
+          id: 'cmd1', name: 'run_terminal',
+          arguments: { command: `"${process.execPath}" -e "process.exit(7)"` }
+        } };
+      } else { yield { type: 'content', text: 'The command failed.' }; }
+    },
+  });
+  assert.match(await agent.run('run failing command'), /failed/);
+  assert.ok(events.some(e => e.type === 'toolResult' && e.tool === 'run_terminal' && e.ok === false && /Exit code: 7/.test(e.text)));
+});
+
+test('approved writes are atomic and preserve executable bits on POSIX', async t => {
+  const cwd = fixture(t);
+  const target = path.join(cwd, 'program');
+  fs.writeFileSync(target, 'old');
+  if (process.platform !== 'win32') fs.chmodSync(target, 0o755);
+  const w = new NodeWorkspace(cwd, 'edits', async () => true);
+  const signal = new AbortController().signal;
+  assert.match(await w.execute({ type: 'write_file', filepath: 'program', content: 'new' }, signal), /Wrote/);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'new');
+  if (process.platform !== 'win32') assert.equal(fs.statSync(target).mode & 0o777, 0o755);
+  assert.deepEqual(fs.readdirSync(cwd).filter(x => x.startsWith('.codico-write-')), []);
+  assert.match(await w.execute({ type: 'write_file', filepath: 'program', content: 'x'.repeat(2 * 1024 * 1024 + 1) }, signal), /2 MB/);
+  assert.equal(fs.readFileSync(target, 'utf8'), 'new');
+});

@@ -56,7 +56,7 @@ export function parseCliArgs(argv: string[]): CliOptions {
     };
     const parts: string[] = [];
     const value = (arg: string, i: number) => {
-        if (!args[i + 1] || args[i + 1].startsWith('--')) { throw new Error(`${arg} requires a value`); }
+        if (!args[i + 1] || args[i + 1].startsWith('--') || (arg !== '--max-steps' && args[i + 1].startsWith('-'))) { throw new Error(`${arg} requires a value`); }
         return args[i + 1];
     };
     for (let i = 0; i < args.length; i++) {
