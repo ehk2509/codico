@@ -336,3 +336,20 @@ test('/compact works on a conversation that no longer fits, and says when there 
   assert.equal(await agent.compact(), true);
   assert.match(String(agent.history[0].content), /^\[Conversation Summary\]/);
 });
+
+test('a missing or protected file is reported calmly, not as a red error', () => {
+  const missing = m.summarizeResult('read_file', "Tool error: ENOENT: no such file or directory, stat 'C:\proj\.codico\memory.md'", false);
+  assert.equal(missing.summary, 'Not found');
+  assert.equal(missing.quiet, true);
+  assert.equal(m.summarizeResult('read_file', 'Tool error: Protected path: .env', false).quiet, true);
+  assert.equal(m.summarizeResult('edit_file', 'Edit rejected: old_str must match exactly once', false).quiet, undefined);
+  let out = '';
+  const sink = { write: t => { out += t; }, isTTY: false, columns: 100 };
+  const r = new m.TranscriptRenderer(sink, sink, m.painter(false), new Set());
+  r.beginTurn();
+  r.handle({ type: 'toolStart', tool: 'read_file', text: '.codico/memory.md' });
+  r.handle({ type: 'toolResult', tool: 'read_file', text: "Tool error: ENOENT: no such file or directory, stat 'x'", ok: false });
+  r.endTurn('done');
+  assert.match(out, /Not found: \.codico\/memory\.md/);
+  assert.doesNotMatch(out, /ENOENT|failed/);
+});
