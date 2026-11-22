@@ -28,7 +28,51 @@ codico agent "Review package.json" --model direct:deepseek/deepseek-flash
 codico agent "Fix tests" --allow-commands --model ollama/qwen2.5-coder:7b
 ```
 
-In the interactive terminal, `/help`, `/model <id>`, `/clear`, and `/exit` are available. Each new terminal session starts with an empty conversation; persistent resume is future work.
+### The interactive terminal
+
+**Modes.** Before each session Codico asks how it should work in the folder (the last choice is pre-selected);
+Shift+Tab cycles the modes at the prompt and `/mode` opens the menu.
+
+| Mode | What Codico does |
+| --- | --- |
+| Ask (`--ask`) | Reads and searches, answers questions. Cannot change files or run commands. |
+| Plan (`--plan`) | Read-only (enforced, whatever mode you came from). Writes a numbered plan with the files affected, then asks "Carry out this plan?": Enter runs it with Agent, Auto runs it without approvals, Esc keeps planning and your next message revises the plan. `/plan <task>` does the same from any mode. |
+| Agent | Edits files and runs commands; asks before each one (Enter approves, Esc denies). |
+| Auto (`--auto`) | Agent without approvals. Use only in folders you trust. |
+
+`--allow-edits` (edit files, no commands) remains available for scripts.
+
+The first chat in a folder checks the selected model. If it cannot be used (not pulled, Ollama not running, key missing),
+Codico lists the models this computer can use and saves your pick as the default. It then asks once what Codico may do in
+the folder (read only, edit files, or edit files and run commands; each action still needs approval) and remembers it in
+`~/.codico/workspaces.json`. `--allow-edits`/`--allow-commands` skip that question. Shift+Tab cycles the mode at the
+prompt, `/model` and `/mode` open pickers, and `/` alone opens a command menu. When a turn fails because of the model,
+the error is explained in plain words and Codico offers another model and retries the request.
+
+Answers stream live with Markdown rendering; each tool call is one line (`● Update(src/a.ts)`) with a short result
+(`⎿ Exited with code 1` plus the last output lines). Approvals show a colored diff and take a single keypress:
+Enter (or `y`) approves, Esc (or `n`) denies, `a` approves that kind of action for the rest of the session. Keys typed while the agent works
+are kept for your next prompt and can never answer an approval.
+
+| Input | Effect |
+| --- | --- |
+| `@path/file.ts`, `@path/file.ts:10-40` | Attach a file (read through the same workspace guard as tools) |
+| `!git status` | Run a command yourself; its output is shared with your next message |
+| line ending in `\` | Continue the prompt on the next line |
+| Tab | Complete `/commands`, project skills, `@agents` and file paths |
+| Ctrl+C | Interrupt the turn; at an empty prompt, twice to quit |
+
+Commands: `/help`, `/status`, `/model [id]` (keeps the conversation), `/mode read|edits|all`, `/cost`, `/diff`,
+`/compact` (summarise the conversation into a new session), `/init` (write `AGENTS.md`), `/sessions`,
+`/resume [id-prefix|last]`, `/new`, `/clear`, `/skills`, `/mcp`, `/verbose`, `/plan <task>`, `/review <task>`, `/exit`.
+
+Other commands: `codico doctor` checks Node, the selected model (Ollama reachability and whether it is pulled, provider
+keys, Claude Code / Codex CLIs), git and browser support. `codico config list|get|set|unset` manages
+`~/.codico/config.json` (`model`, `ollamaUrl`, `maxSteps`, `verbose`). Precedence: flags, then `CODICO_MODEL`, then the
+config file. The config is user-level only on purpose: a project file could otherwise send your code to a model or
+endpoint of the repository's choosing. `codico -c` continues the latest session; `--verbose` shows full tool output;
+colors follow `NO_COLOR`/`FORCE_COLOR`/`--no-color`. When stdout is not a terminal, `codico agent` prints plain text as
+before, and `--json` output is unchanged (no `delta` events).
 
 ## Permissions and security
 

@@ -6,7 +6,7 @@ import { streamChatGPT } from '../chatgptClient';
 import type { ChatMessage, StreamChunk } from '../openRouterClient';
 import type { CliCommand } from '../cliProcess';
 
-function locate(binary:string, envVar:string, packageName:string, script:string):CliCommand {
+export function locate(binary:string, envVar:string, packageName:string, script:string):CliCommand {
     const configured=process.env[envVar];
     if (configured) { return {command:configured}; }
     const win=process.platform==='win32';

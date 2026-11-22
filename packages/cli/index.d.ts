@@ -1,7 +1,8 @@
 export type AgentRole = 'system' | 'user' | 'assistant' | 'tool';
 export type CliPermission = 'read' | 'edits' | 'all';
 export type ChatMessage = { role: AgentRole; content: string | Array<{type: string; text?: string; image_url?: {url:string}}>; [key: string]: unknown };
-export interface StandaloneEvent { type: 'text' | 'toolStart' | 'toolResult' | 'usage' | 'thinking'; text?: string; tool?: string; ok?: boolean; promptTokens?: number; completionTokens?: number }
+/** `delta` streams visible model text as it arrives; `text` is the complete visible text of one model reply. */
+export interface StandaloneEvent { type: 'text' | 'delta' | 'toolStart' | 'toolResult' | 'usage' | 'thinking'; text?: string; tool?: string; ok?: boolean; promptTokens?: number; completionTokens?: number }
 export interface StandaloneConfig {
   cwd: string;
   model: string;
@@ -51,3 +52,32 @@ export declare function main(args:string[]):Promise<number>;
 export declare const HELP:string;
 export declare const CLI_SYSTEM_PROMPT:string;
 export declare class CliWeb { constructor(approve:(kind:'write'|'command',description:string)=>Promise<boolean>); }
+
+export interface Paint { enabled: boolean; [style: string]: unknown }
+export declare function painter(enabled: boolean): Paint;
+export declare function detectColor(stream?: { isTTY?: boolean }, env?: Record<string, string | undefined>): boolean;
+export declare function stripAnsi(text: string): string;
+export declare function sanitize(text: string): string;
+/** Renders StandaloneEvents as Codico's terminal transcript (spinner, tool lines, streamed markdown). */
+export declare class TranscriptRenderer {
+  constructor(out: { write(text: string): unknown; isTTY?: boolean; columns?: number }, err: { write(text: string): unknown; isTTY?: boolean; columns?: number }, paint: Paint, toolNames: ReadonlySet<string>, verbose?: boolean);
+  verbose: boolean;
+  readonly totals: { promptTokens: number; completionTokens: number; turns: number };
+  beginTurn(): void;
+  handle(event: StandaloneEvent): void;
+  endTurn(outcome: 'done' | 'stopped' | 'failed', message?: string): void;
+}
+export declare class MarkdownStream {
+  constructor(paint: Paint, width: () => number, write: (text: string) => void, toolNames?: ReadonlySet<string>);
+  readonly wrote: boolean;
+  push(delta: string): void;
+  end(): void;
+}
+export declare function colorDiff(text: string, paint: Paint, maxLines?: number): string;
+export declare function toolLabel(tool: string): string;
+export declare function summarizeResult(tool: string, text: string, ok: boolean): { summary: string; preview: string[] };
+export declare function attachMentions(prompt: string, workspace: NodeWorkspace, signal: AbortSignal): Promise<{ prompt: string; attached: string[]; failed: string[] }>;
+export interface UserConfig { model?: string; ollamaUrl?: string; maxSteps?: number; verbose?: boolean }
+export declare function loadUserConfig(file?: string): { config: UserConfig; warning?: string };
+export declare function setUserConfig(key: string, value: string | undefined, file?: string): UserConfig;
+export declare function runDoctor(model: string, ollamaUrl: string, cwd: string): Promise<Array<{ name: string; status: 'ok' | 'warn' | 'fail'; detail: string }>>;

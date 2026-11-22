@@ -793,7 +793,7 @@
     "test:ui": "node --test tests/webview-ui/panel.ui.js",
     "check": "npm test",
     "eval:coding": "node scripts/eval/run.js",
-    "test:cli": "node --test tests/standalone.test.js",
+    "test:cli": "node --test tests/standalone.test.js tests/standalone-tui.test.js",
     "package:cli": "npm run compile && node scripts/prepare-cli-package.js && npm pack ./packages/cli",
     "package:cli:check": "node scripts/prepare-cli-package.js && node packages/cli/bin/codico.js --help && npm pack ./packages/cli --dry-run"
   },

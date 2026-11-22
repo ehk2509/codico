@@ -1,3 +1,4 @@
+import { ConsoleDecoder } from './consoleDecoder';
 import * as cp from 'child_process';
 
 const SAFE_TERMINAL_ENV_KEYS = new Set([
@@ -198,11 +199,19 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
             if (kept !== text) { overflowed = true; tail = text.slice(kept.length).slice(-TAIL_CHARS); }
         };
 
-        // Decoded per stream so a character split across chunks is not corrupted
-        child.stdout?.setEncoding('utf8');
-        child.stderr?.setEncoding('utf8');
-        child.stdout?.on('data', onData);
-        child.stderr?.on('data', onData);
+        // Decoded per stream so a character split across chunks is not corrupted.
+        // On Windows, output that is not UTF-8 is read in the console's OEM code page (cmd.exe, dir…).
+        for (const stream of [child.stdout, child.stderr]) {
+            if (!stream) { continue; }
+            if (process.platform === 'win32') {
+                const decoder = new ConsoleDecoder();
+                stream.on('data', (chunk: Buffer) => { const text = decoder.write(chunk); if (text) { onData(text); } });
+                stream.on('end', () => { const text = decoder.end(); if (text) { onData(text); } });
+            } else {
+                stream.setEncoding('utf8');
+                stream.on('data', onData);
+            }
+        }
 
         // 'close' can wait forever when a descendant inherits the pipes. Once the
         // shell exits, give trailing output one second, then settle independently.
