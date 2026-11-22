@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Verify standalone CLI (no VS Code)
+        run: node bin/codico.js chat --help
 
 
   extension-host:

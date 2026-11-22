@@ -11,7 +11,10 @@ const cp = require('node:child_process');
 const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const EXIT = { done: 0, failed: 1, needsInput: 2, denied: 3, usage: 64 };
 
-const HELP = `Usage: codico run "<task>" [options]
+const HELP = `Usage: codico                      Interactive standalone agent (Node.js, no VS Code)
+       codico chat [options]       Standalone terminal chat
+       codico agent "<task>"       Standalone one-shot coding task
+       codico run "<task>" [options]
        codico automate [options]
        codico package check [folder] [--json]
        codico registry verify <index.json> [<package id>…] [--json]
@@ -216,6 +219,14 @@ async function packageTools(argv) {
 }
 
 async function main(argv) {
+  // The native CLI runs in Node.js on Windows, macOS and Linux: it never launches VS Code.
+  // Keep the legacy 'run' and 'automate' subcommands intact for backwards compatibility.
+  if (argv.length === 0 || argv[0] === 'chat' || argv[0] === 'agent' || (argv[0]?.startsWith('--') && argv[0] !== '--help')) {
+    let native;
+    try { native = require(path.join(EXTENSION_ROOT, 'dist', 'standalone.js')); }
+    catch { process.stderr.write('codico: the standalone CLI is not built. Run "npm run compile".\n'); return EXIT.failed; }
+    return native.main(argv);
+  }
   if (argv[0] === 'package' || argv[0] === 'registry') { return packageTools(argv); }
   let options;
   try { options = parseArgs(argv); } catch (error) { process.stderr.write(`codico: ${error.message}\n\n${HELP}\n`); return EXIT.usage; }
