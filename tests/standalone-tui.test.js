@@ -270,3 +270,69 @@ test('picker rows never exceed the terminal width', async () => {
   await pending;
   for (const line of first.split('\n')) { assert.ok(m.stripAnsi(line).length <= 39, line); }
 });
+
+function longConversation() {
+  const big = 'x'.repeat(9000);
+  const history = [];
+  for (let i = 0; i < 3; i++) {
+    history.push({ role: 'user', content: `step ${i}: build part ${i} of the app` });
+    history.push({ role: 'assistant', content: `Built part ${i}. ${big}` });
+  }
+  return history;
+}
+const SUMMARY = 'Earlier work: the app has three parts; parts 0, 1 and 2 were built in src/. Tests pass. Nothing is outstanding apart from what the user asks next. '.repeat(2);
+
+test('a conversation near the context window is compacted before the next request', async t => {
+  const cwd = fixture(t);
+  const seen = [];
+  async function* stream(history) {
+    const text = String(history[history.length - 1].content);
+    if (text.startsWith('You are summarising')) { yield { type: 'content', text: SUMMARY }; return; }
+    seen.push(history);
+    yield { type: 'content', text: 'Part 3 done.' };
+  }
+  const events = [];
+  const agent = new m.StandaloneAgent({ cwd, model: 'ollama/x', stream, contextWindow: 8000, onEvent: e => events.push(e) });
+  agent.history.push(...longConversation());
+  assert.equal(await agent.run('now build part 3'), 'Part 3 done.');
+  const compacted = events.find(e => e.type === 'compacted');
+  assert.ok(compacted && compacted.ok, 'compacted event');
+  assert.match(String(agent.history[0].content), /^\[Conversation Summary\]/);
+  assert.ok(agent.history.some(msg => msg.role === 'user' && msg.content === 'now build part 3'), 'the current request is kept verbatim');
+  const sentChars = seen[0].reduce((n, msg) => n + String(msg.content).length, 0);
+  assert.ok(sentChars < 8000 * 3 * 0.6, `request fits after compaction (${sentChars} chars)`);
+});
+
+test('a request the server refuses for its size is compacted and sent again', async t => {
+  const cwd = fixture(t);
+  let refused = 0;
+  async function* stream(history) {
+    const text = String(history[history.length - 1].content);
+    if (text.startsWith('You are summarising')) { yield { type: 'content', text: SUMMARY }; return; }
+    if (!String(history[0].content).startsWith('[Conversation Summary]')) {
+      refused++;
+      throw new Error('HTTP 400: request exceeds the context window: prompt (34921 tokens) leaves no room to answer in the context (32768)');
+    }
+    yield { type: 'content', text: 'Fitted and answered.' };
+  }
+  const events = [];
+  const agent = new m.StandaloneAgent({ cwd, model: 'ollama/x', stream, contextWindow: 1_000_000, onEvent: e => events.push(e) });
+  agent.history.push(...longConversation());
+  assert.equal(await agent.run('continue'), 'Fitted and answered.');
+  assert.equal(refused, 1);
+  assert.ok(events.some(e => e.type === 'compacted' && e.ok));
+});
+
+test('/compact works on a conversation that no longer fits, and says when there is nothing to do', async t => {
+  const cwd = fixture(t);
+  async function* stream(history) {
+    const prompt = String(history[history.length - 1].content);
+    assert.ok(prompt.length < 4000 * 3, 'the summary request itself fits the window');
+    yield { type: 'content', text: SUMMARY };
+  }
+  const agent = new m.StandaloneAgent({ cwd, model: 'ollama/x', stream, contextWindow: 4000 });
+  assert.equal(await agent.compact(), false);
+  agent.history.push(...longConversation());
+  assert.equal(await agent.compact(), true);
+  assert.match(String(agent.history[0].content), /^\[Conversation Summary\]/);
+});

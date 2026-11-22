@@ -150,8 +150,17 @@ export class TranscriptRenderer {
         const p = this.paint;
         switch (event.type) {
             case 'thinking':
-                this.spinner.setLabel('Thinking');
+                this.spinner.setLabel(event.text === 'Compacting' ? 'Compacting the conversation' : 'Thinking');
                 break;
+            case 'compacted': {
+                const active = this.spinner.active;
+                this.spinner.stop();
+                this.closeStream();
+                const color = event.ok === false ? p.yellow : p.gray;
+                this.err.write(`  ${p.gray(SYMBOLS.branch)}  ${color(sanitize(event.text ?? 'Compacted the conversation'))}\n`);
+                if (active) { this.spinner.start('Thinking'); }
+                break;
+            }
             case 'delta': {
                 if (!event.text) { break; }
                 this.spinner.stop();

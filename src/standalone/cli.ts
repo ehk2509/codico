@@ -260,10 +260,6 @@ Inspect the real files first: package manifests, build/test scripts, folder layo
 AGENTS.md should be concise (under ~80 lines) and cover: what the project is, how to build, test and lint (exact commands),
 the code layout, conventions that are not obvious from the code, and pitfalls. Do not invent commands you have not seen.`;
 
-const COMPACT_PROMPT=`Summarize our conversation so far for a fresh context window. Do not call tools.
-Keep: the user's goals and constraints, decisions made, files read or changed (with paths), commands run and their results,
-open problems and the next steps. Be specific and dense; omit pleasantries.`;
-
 function tildify(dir:string):string{
     const home=os.homedir();
     return dir.toLowerCase().startsWith(home.toLowerCase())?'~'+dir.slice(home.length):dir;
@@ -832,24 +828,19 @@ export async function main(argv:string[]):Promise<number> {
                 continue;
             }
             if(command==='/compact'){
-                if(agent!.history.length<4){stdout.write(p.gray('  Nothing to compact yet.')+'\n');continue;}
-                const summarizer=new StandaloneAgent({cwd:opts.cwd,model:opts.model,permissions:'read',approve:async()=>false,
-                    maxSteps:1,ollamaUrl:opts.ollamaUrl,allowDelegation:false,onEvent:rich?(e)=>{if(e.type==='usage'){renderer.handle(e);}}:undefined});
-                summarizer.history.push(...agent!.history);
-                renderer.spinner.start('Compacting');
+                // Same engine as automatic compaction: the summary request is sized to fit the model.
+                const controller=new AbortController();
+                running=controller;
+                renderer.spinner.start('Compacting the conversation');
                 try{
-                    const summary=await summarizer.run(COMPACT_PROMPT);
+                    const done=await agent!.compact(controller.signal);
                     renderer.spinner.stop();
-                    const before=agent!.history.length;
+                    if(!done){stdout.write(p.gray('  Nothing to compact yet.')+'\n');}
                     persist();
-                    session=store?.create(opts.model);
-                    agent=makeAgent([
-                        {role:'user',content:'[Summary of our earlier conversation, compacted to save context]\n'+summary},
-                        {role:'assistant',content:'Understood. I have the context from the summary and will continue from there.'},
-                    ]);
-                    persist();
-                    stdout.write(p.green(`  ${SYMBOLS.check} Compacted ${before} messages into a summary`)+p.gray(session?` · new session ${session.id.slice(0,8)}`:'')+'\n');
-                }catch(error){renderer.spinner.stop();stderr.write(pe.red('  Compaction failed: '+(error as Error).message)+'\n');}
+                }catch(error){
+                    renderer.spinner.stop();
+                    stderr.write((controller.signal.aborted?pe.yellow('  Compaction interrupted'):pe.red('  Compaction failed: '+friendlyError((error as Error).message,opts.model,opts.ollamaUrl).title))+'\n');
+                }finally{running=undefined;}
                 continue;
             }
             if(command==='/init'){
