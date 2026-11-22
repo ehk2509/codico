@@ -88,13 +88,15 @@ export class SessionStore {
         if (!fs.existsSync(this.root)) { return []; }
         this.ensureDir();
         const result: Array<Pick<SavedSession,'id'|'model'|'updatedAt'>> = [];
-        for (const name of fs.readdirSync(this.root).filter(x => SESSION_ID.test(x.replace(/\.json$/, '')) && x.endsWith('.json')).slice(0, 300)) {
+        // Sort by saved timestamp before applying the display limit: otherwise
+        // newer sessions past the first 300 directory entries become invisible.
+        for (const name of fs.readdirSync(this.root).filter(x => SESSION_ID.test(x.replace(/\.json$/, '')) && x.endsWith('.json'))) {
             try {
                 const session = this.load(name.slice(0, -5));
                 result.push({ id: session.id, model: session.model, updatedAt: session.updatedAt });
             } catch { /* ignore corrupt sessions */ }
         }
-        return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+        return result.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 300);
     }
 
     latest(): SavedSession | undefined {

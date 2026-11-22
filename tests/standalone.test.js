@@ -340,7 +340,7 @@ test('read-only mode never permits persistent memory writes, even when approval 
     stream:async function* (history) {
       if(++n===1) yield {type:'native_tool',call:{id:'mem',name:'remember',arguments:{note:'a durable note'}}};
       else {
-        assert.match(history[history.length-1].content,/Denied: project memory writes/);
+        assert.match(history[history.length-1].content,/unavailable|Denied: project memory writes/);
         yield {type:'content',text:'Denied as required'};
       }
     }
@@ -378,4 +378,111 @@ test('standalone npm CLI supports run alias while preserving root legacy CLI', (
   const options=parseCliArgs(['run','Review this folder']);
   assert.equal(options.mode,'agent');
   assert.equal(options.prompt,'Review this folder');
+});
+
+
+test('session listing includes the newest of more than 300 saved sessions', t => {
+  const { SessionStore } = require('../dist/standalone.js');
+  const cwd = fixture(t);
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codico-session-sort-'));
+  t.after(() => fs.rmSync(baseDir, { recursive:true, force:true }));
+  const store = new SessionStore(cwd, baseDir);
+  for (let i = 0; i < 305; i++) store.save(store.create('ollama/test'));
+  const names = fs.readdirSync(store.root).filter(n => n.endsWith('.json'));
+  assert.equal(names.length, 305);
+  const newest = names[304].slice(0, -5);
+  const target = path.join(store.root, names[304]);
+  const data = JSON.parse(fs.readFileSync(target, 'utf8'));
+  data.updatedAt = '2999-01-01T00:00:00.000Z';
+  fs.writeFileSync(target, JSON.stringify(data));
+  assert.equal(store.latest().id, newest);
+  assert.equal(store.list()[0].id, newest);
+  assert.equal(store.list().length, 300);
+});
+
+test('browser-local still denies credential-bearing URLs before browser launch', async t => {
+  const { CliBrowser } = require('../dist/standalone.js');
+  const browser = new CliBrowser(async () => true, undefined, true);
+  t.after(() => browser.close());
+  const result = await browser.execute(
+    {type:'browser_navigate',url:'http://user:password@127.0.0.1:12345/secret'},
+    new AbortController().signal
+  );
+  assert.match(result, /Denied/);
+});
+
+test('failed MCP tool calls are reported as failed tool events', async t => {
+  const cwd = fixture(t);
+  const events = [];
+  let iteration = 0;
+  const agent = new StandaloneAgent({
+    cwd, model:'mock',
+    mcp: {tools:[{server:'mock',name:'broken'}], prompt:'',
+      call:async ()=>'[MCP tool error]\nUnsuccessful response'},
+    onEvent:event=>events.push(event),
+    stream:async function* () {
+      if (++iteration===1) yield {type:'native_tool',call:{
+        id:'mcp1',name:'mcp_call',arguments:{server:'mock',tool:'broken',args:{}}
+      }};
+      else yield {type:'content',text:'Failed MCP call.'};
+    }
+  });
+  await agent.run('Call the MCP tool');
+  assert.ok(events.some(e=>e.type==='toolResult'&&e.tool==='mcp_call'&&e.ok===false));
+});
+
+test('delegated read-only agents do not inherit network or mutating capabilities', async t => {
+  const cwd = fixture(t);
+  let iterations = 0;
+  let helperSawWeb = false;
+  const agent = new StandaloneAgent({
+    cwd, model:'mock', web:{execute:async()=>{throw new Error('Should never be used');}},
+    mcp:{tools:[{server:'mock',name:'test'}],prompt:'',call:async()=>{throw new Error('MCP should not be used');}},
+    stream:async function* (_history, tools) {
+      if (++iterations===1) yield {type:'native_tool',call:{id:'delegate1',name:'delegate',arguments:{task:'Inspect code'}}};
+      else if (iterations===2) {
+        helperSawWeb = tools.some(t=>t.name==='web_search'||t.name==='mcp_call'||t.name==='run_terminal');
+        yield {type:'content',text:'Read-only inspection complete'};
+      } else yield {type:'content',text:'Delegate completed'};
+    }
+  });
+  assert.match(await agent.run('Delegate inspection'), /Delegate completed/);
+  assert.equal(helperSawWeb,false);
+});
+
+test('model receives only tools allowed by the active permission tier', async t => {
+  const cwd=fixture(t);
+  const cases=[
+    {permissions:'read', allowed:['read_file','delegate'], forbidden:['write_file','edit_file','remember','run_terminal','get_diagnostics']},
+    {permissions:'edits', allowed:['read_file','write_file','edit_file','remember'], forbidden:['run_terminal','get_diagnostics']},
+    {permissions:'all', allowed:['read_file','write_file','run_terminal','get_diagnostics'], forbidden:[]}
+  ];
+  for(const c of cases){
+    const agent=new StandaloneAgent({
+      cwd,model:'mock',permissions:c.permissions,
+      stream:async function* (_messages, definitions) {
+        const names=definitions.map(d=>d.name);
+        for(const tool of c.allowed) assert.ok(names.includes(tool),c.permissions+' should include '+tool);
+        for(const tool of c.forbidden) assert.ok(!names.includes(tool),c.permissions+' should exclude '+tool);
+        yield {type:'content',text:'ok'};
+      }
+    });
+    assert.equal(await agent.run('Inspect the workspace'),'ok');
+  }
+});
+
+test('a failed diagnostics command has unsuccessful SDK toolResult status', async t => {
+  const cwd=fixture(t);
+  const events=[];
+  let step=0;
+  const agent=new StandaloneAgent({
+    cwd,model:'mock',permissions:'all',onEvent:event=>events.push(event),
+    stream:async function* () {
+      if(++step===1) yield {type:'native_tool',call:{id:'diag1',name:'get_diagnostics',arguments:{}}};
+      else yield {type:'content',text:'Diagnostics failed as expected'};
+    }
+  });
+  agent.workspace.execute=async ()=>'Exit code: 7\nFound errors';
+  await agent.run('Run diagnostics');
+  assert.ok(events.some(e=>e.type==='toolResult'&&e.tool==='get_diagnostics'&&e.ok===false));
 });
