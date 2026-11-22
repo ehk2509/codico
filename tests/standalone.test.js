@@ -360,3 +360,15 @@ test('web fetch cannot access localhost and CLI opt-in flags are explicit', asyn
   assert.throws(()=>parseCliArgs(['chat','--no-session','--resume','last']),/cannot be combined/);
   assert.throws(()=>parseCliArgs(['chat','--mcp-config','x.json']),/requires --allow-mcp/);
 });
+
+
+test('public SDK factory streams agent events with existing tool callbacks', async t => {
+  const { createCodicoAgent } = require('../dist/standalone.js');
+  const cwd = fixture(t);
+  const agent = createCodicoAgent({
+    cwd, model:'mock', stream: async function* () { yield {type:'content',text:'Hello from SDK'}; }
+  });
+  const events = [];
+  for await (const event of agent.runStream('say hello')) events.push(event);
+  assert.ok(events.some(e => e.type === 'text' && /Hello from SDK/.test(e.text)));
+});

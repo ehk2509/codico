@@ -101,13 +101,53 @@ export class StandaloneAgent {
     readonly workspace: NodeWorkspace;
     readonly history: ChatMessage[] = [];
     private readonly config: StandaloneConfig;
+    private readonly listeners = new Set<(event: StandaloneEvent) => void>();
 
     constructor(config: StandaloneConfig) {
         this.config = config;
         this.workspace = new NodeWorkspace(config.cwd, config.permissions ?? 'read', config.approve);
     }
 
-    private emit(event: StandaloneEvent): void { this.config.onEvent?.(event); }
+    private emit(event: StandaloneEvent): void {
+        this.config.onEvent?.(event);
+        for (const listener of this.listeners) { listener(event); }
+    }
+
+    /** Event-stream API for SDK consumers; a discarded iterator cancels the in-flight turn. */
+    async *runStream(prompt: string, signal?: AbortSignal): AsyncGenerator<StandaloneEvent> {
+        const controller = new AbortController();
+        const onStop = () => controller.abort();
+        if (signal?.aborted) { controller.abort(); }
+        else { signal?.addEventListener('abort', onStop, { once: true }); }
+        const events: StandaloneEvent[] = [];
+        let wake: (() => void) | undefined;
+        let completed = false;
+        let failure: unknown;
+        const listener = (event: StandaloneEvent): void => {
+            events.push(event);
+            wake?.();
+        };
+        this.listeners.add(listener);
+        const running = this.run(prompt, controller.signal).then(() => {
+            completed = true; wake?.();
+        }, error => {
+            failure = error; completed = true; wake?.();
+        });
+        try {
+            while (!completed || events.length) {
+                if (events.length) { yield events.shift()!; continue; }
+                await new Promise<void>(resolve => { wake = resolve; });
+                wake = undefined;
+            }
+            await running;
+            if (failure) { throw failure; }
+        } finally {
+            this.listeners.delete(listener);
+            signal?.removeEventListener('abort', onStop);
+            controller.abort();
+            await running;
+        }
+    }
 
     private available(): Set<string> {
         const tools = new Set(CORE_TOOLS);
@@ -243,4 +283,9 @@ export class StandaloneAgent {
         this.emit({ type: 'toolResult', tool: tool.type, text: result.slice(0, 12000), ok });
         return result;
     }
+}
+
+/** Public SDK factory (the CLI and VS Code host remain separate clients). */
+export function createCodicoAgent(config: StandaloneConfig): StandaloneAgent {
+    return new StandaloneAgent(config);
 }

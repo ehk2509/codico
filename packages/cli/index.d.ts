@@ -21,7 +21,9 @@ export declare class StandaloneAgent {
   readonly history: ChatMessage[];
   readonly workspace: NodeWorkspace;
   run(prompt: string, signal?: AbortSignal): Promise<string>;
+  runStream(prompt: string, signal?: AbortSignal): AsyncIterable<StandaloneEvent>;
 }
+export declare function createCodicoAgent(config: StandaloneConfig): StandaloneAgent;
 export declare class NodeWorkspace {
   constructor(cwd:string, permissions?:CliPermission, approve?:(kind:'write'|'command',description:string)=>Promise<boolean>);
   readonly cwd: string;

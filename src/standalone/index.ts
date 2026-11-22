@@ -1,5 +1,5 @@
 export { main, parseCliArgs, HELP } from './cli';
-export { StandaloneAgent, CLI_SYSTEM_PROMPT } from './agent';
+export { StandaloneAgent, createCodicoAgent, CLI_SYSTEM_PROMPT } from './agent';
 export { NodeWorkspace } from './nodeWorkspace';
 export { SessionStore } from './sessions';
 export { ProjectContext } from './projectContext';
