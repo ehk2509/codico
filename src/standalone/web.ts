@@ -22,7 +22,9 @@ function download(address: string, headers: Record<string,string>, signal: Abort
                 res.resume();
                 if(redirects<=0){reject(new Error('Too many redirects'));return;}
                 const next=new URL(res.headers.location,url).href;
-                download(next,headers,signal,redirects-1).then(resolve,reject);
+                // Never forward provider API credentials across origins.
+                const nextHeaders = new URL(next).origin === url.origin ? headers : {};
+                download(next,nextHeaders,signal,redirects-1).then(resolve,reject);
                 return;
             }
             if(status<200||status>=300){res.resume();reject(new Error('HTTP '+status));return;}

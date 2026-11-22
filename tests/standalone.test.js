@@ -372,3 +372,10 @@ test('public SDK factory streams agent events with existing tool callbacks', asy
   for await (const event of agent.runStream('say hello')) events.push(event);
   assert.ok(events.some(e => e.type === 'text' && /Hello from SDK/.test(e.text)));
 });
+
+
+test('standalone npm CLI supports run alias while preserving root legacy CLI', () => {
+  const options=parseCliArgs(['run','Review this folder']);
+  assert.equal(options.mode,'agent');
+  assert.equal(options.prompt,'Review this folder');
+});

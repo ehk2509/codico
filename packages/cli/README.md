@@ -17,8 +17,8 @@ Project instructions: `AGENTS.md`, `.codico/instructions.md`. Custom agents and 
 ## Node.js API
 
 ```js
-const { StandaloneAgent } = require('@codico/cli');
-const agent = new StandaloneAgent({ cwd: process.cwd(), model: 'ollama/qwen2.5-coder:7b' });
+const { createCodicoAgent } = require('@codico/cli');
+const agent = createCodicoAgent({ cwd: process.cwd(), model: 'ollama/qwen2.5-coder:7b' });
 const answer = await agent.run('Review the current project');
 console.log(answer);
 ```
@@ -28,3 +28,5 @@ This package is the portable CLI/runtime; the VS Code extension remains in the r
 External web tools are opt-in using `--allow-web`; for Brave Search set `BRAVE_SEARCH_API_KEY`, otherwise Codico uses DuckDuckGo. HTTP fetches reject private, local and metadata endpoints and revalidate redirects. `lsp_symbol` currently uses lexical search rather than an IDE LSP server.
 
 Browser requests are restricted to public HTTP(S) hosts by default; `--browser-local` additionally allows local/private network access, with per-navigation approval.
+
+The SDK supports `agent.run(prompt)` and `for await (const event of agent.runStream(prompt))` for tool/event streaming; an AbortSignal can stop each request.

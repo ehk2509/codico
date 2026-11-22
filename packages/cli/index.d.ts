@@ -44,7 +44,7 @@ export declare class SessionStore {
 }
 export declare class ProjectContext { constructor(workspace:string); readonly preamble:string; expand(request:string):string; }
 export declare class StdioMcp { constructor(workspace:string,approve:(kind:'write'|'command',description:string)=>Promise<boolean>); readonly tools:Array<{server:string;name:string;description:string}>; connect(configs:Array<{name:string;command:string;args:string[];env:Record<string,string>}>):Promise<string[]>; close():Promise<void>; }
-export declare class CliBrowser { constructor(approve:(kind:'write'|'command',description:string)=>Promise<boolean>, executablePath?:string); close():Promise<void>; }
+export declare class CliBrowser { constructor(approve:(kind:'write'|'command',description:string)=>Promise<boolean>, executablePath?:string, allowPrivateNetwork?:boolean); close():Promise<void>; }
 export declare function loadMcpConfig(workspace:string, explicit?:string):Array<{name:string;command:string;args:string[];env:Record<string,string>}>;
 export declare function parseCliArgs(args:string[]):Record<string,unknown>;
 export declare function main(args:string[]):Promise<number>;
