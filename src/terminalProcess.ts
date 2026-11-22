@@ -54,7 +54,7 @@ export function clipTerminalOutput(output: string, maxChars = 4000): string {
     if (output.length <= maxChars) { return output; }
     const head = Math.floor(maxChars / 4);
     const tailLength = maxChars - head;
-    return `${output.slice(0, head)}\n… (${(output.length - maxChars).toLocaleString()} characters omitted) …\n${output.slice(-tailLength)}`;
+    return `${output.slice(0, head)}\n… (${(output.length - maxChars).toLocaleString('en-US')} characters omitted) …\n${output.slice(-tailLength)}`;
 }
 
 export function processGroupAlive(pgid: number): boolean {
@@ -153,7 +153,7 @@ export function runTerminalProcess(options: TerminalProcessOptions): Promise<Ter
                 : undefined;
 
             resolve({
-                output: outputChunks.join('') + (overflowed ? `\n… (output beyond ${maxCapturedBytes.toLocaleString()} bytes omitted; its end follows) …\n${tail}` : ''),
+                output: outputChunks.join('') + (overflowed ? `\n… (output beyond ${maxCapturedBytes.toLocaleString('en-US')} bytes omitted; its end follows) …\n${tail}` : ''),
                 exitCode,
                 signal: exitSignal,
                 timedOut,

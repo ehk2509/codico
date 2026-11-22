@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
-const { treeState, changesBetween, COMMAND_CHANGED_FILES } = require('../out/commandChanges.js');
+const { treeState, changesBetween, COMMAND_CHANGED_FILES, outputFiles } = require('../out/commandChanges.js');
 const { ExplorationController } = require('../out/explorationController.js');
 
 const sh = (cwd, ...args) => cp.execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -47,4 +47,16 @@ test('a command that changed files is a code change: it must be verified like an
   assert.match(c.completionGuidance(), /have not completed the task acceptance check/);
   c.after({ type: 'run_terminal', command: 'node --test tests/team.test.js' }, '[run_terminal: node --test tests/team.test.js]\nExit: 0\n# pass 4\n# fail 0');
   assert.equal(c.verificationPending, false);
+});
+
+test('the files a command writes its own output to are not changes of the project', () => {
+  const files = (command) => [...outputFiles(command)].sort();
+  assert.deepEqual(files('npm run compile > build.log && node --test --test-timeout=120000 > test.log'), ['build.log', 'test.log']);
+  assert.deepEqual(files('npm test 2>&1 | tee out/test.txt'), ['out/test.txt']);
+  assert.deepEqual(files('python x.py 2> err.txt >> all.log'), ['all.log', 'err.txt']);
+  assert.deepEqual(files('npm test &> run.log'), ['run.log']);
+  assert.deepEqual(files('echo hi > "my file.txt"'), ['my file.txt']);
+  assert.deepEqual(files('node a.js > /dev/null 2>&1'), []);
+  assert.deepEqual(files('node -e "if (a > b) x()"'), []);
+  assert.deepEqual(files('sort < input.txt'), []);
 });

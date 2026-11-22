@@ -13,7 +13,7 @@ import { ExtensionMessage } from './chatProtocol';
 import { editResultSnippet } from './fileReadWindow';
 import { buildLocalInvariantAudit } from './localInvariantAudit';
 import { CRITERIA_NOW } from './verifyTools';
-import { changesBetween, COMMAND_CHANGED_FILES, treeState } from './commandChanges';
+import { changesBetween, COMMAND_CHANGED_FILES, treeState, withoutOutputFiles } from './commandChanges';
 import { applyEditMatch, editFailureContext, resolveEditMatch, withoutCopiedLineNumbers } from './editMatcher';
 import { filterAllowedWorkspaceUris, resolveWorkspaceToolPath } from './workspaceSecurity';
 import { isDocumentationFile, isTestFile, looksLikeIntendedRegex } from './agentEfficiency';
@@ -150,7 +150,7 @@ export class WorkspaceTools {
             ? '\n(background processes started by this command are still running; the user can stop them from the status bar)'
             : '';
         const success = result.exitCode === 0;
-        const changedNote = this._recordCommandChanges(treeBefore);
+        const changedNote = this._recordCommandChanges(treeBefore, tool.command);
         const evidence = this._host.passport().recordCommand(tool.command, result.exitCode ?? null, result.output);
         // Once there are acceptance criteria, a check's result can be named as evidence for them
         const acceptance = this._host.passport().acceptance;
@@ -168,11 +168,11 @@ export class WorkspaceTools {
     }
 
     /** Files the command changed, recorded as changes of the turn (before its result counts as a check), and said to the agent. */
-    private _recordCommandChanges(before: ReturnType<typeof treeState>): string {
+    private _recordCommandChanges(before: ReturnType<typeof treeState>, command: string): string {
         const after = before && treeState(before.root);
         if (!before || !after) { return ''; }
         const passport = this._host.passport();
-        const changes = changesBetween(before, after, file => passport.textOf(file) ?? passport.textOf(path.join(before.root, file)));
+        const changes = withoutOutputFiles(changesBetween(before, after, file => passport.textOf(file) ?? passport.textOf(path.join(before.root, file))), command);
         for (const change of changes) { passport.recordChange(change.path, change.before, change.after); }
         return changes.length ? `\n${COMMAND_CHANGED_FILES} ${changes.map(c => c.path).join(', ')}. Codico records and checks them like an edit; change files with edit_file or write_file instead, so each change is shown and reviewed.` : '';
     }

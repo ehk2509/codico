@@ -2,6 +2,14 @@
 
 All notable changes to Codico will be documented in this file.
 
+## 0.9.2 - 2026-11-22
+
+### Fixed
+- Local models: tool calls written in Qwen's XML syntax (`<tool_call><function=search_files><parameter=pattern>…`, or JSON inside `<tool_call>`) were shown as text and never ran; Codico asked once for another format, then reminded the model to verify until the turn ended "Not accepted". They now run like any other call, in the main agent and in subagents, with their parameters typed by the tool's definition, and the raw XML is not shown.
+- A tool block that cannot be read (a `write_file` without its `filepath:` line) was dropped without a word, so the model believed it had run; it is now said back with what is missing.
+- Numbers in text sent to the model (the compaction marker, clipped terminal and MCP output) followed the machine's locale: on a French system the marker read "9 046" with a narrow no-break space. They are written the same everywhere; two compaction tests failed on such machines.
+- Files a command writes its own output to (`npm test > test.log`, `| tee out.txt`) were listed in the change report as changes made by the turn.
+
 ## 0.9.1 - 2026-11-21
 
 ### Fixed

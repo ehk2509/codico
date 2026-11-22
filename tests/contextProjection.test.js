@@ -177,3 +177,20 @@ test('the text tool format: a read result inside "[Tool Results]" is kept the sa
   assert.equal(isTrimmed(projectHistoryForModel(edited).history[2]), true, 'rewritten since: the old text is trimmed');
   assert.equal(isTrimmed(projectHistoryForModel(edited).history[4]), false);
 });
+
+test('the compaction marker is the same in every locale', () => {
+  const { projectHistoryForModel } = require('../out/contextProjection.js');
+  const original = Number.prototype.toLocaleString;
+  // As on a French machine: 9 046 with a narrow no-break space
+  Number.prototype.toLocaleString = function (locales, options) { return original.call(this, locales ?? 'fr-FR', options); };
+  try {
+    const big = 'x'.repeat(20000);
+    const history = [{ role: 'user', content: 'go' }];
+    for (let i = 0; i < 12; i++) { history.push({ role: 'assistant', content: 's' }, { role: 'tool', content: `[run_terminal: t${i}]\nExit: 0\n${big}`, toolCallId: 'c' + i, toolName: 'run_terminal' }); }
+    const markers = projectHistoryForModel(history).history.map(m => String(m.content)).filter(c => / compacted: /.test(c));
+    assert.ok(markers.length > 0);
+    for (const marker of markers) { assert.match(marker, /compacted: [\d,]+ chars omitted/); }
+  } finally {
+    Number.prototype.toLocaleString = original;
+  }
+});

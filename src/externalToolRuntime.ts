@@ -291,7 +291,7 @@ export class ExternalToolRuntime {
                 .join('\n');
             // Capped like terminal output: the result is resent with every later request of the task
             const text = full.length > MCP_RESULT_MAX_CHARS
-                ? `${full.slice(0, MCP_RESULT_MAX_CHARS)}\n… (${(full.length - MCP_RESULT_MAX_CHARS).toLocaleString()} more characters omitted; ask the tool for a narrower result)`
+                ? `${full.slice(0, MCP_RESULT_MAX_CHARS)}\n… (${(full.length - MCP_RESULT_MAX_CHARS).toLocaleString('en-US')} more characters omitted; ask the tool for a narrower result)`
                 : full;
             const isError = result?.isError === true;
             this._post({ type: 'toolResult', id: msgId, tool: 'mcp_call', label, success: !isError, error: isError ? text : undefined });

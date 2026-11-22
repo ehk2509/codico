@@ -22,7 +22,7 @@ const MIN_DEDUPLICATED_CHARS = 400;
 const DUPLICATE_MARKER = '[Result omitted: identical to a later result in this conversation (the content was unchanged when it was read again).]';
 
 function compactMarker(label: string, omittedChars: number): string {
-    return `[${label} compacted: ${omittedChars.toLocaleString()} chars omitted from older context. Re-run the tool only if exact content is still needed.]`;
+    return `[${label} compacted: ${omittedChars.toLocaleString('en-US')} chars omitted from older context. Re-run the tool only if exact content is still needed.]`;
 }
 
 function stringArg(args: Record<string, unknown>, key: string): string | undefined {

@@ -3,7 +3,8 @@ import { appendAssistantIteration } from './agentHistory';
 import { NativeToolCall, NativeToolDefinition, nativeToolCallToToolCall, getNativeToolDefinitions, invalidNativeCallResult } from './nativeTools';
 import { ChatMessage, CHAT_SYSTEM_PROMPT, StreamChunk } from './openRouterClient';
 import { containsPseudoToolCall, PSEUDO_TOOL_CALL_CORRECTION } from './streamCompletion';
-import { parseToolBody, scanToolFences, ToolCall } from './toolParser';
+import { ToolCall } from './toolParser';
+import { writtenToolCalls } from './xmlToolCalls';
 
 /**
  * A subagent: a second agent with a conversation of its own, started by the main agent's
@@ -129,8 +130,8 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
             }
 
             // Fenced tool calls in the text: the results go back together in one user message
-            const scan = scanToolFences(content, 0, true);
-            const fenced = scan.fences.flatMap(fence => parseToolBody(fence.type, fence.body).slice(0, 1));
+            // (and calls in Qwen's XML syntax, in the order written; one that does not fit is said back as its error)
+            const fenced = writtenToolCalls(content, 0, true).map(written => written.tool);
             if (fenced.length === 0) {
                 // A tool call written in a syntax Codico does not read (seen with models used to XML calls),
                 // often followed by results the model made up: not a report. Say so and let it try again.
@@ -144,7 +145,7 @@ export async function runSubagent(task: string, deps: SubagentDeps, role?: { nam
             }
             const results: string[] = [];
             for (const tool of fenced) {
-                if (SUBAGENT_TOOLS.has(tool.type)) { toolCalls++; results.push(await deps.runTool(tool)); } else { results.push(refusal(tool.type)); }
+                if (typeof tool === 'string') { results.push(tool); } else if (SUBAGENT_TOOLS.has(tool.type)) { toolCalls++; results.push(await deps.runTool(tool)); } else { results.push(refusal(tool.type)); }
                 if (deps.signal.aborted) { break; }
             }
             appendAssistantIteration(history, content, [], '', reasoning);
