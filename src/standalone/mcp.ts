@@ -123,7 +123,19 @@ class Connection {
         const data=(value.content??[]).filter(x=>x.type==='text').map(x=>x.text??'').join('\n').slice(0,12000);
         return (value.isError ? '[MCP tool error]\n' : '')+wrapUntrusted('MCP '+this.cfg.name+'/'+name,data);
     }
-    close():void { this.proc?.kill();this.proc=undefined;this.clear(new Error('MCP connection closed')); }
+    async close():Promise<void> {
+        const proc=this.proc;
+        this.proc=undefined;
+        this.clear(new Error('MCP connection closed'));
+        if (!proc || proc.exitCode !== null) { return; }
+        await new Promise<void>(resolve => {
+            let finished=false;
+            const done=()=>{if(finished)return;finished=true;clearTimeout(timer);resolve();};
+            proc.once('exit',done);
+            const timer=setTimeout(()=>{proc.kill('SIGKILL');done();},1500);
+            if (!proc.kill()) {done();}
+        });
+    }
 }
 
 export class StdioMcp {
@@ -139,7 +151,7 @@ export class StdioMcp {
             if (!accepted){issues.push('MCP server '+cfg.name+' not approved');continue;}
             const c=new Connection(cfg,this.workspace);
             try {await c.connect();this.connections.set(cfg.name,c);this.tools.push(...c.tools);}
-            catch(error){c.close();issues.push('MCP '+cfg.name+': '+String(error));}
+            catch(error){await c.close();issues.push('MCP '+cfg.name+': '+String(error));}
         }
         return issues;
     }
@@ -157,5 +169,8 @@ export class StdioMcp {
         }
         return conn.call(tool,args,signal);
     }
-    close():void {for(const c of this.connections.values()){c.close();}this.connections.clear();this.tools.length=0;}
+    async close():Promise<void> {
+        await Promise.all([...this.connections.values()].map(c=>c.close()));
+        this.connections.clear();this.tools.length=0;
+    }
 }

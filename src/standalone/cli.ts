@@ -241,7 +241,7 @@ export async function main(argv:string[]):Promise<number> {
         else{stderr.write('codico: '+message+'\n');}
         return 1;
     }finally{
-        mcp?.close();
+        await mcp?.close();
         await browser?.close();
         terminal.close();
     }

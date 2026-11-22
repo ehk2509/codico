@@ -294,7 +294,7 @@ test('MCP startup and tool calls require approvals and use a stdio JSON-RPC prot
   assert.ok(mcp.tools.some(x=>x.name==='echo'));
   assert.match(await mcp.call('mock','echo',{value:'untrusted text'},new AbortController().signal),/untrusted_content/);
   assert.equal(approvals,2);
-  mcp.close();
+  await mcp.close();
 });
 
 test('browser remains opt-in and rejects unsafe file URLs before launching Chromium', async t => {
