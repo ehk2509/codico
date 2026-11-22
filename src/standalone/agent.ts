@@ -225,7 +225,9 @@ export class StandaloneAgent {
             } else if (BROWSER_TOOLS.includes(tool.type) && this.config.browser) {
                 result = await this.config.browser.execute(tool, signal);
             } else if (tool.type === 'remember') {
-                result = await rememberInWorkspace(this.workspace.cwd, tool, this.config.approve ?? (async () => false));
+                result = (this.config.permissions ?? 'read') === 'read'
+                    ? 'Denied: project memory writes require --allow-edits'
+                    : await rememberInWorkspace(this.workspace.cwd, tool, this.config.approve ?? (async () => false));
             } else if (tool.type === 'delegate' && this.config.allowDelegation !== false) {
                 const helper = new StandaloneAgent({ ...this.config, permissions: 'read', approve: async () => false,
                     allowDelegation: false, mcp: undefined, browser: undefined, onEvent: undefined,

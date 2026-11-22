@@ -310,7 +310,7 @@ test('memory updates are permission-gated and do not accept secrets', async t =>
   const cwd=fixture(t);
   let iteration=0;
   const agent=new StandaloneAgent({
-    cwd,model:'mock',permissions:'read',approve:async kind=>kind==='write',
+    cwd,model:'mock',permissions:'edits',approve:async kind=>kind==='write',
     stream:async function* () {
       if(++iteration===1) {
         yield {type:'native_tool',call:{id:'mem1',name:'remember',arguments:{note:'The formatter is in scripts/format.js',topic:'Where things live'}}};
@@ -329,4 +329,34 @@ test('standalone npm binary and Node.js SDK export are packaged independently of
   const run=cp.spawnSync(process.execPath,[entry,'--help'],{encoding:'utf8',timeout:15000});
   assert.equal(run.status,0,run.stderr);
   assert.match(run.stdout,/Codico CLI/);
+});
+
+
+test('read-only mode never permits persistent memory writes, even when approval callback grants', async t => {
+  const cwd=fixture(t);
+  let n=0;
+  const agent=new StandaloneAgent({
+    cwd,model:'mock',permissions:'read',approve:async()=>true,
+    stream:async function* (history) {
+      if(++n===1) yield {type:'native_tool',call:{id:'mem',name:'remember',arguments:{note:'a durable note'}}};
+      else {
+        assert.match(history[history.length-1].content,/Denied: project memory writes/);
+        yield {type:'content',text:'Denied as required'};
+      }
+    }
+  });
+  assert.match(await agent.run('remember this'),/Denied as required/);
+  assert.equal(fs.existsSync(path.join(cwd,'.codico','memory.md')),false);
+});
+
+test('web fetch cannot access localhost and CLI opt-in flags are explicit', async t => {
+  const { CliWeb }=require('../dist/standalone.js');
+  const web=new CliWeb(async()=>true);
+  await assert.rejects(web.execute({type:'fetch_url',url:'http://127.0.0.1:80'},new AbortController().signal),/private|loopback|metadata/i);
+  const opts=parseCliArgs(['agent','review','--allow-web','--resume','last','--allow-browser']);
+  assert.equal(opts.allowWeb,true);
+  assert.equal(opts.resume,'last');
+  assert.equal(opts.allowBrowser,true);
+  assert.throws(()=>parseCliArgs(['chat','--no-session','--resume','last']),/cannot be combined/);
+  assert.throws(()=>parseCliArgs(['chat','--mcp-config','x.json']),/requires --allow-mcp/);
 });
