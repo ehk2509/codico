@@ -5,7 +5,8 @@ import { streamDirect, parseDirectModelId } from '../directProviderClient';
 import { streamLocalOpenAICompat } from '../directProviderClient';
 import { getNativeToolDefinitions, NativeToolDefinition, NativeToolCall, nativeToolCallToToolCall } from '../nativeTools';
 import { appendAssistantIteration, NativeToolExecution } from '../agentHistory';
-import { parseToolCalls, scanToolFences, ToolCall } from '../toolParser';
+import { ToolCall } from '../toolParser';
+import { writtenToolCalls } from '../xmlToolCalls';
 import { NodeWorkspace, CliApproval, CliPermission } from './nodeWorkspace';
 
 const TOOLS = new Set(['read_file', 'list_directory', 'find_files', 'search_files', 'write_file', 'edit_file', 'run_terminal']);
@@ -123,12 +124,13 @@ export class StandaloneAgent {
                 else if (chunk.type === 'stream_error') { throw new Error(chunk.message); }
                 else if (chunk.type === 'thinking') { this.emit({ type: 'thinking', text: chunk.text }); }
             }
-            const fences = scanToolFences(response, 0, true).fences;
-            const visibleText = fences.reduceRight((value, fence) => value.slice(0, fence.start) + value.slice(fence.end), response).trim();
+            const written = writtenToolCalls(response, 0, true);
+            const visibleText = written.reduceRight((value, item) => value.slice(0, item.start) + value.slice(item.end), response).trim();
             if (visibleText) { this.emit({ type: 'text', text: visibleText }); lastAnswer = visibleText; }
-            // Never treat unrecognized or malformed fenced blocks as runnable commands.
-            const textTools = nativeCalls.length === 0 ? parseToolCalls(response).filter(t => TOOLS.has(t.type)) : [];
-            if (nativeCalls.length === 0 && textTools.length === 0) {
+            // Share the editor agent's parser: fenced calls and Qwen XML calls are both supported.
+            const textTools = nativeCalls.length === 0 ? written.filter(item => typeof item.tool !== 'string' && TOOLS.has(item.tool.type)).map(item => item.tool as ToolCall) : [];
+            const malformed = nativeCalls.length === 0 ? written.filter(item => typeof item.tool === 'string').map(item => item.tool as string) : [];
+            if (nativeCalls.length === 0 && textTools.length === 0 && malformed.length === 0) {
                 this.history.push({ role: 'assistant', content: response });
                 return lastAnswer || response;
             }
@@ -143,7 +145,7 @@ export class StandaloneAgent {
             } else {
                 // Text-format tool calls need explicit results as user text, not synthetic native-tool messages.
                 this.history.push({ role: 'assistant', content: response });
-                const results: string[] = [];
+                const results: string[] = [...malformed];
                 for (const tool of textTools) {
                     const output = await this.executeTool(tool, signal);
                     results.push(`[${tool.type}]\n${output}`);

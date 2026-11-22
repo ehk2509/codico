@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { buildTerminalEnvironment, clipTerminalOutput, runTerminalProcess } from '../terminalProcess';
 import type { ToolCall } from '../toolParser';
+import { computeLineDiff } from '../lineDiff';
 
 export type CliPermission = 'read' | 'edits' | 'all';
 export type CliApproval = (kind: 'write' | 'command', description: string) => Promise<boolean>;
@@ -138,7 +139,17 @@ export class NodeWorkspace {
             case 'write_file': {
                 if (this.permissions === 'read') { return 'Denied: file changes are disabled. Use --allow-edits.'; }
                 const target = this.resolve(tool.filepath);
-                if (!await this.approve('write', `Write ${tool.filepath}`)) { return 'Denied: user did not approve file write'; }
+                let original: string | undefined;
+                try { original = await fs.promises.readFile(target, 'utf8'); }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
+                if (original === tool.content) { return `Unchanged ${tool.filepath}`; }
+                const diff = computeLineDiff(original ?? '', tool.content, 80);
+                if (!await this.approve('write', `Write ${tool.filepath}\n${diff}`)) { return 'Denied: user did not approve file write'; }
+                const current = await fs.promises.readFile(target, 'utf8').catch((error: NodeJS.ErrnoException) => {
+                    if (error.code === 'ENOENT') { return undefined; }
+                    throw error;
+                });
+                if (current !== original) { return 'Edit rejected: file changed while awaiting approval'; }
                 // Recheck after approval, so symlinks installed during the prompt are rejected.
                 this.resolve(tool.filepath);
                 await fs.promises.mkdir(path.dirname(target), { recursive: true });
@@ -151,7 +162,9 @@ export class NodeWorkspace {
                 const target = this.resolve(tool.filepath);
                 const original = await fs.promises.readFile(target, 'utf8');
                 if (!tool.oldStr || original.split(tool.oldStr).length !== 2) { return 'Edit rejected: old_str must match exactly once'; }
-                if (!await this.approve('write', `Edit ${tool.filepath}`)) { return 'Denied: user did not approve edit'; }
+                const proposed = original.replace(tool.oldStr, tool.newStr);
+                const diff = computeLineDiff(original, proposed, 80);
+                if (!await this.approve('write', `Edit ${tool.filepath}\n${diff}`)) { return 'Denied: user did not approve edit'; }
                 this.resolve(tool.filepath);
                 const latest = await fs.promises.readFile(target, 'utf8');
                 if (latest !== original) { return 'Edit rejected: file changed while awaiting approval'; }

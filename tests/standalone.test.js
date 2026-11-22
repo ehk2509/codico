@@ -111,3 +111,18 @@ test('CLI --help works without VS Code installed', () => {
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /Windows, macOS, Linux/);
 });
+
+
+test('Qwen XML tool calls share the existing Codico parser', async t => {
+  const cwd = fixture(t);
+  let turn = 0;
+  const agent = new StandaloneAgent({
+    cwd, model: 'mock',
+    stream: async function* () {
+      if (++turn === 1) yield { type: 'content', text: '<tool_call><function=read_file><parameter=filepath>hello.txt</parameter></function></tool_call>' };
+      else yield { type: 'content', text: 'Read hello.txt successfully.' };
+    },
+  });
+  assert.equal(await agent.run('read'), 'Read hello.txt successfully.');
+  assert.equal(turn, 2);
+});
