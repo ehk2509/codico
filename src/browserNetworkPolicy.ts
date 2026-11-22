@@ -17,6 +17,10 @@ export async function assertBrowserRequestAllowed(
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
         throw new Error(`Browser navigation blocked unsupported URL scheme: ${parsed.protocol}`);
     }
+    // --browser-local permits private IPs, not credential-bearing URLs.
+    if (parsed.username || parsed.password) {
+        throw new Error('Browser navigation blocked URL credentials');
+    }
 
     if (allowPrivateNetwork) { return; }
     await resolvePublic(rawUrl);

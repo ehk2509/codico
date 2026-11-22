@@ -30,3 +30,5 @@ External web tools are opt-in using `--allow-web`; for Brave Search set `BRAVE_S
 Browser requests are restricted to public HTTP(S) hosts by default; `--browser-local` additionally allows local/private network access, with per-navigation approval.
 
 The SDK supports `agent.run(prompt)` and `for await (const event of agent.runStream(prompt))` for tool/event streaming; an AbortSignal can stop each request.
+
+Delegated subagents are read-only and cannot use MCP, browser, or web tools from the parent. Browser URL credentials are rejected even with `--browser-local`.
