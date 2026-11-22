@@ -101,7 +101,23 @@ class Connection {
     }
     async connect(): Promise<void> {
         const env=buildMcpEnvironment(this.cfg.env);
-        this.proc=cp.spawn(this.cfg.command,this.cfg.args,{cwd:this.cwd,env,stdio:['pipe','pipe','pipe'],shell:false,windowsHide:true});
+        let command=this.cfg.command;
+        let args=this.cfg.args;
+        if (process.platform === 'win32') {
+            // npm/npx on Windows are .cmd shims, which cannot be spawned directly.
+            // Start the canonical JavaScript entrypoint with Node instead of shell:true.
+            const name=path.basename(command).toLowerCase().replace(/\.cmd$/, '');
+            if (name==='npm'||name==='npx') {
+                const script=path.join(path.dirname(process.execPath),'node_modules','npm','bin',
+                    name==='npm'?'npm-cli.js':'npx-cli.js');
+                if (!fs.existsSync(script)) { throw new Error('Could not locate the Windows npm launcher: '+script); }
+                command=process.execPath;
+                args=[script,...args];
+            } else if (/\.cmd$/i.test(command)) {
+                throw new Error('Windows .cmd MCP launchers are unsupported; configure node with its JavaScript script path');
+            }
+        }
+        this.proc=cp.spawn(command,args,{cwd:this.cwd,env,stdio:['pipe','pipe','pipe'],shell:false,windowsHide:true});
         this.proc.on('error',err=>this.clear(err));
         this.proc.on('exit',(code)=>this.clear(new Error('MCP exited with code '+code)));
         this.proc.stdin.on('error',()=>{});

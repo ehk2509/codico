@@ -62,3 +62,5 @@ individual approvals for enabled tools; do not use it on untrusted workspaces or
 references/hover, visual screenshot interpretation, parallel Git worktree teams, or the existing
 editor-backed automation watcher. The CLI's `lsp_symbol` uses lexical fallback rather than a language
 server. Therefore, this is not complete VS Code feature parity.
+
+For browser automation, private-network and localhost navigation are disabled by default. Pass `--allow-browser --browser-local` only for trusted local development servers; browser interactions still require approval.

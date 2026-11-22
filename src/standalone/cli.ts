@@ -32,6 +32,7 @@ export const HELP = [
 '  --allow-browser                   Enable Playwright browser tools',
 '  --allow-web                       Enable external web fetch/search tools',
 '  --browser-path <file>             Installed Chromium/Chrome executable',
+'  --browser-local                   Permit browser access to localhost/private sites',
 '  --yes                             Grant all permitted approval requests (unsafe)',
 '  --max-steps <n>                   Max requests per turn (1-100)',
 '  --resume <id|last>                Resume a saved workspace session',
@@ -68,6 +69,7 @@ export interface CliOptions {
     mcpConfig?:string;
     allowBrowser:boolean;
     allowWeb:boolean;
+    browserLocal:boolean;
     browserPath?:string;
 }
 
@@ -78,7 +80,7 @@ export function parseCliArgs(argv:string[]):CliOptions {
     const opts:CliOptions={
         mode,prompt:'',cwd:process.cwd(),model:process.env.CODICO_MODEL||'ollama/qwen2.5-coder:7b',
         modelExplicit:false,permissions:'read',yes:false,maxSteps:20,ollamaUrl:'http://localhost:11434',
-        json:false,help:false,noSession:false,allowMcp:false,allowBrowser:false,allowWeb:false,
+        json:false,help:false,noSession:false,allowMcp:false,allowBrowser:false,allowWeb:false,browserLocal:false,
     };
     const parts:string[]=[];
     for(let i=0;i<args.length;i++){
@@ -105,6 +107,7 @@ export function parseCliArgs(argv:string[]):CliOptions {
             case '--allow-mcp':opts.allowMcp=true;break;
             case '--mcp-config':opts.mcpConfig=value();break;
             case '--allow-browser':opts.allowBrowser=true;break;
+            case '--browser-local':opts.browserLocal=true;break;
             case '--allow-web':opts.allowWeb=true;break;
             case '--browser-path':opts.browserPath=path.resolve(value());break;
             case '--yes':opts.yes=true;break;
@@ -120,6 +123,7 @@ export function parseCliArgs(argv:string[]):CliOptions {
     if(mode==='chat'&&opts.json){throw new Error('--json is only supported with codico agent');}
     if(opts.noSession&&opts.resume){throw new Error('--resume cannot be combined with --no-session');}
     if(opts.mcpConfig&&!opts.allowMcp){throw new Error('--mcp-config requires --allow-mcp');}
+    if(opts.browserLocal&&!opts.allowBrowser){throw new Error('--browser-local requires --allow-browser');}
     return opts;
 }
 
@@ -159,7 +163,7 @@ export async function main(argv:string[]):Promise<number> {
             const issues=await mcp.connect(loadMcpConfig(opts.cwd,opts.mcpConfig));
             for(const issue of issues){stderr.write('codico: '+issue+'\n');}
         }
-        if(opts.allowBrowser){browser=new CliBrowser(approve,opts.browserPath??process.env.CODICO_CHROME_PATH);}
+        if(opts.allowBrowser){browser=new CliBrowser(approve,opts.browserPath??process.env.CODICO_CHROME_PATH,opts.browserLocal);}
         if(opts.allowWeb){web=new CliWeb(approve);}
         const makeAgent=():StandaloneAgent=>{
             const instance=new StandaloneAgent({

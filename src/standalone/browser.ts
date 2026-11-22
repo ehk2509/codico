@@ -5,13 +5,15 @@ import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium, Browser, Page } from 'playwright-core';
 import { wrapUntrusted } from '../untrustedContent';
+import { assertBrowserRequestAllowed } from '../browserNetworkPolicy';
 import type { ToolCall } from '../toolParser';
 import type { CliApproval } from './nodeWorkspace';
 
 export class CliBrowser {
     private browser?: Browser;
     private page?: Page;
-    constructor(private readonly approve: CliApproval, private readonly executablePath?: string) {}
+    constructor(private readonly approve: CliApproval, private readonly executablePath?: string,
+        private readonly allowPrivateNetwork = false) {}
 
     private async getPage(): Promise<Page> {
         if (!this.browser) {
@@ -20,7 +22,18 @@ export class CliBrowser {
                 ...(this.executablePath ? { executablePath: this.executablePath } : {}),
             });
         }
-        if (!this.page || this.page.isClosed()) { this.page=await this.browser.newPage({acceptDownloads:false}); }
+        if (!this.page || this.page.isClosed()) {
+            const context=await this.browser.newContext({acceptDownloads:false});
+            await context.route('**/*',async route=>{
+                try {
+                    await assertBrowserRequestAllowed(route.request().url(),this.allowPrivateNetwork);
+                    await route.continue();
+                } catch {
+                    await route.abort();
+                }
+            });
+            this.page=await context.newPage();
+        }
         return this.page;
     }
 
@@ -31,8 +44,10 @@ export class CliBrowser {
         }
         if (tool.type === 'browser_navigate') {
             const target = new URL(tool.url);
-            if (!['http:','https:'].includes(target.protocol) || target.username || target.password) {
-                return 'Denied: unsupported or credential-bearing URL';
+            try {
+                await assertBrowserRequestAllowed(target.href,this.allowPrivateNetwork);
+            } catch {
+                return 'Denied: unsupported, credential-bearing or private-network URL';
             }
             if (!await this.approve('command','Navigate browser to '+target.href)) { return 'Denied: browser navigation not approved'; }
             const page = await this.getPage();
