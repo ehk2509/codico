@@ -24,3 +24,5 @@ console.log(answer);
 ```
 
 This package is the portable CLI/runtime; the VS Code extension remains in the root of the monorepo.
+
+External web tools are opt-in using `--allow-web`; for Brave Search set `BRAVE_SEARCH_API_KEY`, otherwise Codico uses DuckDuckGo. HTTP fetches reject private, local and metadata endpoints and revalidate redirects. `lsp_symbol` currently uses lexical search rather than an IDE LSP server.

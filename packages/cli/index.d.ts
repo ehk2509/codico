@@ -13,6 +13,7 @@ export interface StandaloneConfig {
   project?: ProjectContext;
   mcp?: StdioMcp;
   browser?: CliBrowser;
+  web?: CliWeb;
   allowDelegation?: boolean;
 }
 export declare class StandaloneAgent {
@@ -47,3 +48,4 @@ export declare function parseCliArgs(args:string[]):Record<string,unknown>;
 export declare function main(args:string[]):Promise<number>;
 export declare const HELP:string;
 export declare const CLI_SYSTEM_PROMPT:string;
+export declare class CliWeb { constructor(approve:(kind:'write'|'command',description:string)=>Promise<boolean>); }

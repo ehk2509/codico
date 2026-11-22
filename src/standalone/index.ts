@@ -8,3 +8,4 @@ export { CliBrowser } from './browser';
 export type { StandaloneConfig, StandaloneEvent } from './agent';
 export type { CliOptions } from './cli';
 export type { SavedSession } from './sessions';
+export { CliWeb } from './web';

@@ -13,9 +13,10 @@ import { StdioMcp } from './mcp';
 import { CliBrowser } from './browser';
 import { rememberInWorkspace } from './memory';
 import { streamAuthenticatedCli } from './cliProviders';
+import { CliWeb } from './web';
 
 const CORE_TOOLS = ['read_file', 'list_directory', 'find_files', 'search_files', 'write_file', 'edit_file',
-    'run_terminal', 'search_code', 'get_diagnostics', 'remember', 'delegate'];
+    'run_terminal', 'search_code', 'get_diagnostics', 'lsp_symbol', 'remember', 'delegate'];
 const BROWSER_TOOLS = ['browser_navigate','browser_click','browser_type','browser_get_text','browser_screenshot','browser_close'];
 const KEY_FOR_PROVIDER: Record<string, string> = {
     anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', google: 'GOOGLE_API_KEY',
@@ -27,6 +28,8 @@ export const CLI_SYSTEM_PROMPT = `You are Codico, a practical autonomous coding 
 Your workspace is the current project. Inspect actual files before suggesting edits, use tools to perform tasks and verify changes. Do not claim an action succeeded until its tool result confirms it.
 Core tools: read_file, list_directory, find_files, search_files, search_code, get_diagnostics, write_file, edit_file, run_terminal, remember, delegate.
 MCP tools are available when MCP servers are connected; browser tools when the browser is enabled.
+Web search/fetch are enabled only with the --allow-web opt-in. Calls to external sites require approval.
+Symbols are lexical definitions in the CLI (not a language-server reference/hover service).
 A delegated subagent works read-only. Do not claim tool support that is not enabled.
 If the model supports native tool calling, prefer native tools. Otherwise use fenced tool calls in this exact format (several are allowed):
 \`\`\`read_file
@@ -88,6 +91,7 @@ export interface StandaloneConfig {
     project?: ProjectContext;
     mcp?: StdioMcp;
     browser?: CliBrowser;
+    web?: CliWeb;
     allowDelegation?: boolean;
     /** Dependency-injection seam for offline tests, not used by the published CLI. */
     stream?: (history: ChatMessage[], tools: NativeToolDefinition[], signal: AbortSignal) => AsyncIterable<StreamChunk>;
@@ -108,6 +112,7 @@ export class StandaloneAgent {
     private available(): Set<string> {
         const tools = new Set(CORE_TOOLS);
         if (this.config.allowDelegation === false) { tools.delete('delegate'); }
+        if (this.config.web) { tools.add('fetch_url'); tools.add('web_search'); }
         if (this.config.mcp?.tools.length) { tools.add('mcp_call'); }
         if (this.config.browser) { for (const name of BROWSER_TOOLS) { tools.add(name); } }
         return tools;
@@ -215,6 +220,8 @@ export class StandaloneAgent {
         try {
             if (tool.type === 'mcp_call' && this.config.mcp) {
                 result = await this.config.mcp.call(tool.server, tool.tool, tool.args, signal);
+            } else if (this.config.web && (tool.type === 'fetch_url' || tool.type === 'web_search')) {
+                result = await this.config.web.execute(tool, signal);
             } else if (BROWSER_TOOLS.includes(tool.type) && this.config.browser) {
                 result = await this.config.browser.execute(tool, signal);
             } else if (tool.type === 'remember') {

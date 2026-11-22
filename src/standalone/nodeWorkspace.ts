@@ -186,6 +186,13 @@ export class NodeWorkspace {
                 const pattern = words.slice(0, 2).join('|');
                 return this.execute({ type: 'search_files', pattern, isRegex: true }, signal);
             }
+            case 'lsp_symbol': {
+                const query = tool.query.trim().replace(/[^a-zA-Z0-9_$]/g, '');
+                if (query.length < 2) { return 'Symbol name must contain at least two characters'; }
+                // Portable lexical fallback for projects without an LSP server.
+                const pattern = '(?:function|class|interface|type|const|let|def|fn|struct|enum)\\s+' + query;
+                return this.execute({ type: 'search_files', pattern, isRegex: true }, signal);
+            }
             case 'get_diagnostics': {
                 if (this.permissions !== 'all') { return 'Denied: diagnostics require --allow-commands'; }
                 const script = path.join(this.cwd,'node_modules','typescript','bin','tsc');

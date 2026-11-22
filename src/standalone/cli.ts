@@ -8,6 +8,7 @@ import { SessionStore, SavedSession } from './sessions';
 import { ProjectContext } from './projectContext';
 import { StdioMcp, loadMcpConfig } from './mcp';
 import { CliBrowser } from './browser';
+import { CliWeb } from './web';
 import { PLAN_PROMPT, REVIEW_PROMPT } from '../agentPrompts';
 
 export const HELP = [
@@ -28,6 +29,7 @@ export const HELP = [
 '  --allow-mcp                       Opt in to executing configured MCP servers',
 '  --mcp-config <file>               Alternate .mcp.json config (requires --allow-mcp)',
 '  --allow-browser                   Enable Playwright browser tools',
+'  --allow-web                       Enable external web fetch/search tools',
 '  --browser-path <file>             Installed Chromium/Chrome executable',
 '  --yes                             Grant all permitted approval requests (unsafe)',
 '  --max-steps <n>                   Max requests per turn (1-100)',
@@ -64,6 +66,7 @@ export interface CliOptions {
     allowMcp:boolean;
     mcpConfig?:string;
     allowBrowser:boolean;
+    allowWeb:boolean;
     browserPath?:string;
 }
 
@@ -74,7 +77,7 @@ export function parseCliArgs(argv:string[]):CliOptions {
     const opts:CliOptions={
         mode,prompt:'',cwd:process.cwd(),model:process.env.CODICO_MODEL||'ollama/qwen2.5-coder:7b',
         modelExplicit:false,permissions:'read',yes:false,maxSteps:20,ollamaUrl:'http://localhost:11434',
-        json:false,help:false,noSession:false,allowMcp:false,allowBrowser:false,
+        json:false,help:false,noSession:false,allowMcp:false,allowBrowser:false,allowWeb:false,
     };
     const parts:string[]=[];
     for(let i=0;i<args.length;i++){
@@ -101,6 +104,7 @@ export function parseCliArgs(argv:string[]):CliOptions {
             case '--allow-mcp':opts.allowMcp=true;break;
             case '--mcp-config':opts.mcpConfig=value();break;
             case '--allow-browser':opts.allowBrowser=true;break;
+            case '--allow-web':opts.allowWeb=true;break;
             case '--browser-path':opts.browserPath=path.resolve(value());break;
             case '--yes':opts.yes=true;break;
             case '--json':opts.json=true;break;
@@ -130,6 +134,7 @@ export async function main(argv:string[]):Promise<number> {
         return /^(y|yes)$/i.test(answer.trim());
     };
     let browser:CliBrowser|undefined;
+    let web:CliWeb|undefined;
     let mcp:StdioMcp|undefined;
     let session:SavedSession|undefined;
     let agent:StandaloneAgent|undefined;
@@ -154,10 +159,11 @@ export async function main(argv:string[]):Promise<number> {
             for(const issue of issues){stderr.write('codico: '+issue+'\n');}
         }
         if(opts.allowBrowser){browser=new CliBrowser(approve,opts.browserPath??process.env.CODICO_CHROME_PATH);}
+        if(opts.allowWeb){web=new CliWeb(approve);}
         const makeAgent=():StandaloneAgent=>{
             const instance=new StandaloneAgent({
                 cwd:opts.cwd,model:opts.model,permissions:opts.permissions,approve,
-                maxSteps:opts.maxSteps,ollamaUrl:opts.ollamaUrl,project,mcp,browser,onEvent:event,
+                maxSteps:opts.maxSteps,ollamaUrl:opts.ollamaUrl,project,mcp,browser,web,onEvent:event,
             });
             if(session){instance.history.push(...session.history);}
             return instance;
