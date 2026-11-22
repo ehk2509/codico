@@ -1,0 +1,38 @@
+{
+  "name": "@codico/cli",
+  "version": "0.1.0",
+  "description": "Standalone cross-platform AI coding agent and programmatic Node.js SDK",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ehk2509/codico.git",
+    "directory": "packages/cli"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "codico": "./bin/codico.js"
+  },
+  "main": "./dist/standalone.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./dist/standalone.js",
+      "default": "./dist/standalone.js"
+    }
+  },
+  "files": [
+    "bin",
+    "dist",
+    "index.d.ts",
+    "README.md"
+  ],
+  "dependencies": {
+    "playwright-core": "^1.60.0"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/prepare-cli-package.js"
+  }
+}

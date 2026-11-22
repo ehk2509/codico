@@ -8,7 +8,7 @@
 
 An autonomous coding agent embedded directly in VS Code.
 
-**Standalone CLI (Windows, macOS, Linux):** Run `codico` without launching VS Code. See [Standalone CLI guide](STANDALONE-CLI.md) for installation, models and permissions. Connect directly to major providers with your own keys — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, and Cerebras — access many additional providers through **OpenRouter**, or run fully offline with **Ollama**.
+**Standalone CLI and Node.js SDK (Windows, macOS, Linux):** Run `codico` without launching VS Code; the publishable CLI is packaged under [`packages/cli`](packages/cli/README.md). See [Standalone CLI guide](STANDALONE-CLI.md) for installation, models and permissions. Connect directly to major providers with your own keys — Anthropic, OpenAI, Google, Groq, DeepSeek, Mistral, Grok, and Cerebras — access many additional providers through **OpenRouter**, or run fully offline with **Ollama**.
 
 The agent reasons through problems, reads and writes files, runs terminal commands, searches code, applies targeted edits, and iterates autonomously — all from a sidebar chat panel.
 

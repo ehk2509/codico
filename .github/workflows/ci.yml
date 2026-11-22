@@ -25,6 +25,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Validate standalone npm CLI packaging
+        run: npm run package:cli:check
       - name: Verify standalone CLI (no VS Code)
         run: node bin/codico.js chat --help
 

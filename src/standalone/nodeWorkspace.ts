@@ -180,6 +180,28 @@ export class NodeWorkspace {
                 });
                 return matches.join('\n').slice(0, TOOL_LIMIT) || 'No matches';
             }
+            case 'search_code': {
+                const words = tool.query.split(/[^a-zA-Z0-9_$-]+/).filter(w => w.length >= 2);
+                if (!words.length) { return 'Search query must contain a word or identifier'; }
+                const pattern = words.slice(0, 2).join('|');
+                return this.execute({ type: 'search_files', pattern, isRegex: true }, signal);
+            }
+            case 'lsp_symbol': {
+                const query = tool.query.trim().replace(/[^a-zA-Z0-9_$]/g, '');
+                if (query.length < 2) { return 'Symbol name must contain at least two characters'; }
+                // Portable lexical fallback for projects without an LSP server.
+                const pattern = '(?:function|class|interface|type|const|let|def|fn|struct|enum)\\s+' + query;
+                return this.execute({ type: 'search_files', pattern, isRegex: true }, signal);
+            }
+            case 'get_diagnostics': {
+                if (this.permissions !== 'all') { return 'Denied: diagnostics require --allow-commands'; }
+                const script = path.join(this.cwd,'node_modules','typescript','bin','tsc');
+                if (!fs.existsSync(script)) { return 'Project-local TypeScript compiler not found. Use run_terminal with your project test command.'; }
+                if (!await this.approve('command','Run local TypeScript diagnostics (tsc --noEmit)')) { return 'Denied: diagnostics not approved'; }
+                const cmd = JSON.stringify(process.execPath) + ' ' + JSON.stringify(script) + ' --noEmit --pretty false';
+                const run = await runTerminalProcess({command:cmd,cwd:this.cwd,timeoutMs:120_000,signal,env:buildTerminalEnvironment()});
+                return 'Exit code: '+run.exitCode+'\n'+clipTerminalOutput(run.output,TOOL_LIMIT);
+            }
             case 'find_files': {
                 const base = this.resolve(tool.dirpath ?? '.');
                 const found: string[] = [];
